@@ -409,6 +409,30 @@ Once you have the full-run OOS numbers, use those as the "baseline" for Session 
 \- Confirmed strategy has real post-optimization edge (PF 1.24 baseline after 10 trials, +40.9% OOS AnnRet at 5 trials/window — both likely higher at 30 trials)
 
 
+## Final 30-trial walk-forward result (reference for Session 3)
 
+Full config-default walk-forward completed. These are the reference numbers
+Session 3 robustness tests compare against:
+
+| Metric | Value |
+|---|---|
+| Aggregate OOS trades | 616 |
+| Win Rate | 61.5% |
+| Profit Factor | 1.36 |
+| Annual Return | +65.9% |
+| Max Drawdown | -20.3% |
+| Sharpe Ratio | 1.89 |
+| WFE ratio | 0.84 (GOOD) |
+| Windows profitable | 6 of 8 |
+
+**Structural observations:**
+- Window 2 (Feb-Apr 2025) is the weak spot — PF 0.64 OOS, consistent across
+  both 5-trial and 30-trial runs. This is a market regime property, not
+  optimizer noise. Treat as a known failure mode.
+- Window 7 (Dec 2025-Feb 2026) is the standout — PF 2.59, +48% OOS.
+- Per-window trade counts 40-114, statistically meaningful in each.
+
+**When running Session 3 robustness tests, compare against these numbers.**
+Baseline for "does noise injection drop PF by >20%?" is 1.36 → must stay above 1.09.
 End of handover packet.
 
