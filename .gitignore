@@ -40,3 +40,7 @@ Thumbs.db
 tradelab.local.yaml
 .env
 *.key
+
+# scratch/temp files
+_*.py
+_*.txt

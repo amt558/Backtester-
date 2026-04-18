@@ -1,0 +1,2 @@
+# This file keeps the reports/ folder in git even when empty.
+# Generated HTML reports are gitignored.

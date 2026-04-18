@@ -1,0 +1,71 @@
+# tradelab configuration
+# Edit this file to change data paths, default parameters, and registered strategies.
+# All paths are absolute Windows paths (forward slashes work fine on Windows too).
+
+paths:
+  data_dir: "C:/TradingScripts/AmiBroker_Data"
+  reports_dir: "C:/TradingScripts/tradelab/reports"
+  cache_dir: "C:/TradingScripts/tradelab/.cache"
+
+benchmarks:
+  primary: "SPY"          # benchmark for RS calculations and report comparison
+
+defaults:
+  initial_capital: 100000.0
+  commission_per_trade: 1.0
+  position_size_pct: 25.0
+  max_concurrent_positions: 5
+  data_start: "2024-04-08"
+  data_end: "2026-04-14"
+  warmup_days: 50          # SMA50 needs 50 bars before backtest can start
+
+backtest:
+  timeframe_default: "1D"    # daily bars by default (resampled from 1-min)
+  session_filter: true       # 09:30 - 16:00 ET only
+
+optuna:
+  n_trials_default: 50
+  seed: 42
+  fitness_formula: "pf_sqrt_trades_dd"   # PF * sqrt(trades) * (1 - maxDD/100)
+  min_trades_threshold: 20
+
+walkforward:
+  train_months: 6
+  test_months: 2
+  step_months: 2
+  n_trials_per_window: 30
+  warmup_months: 2           # skip this much data before first train window
+
+robustness:
+  monte_carlo_shuffles: 1000
+  noise_sigma_pct: 0.05      # 5 bps Gaussian price noise
+  param_sensitivity_pct: 10  # perturb each param by ±10%
+  entry_delay_bars: [-2, -1, 0, 1, 2]  # test signal shift robustness
+
+# Registered strategies — add entries here as you build more.
+# Each entry maps a friendly name to its Python module path.
+strategies:
+  s2_pocket_pivot:
+    module: "tradelab.strategies.s2_pocket_pivot"
+    class_name: "S2PocketPivot"
+    description: "Pocket Pivot with trend alignment, RS filter, dynamic ATR trailing stop"
+    status: "ported"
+    # Strategy-specific parameter overrides (optional)
+    params:
+      atr_pct_max: 8.0
+      rs_threshold: 0.0
+      ema10_proximity: 0.97
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 1.5
+      trail_tighten_atr: 1.0
+      hold_bars_max: 20
+
+  # Example for future strategies (disabled for now)
+  # s4_inside_day_breakout:
+  #   module: "tradelab.strategies.s4_inside_day_breakout"
+  #   class_name: "S4InsideDayBreakout"
+  #   description: "Inside-day tight-range breakout with volume confirmation"
+  #   status: "pending"
+  #   params:
+  #     min_range_contraction: 0.5

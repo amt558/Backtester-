@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tradelab"
+version = "0.1.0"
+description = "Local quant research platform: backtest, optimize, walk-forward, and report on trading strategies."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+    {name = "Amit", email = "you@example.com"},
+]
+license = {text = "MIT"}
+dependencies = [
+    "vectorbt>=0.28.0",
+    "optuna>=4.8.0",
+    "quantstats>=0.0.81",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.0",
+    "jinja2>=3.1.0",
+    "pandas>=2.3.0",
+    "numpy>=2.0.0",
+    "plotly>=6.0.0",
+    "python-dateutil>=2.9.0",
+]
+
+[project.scripts]
+tradelab = "tradelab.cli:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
