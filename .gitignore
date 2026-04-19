@@ -32,6 +32,23 @@ reports/*.png
 .mypy_cache/
 .pytest_cache/
 
+# Audit trail DB — personal history, don't commit
+data/
+
+# Per-run smoke/report directories (auto-generated)
+reports/*_2026-*/
+reports/*_2027-*/
+reports/*_2028-*/
+reports/s2_pocket_pivot_*/
+reports/rand_canary_*/
+reports/leak_canary_*/
+reports/overfit_canary_*/
+reports/survivor_canary_*/
+
+# Session pytest capture files
+pytest_full_output.txt
+pytest_phase0_output.txt
+
 # OS
 .DS_Store
 Thumbs.db

@@ -61,13 +61,15 @@ def robustness_tab(
     bt: BacktestResult,
     wf: Optional[WalkForwardResult] = None,
     opt: Optional[OptunaResult] = None,
+    robustness=None,
 ) -> str:
     import math
+    import plotly.graph_objects as go
     from ..engines.dsr import classify_dsr, deflated_sharpe_ratio
 
     parts = []
 
-    # DSR readout
+    # --- DSR readout (always, if we have return history) ---
     returns = bt.daily_returns()
     dsr_html = ""
     if returns is not None and len(returns) >= 10:
@@ -91,10 +93,101 @@ def robustness_tab(
     parts.append(dsr_html if dsr_html else
                  '<div class="note">Deflated Sharpe: insufficient return history.</div>')
 
-    parts.append(
-        '<div class="note">Remaining robustness suite (MC, param landscape, entry delay, LOSO) '
-        'lands in Phase 1. Current view is walk-forward + DSR only.</div>'
-    )
+    # --- Full robustness section if suite was run ---
+    if robustness is not None:
+        v = robustness.verdict
+        v_colour = {"ROBUST": "#2d9c3a", "INCONCLUSIVE": "#d6a02a",
+                    "FRAGILE": "#d0443e"}.get(v.verdict, "#888")
+        parts.append(
+            f'<div class="section"><div class="chart">'
+            f'<h2>Aggregate verdict</h2>'
+            f'<p style="font-size:28px;margin:6px 0;"><b style="color:{v_colour};">{v.verdict}</b></p>'
+            f'<table><thead><tr><th>Test</th><th>Outcome</th><th>Reason</th></tr></thead><tbody>'
+        )
+        for s in v.signals:
+            s_col = {"robust": "#2d9c3a", "inconclusive": "#d6a02a",
+                     "fragile": "#d0443e"}.get(s.outcome, "#888")
+            parts.append(
+                f'<tr><td><code>{s.name}</code></td>'
+                f'<td><b style="color:{s_col};">{s.outcome}</b></td>'
+                f'<td>{s.reason}</td></tr>'
+            )
+        parts.append('</tbody></table></div></div>')
+
+        # MC heatmap of percentiles (methods × metrics)
+        mc = robustness.monte_carlo
+        if mc and mc.distributions:
+    
+            metrics = mc.metrics
+            methods = mc.methods
+            z = []
+            for method in methods:
+                row = []
+                for metric in metrics:
+                    try:
+                        d = mc.get(method, metric)
+                        row.append(d.percentile_of_observed)
+                    except KeyError:
+                        row.append(None)
+                z.append(row)
+            fig = go.Figure(data=go.Heatmap(
+                z=z, x=metrics, y=methods,
+                colorscale="RdYlGn",
+                zmin=0, zmax=100,
+                text=[[f"{v:.0f}" if v is not None else "-" for v in r] for r in z],
+                texttemplate="%{text}",
+                colorbar=dict(title="Percentile"),
+            ))
+            fig.update_layout(title="MC percentile of observed (lower = worse)",
+                              height=260, margin=dict(l=80, r=20, t=50, b=40))
+            parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
+
+        # Param landscape heatmap
+        lp = robustness.param_landscape
+        if lp and lp.fitness_grid and len(lp.top_params) == 2:
+    
+            fig = go.Figure(data=go.Heatmap(
+                z=lp.fitness_grid,
+                x=[f"{v:.3g}" for v in lp.grid_values[1]],
+                y=[f"{v:.3g}" for v in lp.grid_values[0]],
+                colorscale="Viridis",
+                colorbar=dict(title="Fitness"),
+            ))
+            fig.update_layout(
+                title=f"Parameter landscape: {lp.top_params[0]} × {lp.top_params[1]}",
+                xaxis_title=lp.top_params[1], yaxis_title=lp.top_params[0],
+                height=380, margin=dict(l=80, r=20, t=50, b=40),
+            )
+            parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
+
+        # Entry delay bar chart
+        ed = robustness.entry_delay
+        if ed and ed.points:
+    
+            delays = [str(p.delay) for p in ed.points]
+            pfs = [p.metrics.profit_factor for p in ed.points]
+            fig = go.Figure(data=go.Bar(x=delays, y=pfs, marker_color="#2a7ae2"))
+            fig.update_layout(title="Profit factor vs entry delay (bars)",
+                              xaxis_title="Delay (bars)", yaxis_title="PF",
+                              height=260, margin=dict(l=50, r=20, t=50, b=40))
+            parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
+
+        # LOSO bar chart
+        lo = robustness.loso
+        if lo and lo.folds:
+    
+            syms = [f.held_out_symbol for f in lo.folds]
+            pfs = [f.metrics.profit_factor for f in lo.folds]
+            fig = go.Figure(data=go.Bar(x=syms, y=pfs, marker_color="#d0443e"))
+            fig.update_layout(title="LOSO: OOS PF with each symbol removed",
+                              xaxis_title="Held-out symbol", yaxis_title="PF",
+                              height=260, margin=dict(l=50, r=20, t=50, b=40))
+            parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
+    else:
+        parts.append(
+            '<div class="note">Pass --robustness to run the full suite '
+            '(Monte Carlo + param landscape + entry delay + LOSO + verdict).</div>'
+        )
 
     if wf and wf.windows:
         indices = []

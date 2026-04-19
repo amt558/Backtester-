@@ -34,24 +34,59 @@ def test_downloader_uses_twelvedata_when_key_present(monkeypatch):
     assert not yf_mock.called
 
 
-def test_downloader_falls_back_to_yfinance_without_key(monkeypatch):
+def test_downloader_raises_without_key_by_default(monkeypatch):
+    from tradelab.marketdata import MissingTwelveDataKey
+    monkeypatch.delenv("TWELVEDATA_API_KEY", raising=False)
+    # .env loader may have set it from a project-level .env; clear again AFTER
+    # any module-level load by forcing reload
+    from tradelab import env as env_mod
+    env_mod._LOADED = True   # prevent auto-load
+    monkeypatch.delenv("TWELVEDATA_API_KEY", raising=False)
+    with pytest.raises(MissingTwelveDataKey):
+        download_symbols(["AAPL"], start="2024-01-01", end="2024-03-01")
+
+
+def test_downloader_falls_back_to_yfinance_when_explicitly_allowed(monkeypatch):
+    monkeypatch.delenv("TWELVEDATA_API_KEY", raising=False)
+    from tradelab import env as env_mod
+    env_mod._LOADED = True
     monkeypatch.delenv("TWELVEDATA_API_KEY", raising=False)
     with patch("tradelab.marketdata.downloader.td.download") as td_mock, \
          patch("tradelab.marketdata.downloader.yf_src.download", return_value=_mock_ohlcv()) as yf_mock:
-        out = download_symbols(["AAPL"], start="2024-01-01", end="2024-03-01")
+        out = download_symbols(
+            ["AAPL"], start="2024-01-01", end="2024-03-01",
+            allow_yfinance_fallback=True,
+        )
     assert "AAPL" in out
     assert not td_mock.called
     assert yf_mock.called
 
 
-def test_downloader_falls_back_when_twelvedata_fails(monkeypatch):
+def test_downloader_falls_back_when_twelvedata_fails_and_fallback_allowed(monkeypatch):
     monkeypatch.setenv("TWELVEDATA_API_KEY", "fake_key")
     with patch("tradelab.marketdata.downloader.td.download", return_value=None) as td_mock, \
          patch("tradelab.marketdata.downloader.yf_src.download", return_value=_mock_ohlcv()) as yf_mock:
-        out = download_symbols(["AAPL"], start="2024-01-01", end="2024-03-01")
+        out = download_symbols(
+            ["AAPL"], start="2024-01-01", end="2024-03-01",
+            allow_yfinance_fallback=True,
+        )
     assert "AAPL" in out
     assert td_mock.called
     assert yf_mock.called
+
+
+def test_downloader_does_not_fall_back_when_fallback_forbidden(monkeypatch):
+    monkeypatch.setenv("TWELVEDATA_API_KEY", "fake_key")
+    with patch("tradelab.marketdata.downloader.td.download", return_value=None) as td_mock, \
+         patch("tradelab.marketdata.downloader.yf_src.download", return_value=_mock_ohlcv()) as yf_mock:
+        out = download_symbols(
+            ["AAPL"], start="2024-01-01", end="2024-03-01",
+            allow_yfinance_fallback=False,
+        )
+    # Symbol not retrieved — TD failed, yf not allowed
+    assert "AAPL" not in out
+    assert td_mock.called
+    assert not yf_mock.called
 
 
 def test_downloader_skips_cached_symbols(monkeypatch):

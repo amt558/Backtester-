@@ -10,12 +10,17 @@ from typing import Optional
 
 import typer
 
+from .audit import record_run
 from .dashboard import build_dashboard
+from .determinism import hash_config, hash_universe
 from .engines.backtest import run_backtest
 from .engines.cost_sweep import format_cost_sweep_markdown, run_cost_sweep
+from .engines.dsr import classify_dsr, deflated_sharpe_ratio
 from .engines.optimizer import run_optimization
 from .engines.walkforward import run_walkforward
+from .robustness import run_robustness_suite
 from .marketdata import (
+    MissingTwelveDataKey,
     PITViolation,
     assert_pit_valid,
     download_symbols,
@@ -35,6 +40,15 @@ def run(
     n_trials: int = typer.Option(100, help="Optuna trials (if --optimize)"),
     cost_sweep: bool = typer.Option(False, "--cost-sweep/--no-cost-sweep",
                                      help="Append cost-sensitivity sweep to the report"),
+    robustness: bool = typer.Option(False, "--robustness/--no-robustness",
+                                     help="Run the full robustness suite (MC + param landscape "
+                                          "+ entry delay + LOSO + verdict)"),
+    mc_simulations: int = typer.Option(500, help="Monte Carlo simulations per method"),
+    allow_yfinance_fallback: bool = typer.Option(
+        False, "--allow-yfinance-fallback/--no-allow-yfinance-fallback",
+        help="Permit yfinance fallback when TWELVEDATA_API_KEY is missing "
+             "(default: refuse, Twelve Data is authoritative)",
+    ),
     open_dashboard: bool = typer.Option(True, "--open-dashboard/--no-open-dashboard",
                                          help="Auto-open dashboard after build"),
 ) -> None:
@@ -62,7 +76,15 @@ def run(
 
     # --- download ---
     typer.echo("Downloading / reading cache ...")
-    data = download_symbols(symbol_list, start=start, end=end)
+    try:
+        data = download_symbols(
+            symbol_list, start=start, end=end,
+            allow_yfinance_fallback=allow_yfinance_fallback,
+        )
+    except MissingTwelveDataKey as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(4)
+
     if not data:
         typer.echo("No data retrieved for any symbol.", err=True)
         raise typer.Exit(1)
@@ -118,6 +140,22 @@ def run(
         )
         typer.echo(f"  WFE: {wf_result.wfe_ratio}  OOS PF: {wf_result.aggregate_oos.profit_factor}")
 
+    # --- optional robustness suite ---
+    robustness_result = None
+    if robustness:
+        typer.echo("Running robustness suite ...")
+        robustness_result = run_robustness_suite(
+            strat, data, bt,
+            optuna_result=opt_result, wf_result=wf_result,
+            spy_close=spy_close, start=start, end=end,
+            mc_n_simulations=mc_simulations,
+        )
+        v = robustness_result.verdict
+        typer.echo(f"  Verdict: {v.verdict} "
+                   f"({sum(1 for s in v.signals if s.outcome=='robust')} robust / "
+                   f"{sum(1 for s in v.signals if s.outcome=='inconclusive')} inconclusive / "
+                   f"{sum(1 for s in v.signals if s.outcome=='fragile')} fragile)")
+
     # --- optional cost-sensitivity sweep ---
     cost_sweep_result = None
     if cost_sweep:
@@ -135,6 +173,7 @@ def run(
     report_path = generate_executive_report(
         bt, optuna_result=opt_result, wf_result=wf_result,
         universe=data, out_dir=out_dir,
+        robustness_result=robustness_result,
     )
 
     # If cost-sweep was run, append its markdown section to the executive report
@@ -146,9 +185,38 @@ def run(
     dashboard_path = build_dashboard(
         bt, optuna_result=opt_result, wf_result=wf_result,
         universe=data, out_dir=out_dir,
+        robustness_result=robustness_result,
     )
     typer.echo(f"Report:    {report_path}")
     typer.echo(f"Dashboard: {dashboard_path}")
+
+    # --- audit trail ---
+    returns = bt.daily_returns()
+    dsr_p = None
+    verdict = None
+    if returns is not None and len(returns) >= 10:
+        n_tr = opt_result.n_trials if opt_result else 1
+        p = deflated_sharpe_ratio(returns.values, n_trials=n_tr)
+        import math as _math
+        if not _math.isnan(p):
+            dsr_p = float(p)
+            verdict = classify_dsr(p).upper()
+    # If the full robustness suite ran, its verdict supersedes the DSR classifier
+    if robustness_result is not None:
+        verdict = robustness_result.verdict.verdict
+    try:
+        run_id = record_run(
+            strategy_name=strategy,
+            verdict=verdict,
+            dsr_probability=dsr_p,
+            input_data_hash=hash_universe(data),
+            config_hash=hash_config(bt.params),
+            report_card_markdown=report_path.read_text(encoding="utf-8"),
+            report_card_html_path=str(dashboard_path),
+        )
+        typer.echo(f"Audit:     run_id={run_id[:8]}")
+    except Exception as e:
+        typer.echo(f"(Audit write failed: {e})", err=True)
 
     if open_dashboard:
         try:

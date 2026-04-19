@@ -379,6 +379,7 @@ def robustness_cmd(
 
 
 from .cli_run import run as _run_cmd; app.command(name="run")(_run_cmd)
+from .cli_history import history_app as _history_app; app.add_typer(_history_app, name="history")
 
 
 if __name__ == "__main__":

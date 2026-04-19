@@ -61,6 +61,42 @@ strategies:
       trail_tighten_atr: 1.0
       hold_bars_max: 20
 
+  # Canaries — deliberately-broken strategies for tool health checks.
+  # Never trust their numbers; never promote them. See reports/canary_suite_readme.md.
+  rand_canary:
+    module: "tradelab.canaries.rand_canary"
+    class_name: "RandCanary"
+    description: "RAND-CANARY: random entries. DSR must flag as fragile."
+    status: "canary"
+    params:
+      entry_probability: 0.02
+      seed: 42
+
+  overfit_canary:
+    module: "tradelab.canaries.overfit_canary"
+    class_name: "OverfitCanary"
+    description: "OVERFIT-CANARY: 6-param pathological. Optuna+WF must show IS/OOS decay."
+    status: "canary"
+    params: {}
+
+  leak_canary:
+    module: "tradelab.canaries.leak_canary"
+    class_name: "LeakCanary"
+    description: "LEAK-CANARY: look-ahead bias. Entry-delay test must collapse it."
+    status: "canary"
+    params:
+      lookahead_bars: 1.0
+      up_threshold: 0.01
+
+  survivor_canary:
+    module: "tradelab.canaries.survivor_canary"
+    class_name: "SurvivorCanary"
+    description: "SURVIVOR-CANARY: curated winners. LOSO must reveal per-symbol spread."
+    status: "canary"
+    params:
+      fast_n: 50.0
+      slow_n: 200.0
+
   # Example for future strategies (disabled for now)
   # s4_inside_day_breakout:
   #   module: "tradelab.strategies.s4_inside_day_breakout"

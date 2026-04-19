@@ -18,9 +18,14 @@ from typing import Optional
 
 import pandas as pd
 
+from ..env import load_env
 from . import cache
 from .sources import twelvedata as td
 from .sources import yfinance as yf_src
+
+
+class MissingTwelveDataKey(RuntimeError):
+    """Raised when TWELVEDATA_API_KEY is absent and fallback is not allowed."""
 
 
 def download_symbols(
@@ -29,7 +34,11 @@ def download_symbols(
     end: Optional[str] = None,
     timeframe: str = "1D",
     force: bool = False,
+    allow_yfinance_fallback: bool = False,
 ) -> dict[str, pd.DataFrame]:
+    # Pull keys from .env files if present (no-op if already loaded)
+    load_env()
+
     if end is None:
         end = pd.Timestamp.now().strftime("%Y-%m-%d")
 
@@ -38,8 +47,17 @@ def download_symbols(
     yf_available = yf_src.is_available()
 
     if not td_key_present:
+        if not allow_yfinance_fallback:
+            raise MissingTwelveDataKey(
+                "TWELVEDATA_API_KEY is not set in the environment or .env file. "
+                "tradelab requires Twelve Data as the authoritative data source. "
+                "Either:\n"
+                "  - Set the env var: export TWELVEDATA_API_KEY=your_key\n"
+                "  - Add to .env at repo root: TWELVEDATA_API_KEY=your_key\n"
+                "  - Pass --allow-yfinance-fallback explicitly (not recommended)"
+            )
         warnings.warn(
-            "TWELVEDATA_API_KEY not set — using yfinance fallback only.",
+            "TWELVEDATA_API_KEY not set — yfinance fallback explicitly allowed.",
             RuntimeWarning, stacklevel=2,
         )
 
@@ -64,7 +82,10 @@ def download_symbols(
             if df is not None and not df.empty:
                 source_used = "twelvedata"
 
-        if df is None and yf_available:
+        # yfinance only runs when explicitly allowed — either because TD was
+        # skipped (allow_yfinance_fallback=True and no key), or because TD
+        # returned empty for this symbol and allow_yfinance_fallback=True.
+        if df is None and yf_available and allow_yfinance_fallback:
             df = yf_src.download(sym_u, start, end, timeframe)
             if df is not None and not df.empty:
                 source_used = "yfinance"

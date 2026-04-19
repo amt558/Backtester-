@@ -59,9 +59,9 @@ def test_dashboard_has_three_tabs(simple_backtest, tmp_path):
 def test_dashboard_shows_dsr_and_robustness_stub(simple_backtest, tmp_path):
     path = build_dashboard(simple_backtest, out_dir=tmp_path)
     content = path.read_text()
-    # DSR now live. Robustness suite stub for Phase 1 remains.
+    # DSR live; robustness suite stub invites --robustness flag
     assert "Deflated Sharpe" in content or "insufficient return history" in content
-    assert "Phase 1" in content
+    assert "--robustness" in content
 
 
 def test_dashboard_handles_optuna(simple_backtest, tmp_path):

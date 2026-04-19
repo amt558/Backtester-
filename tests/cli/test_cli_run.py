@@ -60,6 +60,9 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             walkforward=False,
             n_trials=100,
             cost_sweep=False,
+            robustness=False,
+            mc_simulations=500,
+            allow_yfinance_fallback=False,
             open_dashboard=False,
         )
 

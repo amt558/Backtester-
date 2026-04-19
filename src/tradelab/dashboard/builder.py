@@ -17,6 +17,7 @@ def build_dashboard(
     wf_result: Optional[WalkForwardResult] = None,
     universe: Optional[dict] = None,
     out_dir: Optional[Path] = None,
+    robustness_result = None,
 ) -> Path:
     ts = datetime.now()
     if out_dir is None:
@@ -28,7 +29,9 @@ def build_dashboard(
     meta = f"Window: {backtest_result.start_date} → {backtest_result.end_date} · Universe: {universe_str} · Run: {ts.strftime('%Y-%m-%d %H:%M:%S')}"
 
     performance_html = tabs.performance_tab(backtest_result, wf_result)
-    robustness_html = tabs.robustness_tab(backtest_result, wf_result, optuna_result)
+    robustness_html = tabs.robustness_tab(
+        backtest_result, wf_result, optuna_result, robustness=robustness_result
+    )
     parameters_html = tabs.parameters_tab(optuna_result)
 
     data_hash = hash_universe(universe) if universe else None

@@ -15,6 +15,12 @@ from ..engines.dsr import classify_dsr, deflated_sharpe_ratio
 from ..results import BacktestResult, OptunaResult, WalkForwardResult
 from . import templates as T
 
+# Avoid a hard import cycle: robustness imports reporting types are minimal.
+try:
+    from ..robustness import RobustnessSuiteResult
+except ImportError:
+    RobustnessSuiteResult = None  # type: ignore
+
 
 def _compute_dsr(bt: BacktestResult, opt: Optional[OptunaResult]) -> tuple[float, str]:
     """Compute DSR from backtest equity curve. Returns (probability, classification)."""
@@ -86,12 +92,99 @@ def _observations(bt: BacktestResult, opt: Optional[OptunaResult], wf: Optional[
     return obs
 
 
+def _render_robustness_section(robust) -> str:
+    """Render the full robustness section from a RobustnessSuiteResult."""
+    parts = [T.ROBUSTNESS_HEADER.format(verdict=robust.verdict.verdict)]
+    for s in robust.verdict.signals:
+        parts.append(T.ROBUSTNESS_ROW.format(
+            name=s.name, outcome=s.outcome, reason=s.reason,
+        ))
+
+    # MC table
+    mc = robust.monte_carlo
+    if mc and mc.distributions:
+        mc_lines = []
+        for method in mc.methods:
+            cells = []
+            for metric in ["max_dd", "max_loss_streak", "time_underwater", "ulcer_index"]:
+                try:
+                    d = mc.get(method, metric)
+                    cells.append(f"{d.observed:.2f} ({d.percentile_of_observed:.0f})")
+                except KeyError:
+                    cells.append("-")
+            mc_lines.append(f"| {method} | " + " | ".join(cells) + " |")
+        mc_rows = "\n".join(mc_lines)
+    else:
+        mc_rows = "| (no trades) | - | - | - | - |"
+
+    # Landscape
+    lp = robust.param_landscape
+    if lp and len(lp.top_params) == 2:
+        lp0, lp1 = lp.top_params[0], lp.top_params[1]
+        best_f = lp.best_fitness
+        mean_f = lp.mean_fitness
+        smooth = lp.smoothness_ratio
+        cliff = "yes" if lp.cliff_flag else "no"
+        grid_size = len(lp.fitness_grid) if lp.fitness_grid else 0
+    else:
+        lp0 = lp1 = "-"
+        best_f = mean_f = smooth = 0.0
+        cliff = "-"
+        grid_size = 0
+
+    # Entry delay
+    ed = robust.entry_delay
+    ed_rows_list = []
+    pf_drop = 0.0
+    if ed and ed.points:
+        for p in ed.points:
+            m = p.metrics
+            ed_rows_list.append(
+                f"| +{p.delay} | {m.total_trades} | {m.profit_factor} | {m.sharpe_ratio} | {m.pct_return}% |"
+            )
+        pf_drop = ed.pf_drop_one_bar
+    ed_rows = "\n".join(ed_rows_list) if ed_rows_list else "| - | - | - | - | - |"
+
+    # LOSO
+    lo = robust.loso
+    loso_rows_list = []
+    if lo and lo.folds:
+        for f in lo.folds:
+            m = f.metrics
+            loso_rows_list.append(
+                f"| {f.held_out_symbol} | {m.total_trades} | {m.profit_factor} | {m.sharpe_ratio} | {m.pct_return}% |"
+            )
+        pf_mean = lo.pf_mean
+        pf_min = lo.pf_min
+        pf_max = lo.pf_max
+        pf_spread = lo.pf_spread
+        n_folds = len(lo.folds)
+    else:
+        pf_mean = pf_min = pf_max = pf_spread = 0.0
+        n_folds = 0
+    loso_rows = "\n".join(loso_rows_list) if loso_rows_list else "| - | - | - | - | - |"
+
+    parts.append(T.ROBUSTNESS_DETAILS.format(
+        n_sims=mc.n_simulations if mc else 0,
+        mc_rows=mc_rows,
+        grid_size=grid_size,
+        lp0=lp0, lp1=lp1,
+        best_fitness=best_f, mean_fitness=mean_f, smoothness=smooth, cliff=cliff,
+        ed_rows=ed_rows,
+        pf_drop=pf_drop,
+        n_folds=n_folds, pf_mean=pf_mean, pf_min=pf_min, pf_max=pf_max, pf_spread=pf_spread,
+        loso_rows=loso_rows,
+    ))
+    return "".join(parts)
+
+
 def generate_executive_report(
     backtest_result: BacktestResult,
     optuna_result: Optional[OptunaResult] = None,
     wf_result: Optional[WalkForwardResult] = None,
     universe: Optional[dict] = None,
     out_dir: Optional[Path] = None,
+    robustness_result = None,
 ) -> Path:
     """
     Generate the executive report.
@@ -176,8 +269,11 @@ def generate_executive_report(
     else:
         parts.append(T.PARAM_IMPORTANCE_NONE)
 
-    # Robustness stub
-    parts.append(T.ROBUSTNESS_STUB)
+    # Robustness — either full section (if suite was run) or stub
+    if robustness_result is not None:
+        parts.append(_render_robustness_section(robustness_result))
+    else:
+        parts.append(T.ROBUSTNESS_STUB)
 
     # Where it breaks
     parts.append(T.WHERE_IT_BREAKS_HEADER)
@@ -186,7 +282,7 @@ def generate_executive_report(
         for w in weak:
             parts.append(f"- {w}\n")
     else:
-        parts.append("*No structural weaknesses detected at current threshold (OOS PF < 0.9). Full per-symbol breakdown pending Phase 1 LOSO.*\n")
+        parts.append("*No structural weaknesses detected at current threshold (OOS PF < 0.9). Per-symbol breakdown appears in section 5d when --robustness is passed.*\n")
     parts.append("\n---\n")
 
     # Observations

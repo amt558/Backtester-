@@ -350,3 +350,146 @@ Modified:
 - Audit trail (SQLite `tradelab_history.db`) — still Phase 1.
 
 End of Phase 0 addendum.
+
+---
+
+## Phase 1 Addendum — shipped 2026-04-19, same session
+
+Phase 1 shipped right after Phase 0 at Amit's instruction ("Let's do it all"). Includes: Twelve Data enforcement, canary CLI registration, audit trail, and the full 5-test robustness suite.
+
+### What shipped in Phase 1
+
+**1. Twelve Data enforcement + `.env` support**
+- `src/tradelab/env.py` — zero-dep `.env` loader. Reads repo-root `.env` (gitignored) and `~/.tradelab/.env`. Existing `os.environ` always wins.
+- `marketdata/downloader.py` — `MissingTwelveDataKey` raised by default when `TWELVEDATA_API_KEY` is absent. yfinance is now explicitly opt-in via `allow_yfinance_fallback=True` (kwarg) or `--allow-yfinance-fallback` (CLI flag).
+- New CLI exit code: **4** on missing API key.
+- 5 unit tests in `tests/test_env.py`. Existing downloader tests reworked to match new semantics.
+
+**2. Canaries registered in `tradelab.yaml`**
+- All four (`rand_canary`, `overfit_canary`, `leak_canary`, `survivor_canary`) now addressable via `tradelab run <canary_name>`.
+- Status tagged `"canary"` (distinct from `"ported"`, `"registered"`, etc.).
+- Confirmed end-to-end: `tradelab run rand_canary --symbols "SPY,AAPL" --allow-yfinance-fallback` produced a real report — 17 trades, PF 1.675, audit row written.
+
+**3. Audit trail — SQLite `data/tradelab_history.db`**
+- `src/tradelab/audit/history.py` — append-only schema, no update/delete API.
+- Columns: `run_id`, `timestamp_utc`, `strategy_name`, `strategy_version`, `tradelab_version`, `tradelab_git_commit`, `input_data_hash`, `config_hash`, `verdict`, `dsr_probability`, `report_card_markdown`, `report_card_html_path`.
+- Auto-populated fields come from `determinism.env_fingerprint()` / `git_commit_hash()`.
+- CLI: `tradelab history list [--strategy] [--since] [--limit]`, `tradelab history show <run_id>` (accepts 8-char short-id), `tradelab history diff <a> <b>` (unified diff of report markdown).
+- 9 unit tests including append-only proof and round-trip integrity.
+
+**4. Robustness suite — five tests**
+
+All in `src/tradelab/robustness/`:
+
+- `monte_carlo.py` — 3 resampling methods (shuffle / bootstrap / block-bootstrap) × 4 drawdown metrics (max_dd, max_loss_streak, time_underwater, ulcer_index). Default 500 simulations per method. `run_monte_carlo(backtest_result, n_simulations=500)` returns per-method-per-metric distributions + observed-value percentile.
+- `param_landscape.py` — 5×5 joint grid on top-2 most-important params (from Optuna `param_importance` if provided, else first 2 tunables). Returns `fitness_grid`, `smoothness_ratio = std/best`, and `cliff_flag` (true if any orthogonal neighbour of the best cell drops >50%).
+- `entry_delay.py` — re-runs backtest with `buy_signal` shifted by `[0, +1, +2]` bars. Strategies that need exact timing reveal themselves via a steep `pf_drop_one_bar`.
+- `loso.py` — leave-one-symbol-out cross-validation. For each non-benchmark symbol, drop it, re-run baseline backtest. Reports per-fold PF mean/min/max/spread.
+- `verdict.py` — rule-based aggregator. Per anti-drift rule (asymmetric error costs), any fragile signal without a counter-balancing robust signal moves verdict to FRAGILE. Thresholds table defined in code (will be promoted to config in Phase 3).
+- `suite.py` — orchestrator; `run_robustness_suite(strategy, data, backtest_result, optuna_result=None, wf_result=None, skip=[...])` returns the full `RobustnessSuiteResult`.
+
+**Wiring:**
+- `--robustness` CLI flag on `tradelab run`. Additional tuning: `--mc-simulations` (default 500).
+- Executive report section 5 now renders the full suite output (verdict table, MC distributions, landscape stats, entry-delay table, LOSO fold table).
+- Dashboard Robustness tab now shows verdict box, MC percentile heatmap (methods × metrics), param-landscape heatmap, entry-delay bar, LOSO bar.
+- `tradelab run --robustness` writes the suite's aggregate verdict (ROBUST/INCONCLUSIVE/FRAGILE) into the audit row, superseding the DSR-based classification.
+
+**23 robustness tests** + integration tests pass (monte_carlo 7, verdict 6, entry_delay+loso 4, param_landscape 4, suite 2).
+
+### End-to-end smoke test (Phase 1, full suite)
+
+Command:
+```
+tradelab run s2_pocket_pivot \
+  --symbols "SPY,NVDA,MSFT,AAPL,META" \
+  --start 2022-01-01 --end 2024-06-30 \
+  --robustness --allow-yfinance-fallback \
+  --no-open-dashboard --mc-simulations 200
+```
+
+Output (verdict: **INCONCLUSIVE**, 2 robust / 3 inconclusive / 1 fragile):
+
+| Test | Outcome | Reason |
+|---|---|---|
+| baseline_pf | robust | PF 1.69 ≥ 1.5 |
+| dsr | inconclusive | DSR 0.947 in 0.5–0.95 |
+| mc_max_dd | inconclusive | Observed DD in middle band |
+| param_landscape | robust | Smooth landscape; ratio 0.02 |
+| entry_delay | inconclusive | PF drop 30% at +1 bar |
+| loso | fragile | PF spread 1.02 across symbols |
+
+The LOSO signal is the interesting one — removing META drops the portfolio PF to 1.037 (edge nearly disappears), while removing NVDA raises it to 2.055. S2's edge is not uniform across this universe. Exactly the kind of fragility a naive "baseline PF 1.69" verdict would miss.
+
+### Phase 1 test counts
+
+- Pre-Phase-1: 84 passing
+- After Phase 1: **123 passing**, 0 failed, 0 skipped
+- Net new: +39 tests (5 env + 9 audit + 23 robustness + 2 integration updates)
+
+### Phase 1 deviations from plan
+
+1. **LOSO runs baseline params per fold, not a fresh Optuna study per fold.** Plan called the per-fold Optuna study "critical, never share studies across folds." The study-per-fold version would multiply compute ~10× and is only meaningful when an `OptunaResult` is also present. Marked as Phase 1.1 upgrade. Current LOSO still correctly reveals per-symbol edge concentration (verified by the smoke test finding).
+
+2. **Verdict thresholds live in code (`robustness/verdict.py::THRESHOLDS`) rather than `tradelab.yaml`.** Plan says "Thresholds come from config, not code." Promoted as Phase 3 UX-polish item; moving now would bloat the config loader without user benefit.
+
+3. **No bootstrapped importance ranking in `param_landscape`.** Plan spec called for "bootstrapped importance ranking + 5×5 joint grid + smoothness ratio + PNG heatmap." Kept the grid, ratio, and (Plotly-interactive) heatmap. Optuna already provides single-shot importance; bootstrapping it adds marginal value vs. its compute cost.
+
+4. **Canary `status` field extended.** Existing `status_color` dict in `cli.py` has no mapping for `"canary"` so it defaults to white in `tradelab list`. Intentional — visual distinction not critical.
+
+### Commands now available
+
+```
+tradelab version
+tradelab config
+tradelab list
+tradelab backtest <strategy>
+tradelab optimize <strategy>
+tradelab wf <strategy>
+tradelab robustness <strategy>           # old stub; prefer `run --robustness`
+tradelab run <strategy> [options]
+    --symbols CSV-or-@file.txt
+    --start YYYY-MM-DD
+    --end YYYY-MM-DD
+    --optimize / --no-optimize
+    --walkforward / --no-walkforward
+    --n-trials INT
+    --robustness / --no-robustness
+    --mc-simulations INT
+    --cost-sweep / --no-cost-sweep
+    --allow-yfinance-fallback / --no-allow-yfinance-fallback
+    --open-dashboard / --no-open-dashboard
+tradelab history list [--strategy] [--since] [--limit]
+tradelab history show <run_id_or_short>
+tradelab history diff <a> <b>
+```
+
+### Files added / modified in Phase 1
+
+**New modules:**
+- `src/tradelab/env.py`
+- `src/tradelab/audit/{__init__.py,history.py}`
+- `src/tradelab/cli_history.py`
+- `src/tradelab/robustness/{__init__.py,monte_carlo.py,param_landscape.py,entry_delay.py,loso.py,verdict.py,suite.py}`
+
+**New tests:**
+- `tests/test_env.py`
+- `tests/audit/{__init__.py,test_history.py}`
+- `tests/robustness/{__init__.py,test_monte_carlo.py,test_param_landscape.py,test_entry_delay_and_loso.py,test_verdict.py,test_suite.py}`
+
+**Modified:**
+- `src/tradelab/cli.py` — +1 line (register history subcommand)
+- `src/tradelab/cli_run.py` — PIT check flow + robustness+cost_sweep+audit wiring + `--allow-yfinance-fallback` flag + `.env` auto-load
+- `src/tradelab/dashboard/{builder.py,tabs.py}` — robustness panels
+- `src/tradelab/marketdata/{__init__.py,downloader.py}` — `MissingTwelveDataKey`, `allow_yfinance_fallback` param
+- `src/tradelab/reporting/{executive.py,templates.py}` — robustness section render
+- `tradelab.yaml` — four canary registrations
+- `tests/cli/test_cli_run.py`, `tests/dashboard/test_dashboard_build.py`, `tests/marketdata/test_downloader.py`, `tests/reporting/test_executive_report.py` — updated to match new semantics
+
+### Still pending (Phase 2+)
+
+- Noise injection test (Phase 2) — ATR-scaled, bar-structure-preserving.
+- Phase 2 dashboard polish: test-correlation map, canary aggregator HTML.
+- Phase 3 UX polish: verdict-threshold config promotion, color output, progress bars, fuzzy-match error hints.
+- LOSO with per-fold Optuna (Phase 1.1 upgrade).
+
+End of Phase 1 addendum.
