@@ -26,7 +26,19 @@ def build_dashboard(
 
     title = f"{backtest_result.strategy} — tradelab dashboard"
     universe_str = ", ".join(sorted(universe.keys())) if universe else "see config"
-    meta = f"Window: {backtest_result.start_date} → {backtest_result.end_date} · Universe: {universe_str} · Run: {ts.strftime('%Y-%m-%d %H:%M:%S')}"
+    m = backtest_result.metrics
+    # Headline P&L line gets prime real estate in the header
+    pnl_line = (
+        f"Net P&amp;L: ${m.net_pnl:,.0f} · "
+        f"{m.pct_return}% return · "
+        f"{m.total_trades} trades · "
+        f"WR {m.win_rate}% · PF {m.profit_factor} · Sharpe {m.sharpe_ratio}"
+    )
+    meta = (
+        f"<b>{pnl_line}</b><br>"
+        f"Window: {backtest_result.start_date} → {backtest_result.end_date} · "
+        f"Universe: {universe_str} · Run: {ts.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
     performance_html = tabs.performance_tab(backtest_result, wf_result)
     robustness_html = tabs.robustness_tab(

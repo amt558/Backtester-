@@ -14,6 +14,8 @@ VERDICT = """## Executive verdict
 
 {verdict_line}
 
+**Net P&L:** ${net_pnl:,.2f} on ${initial_capital:,.0f} starting capital ({pct_return}% over the test window) — **{trades}** trades, win rate **{win_rate}%**, profit factor **{pf}**, Sharpe **{sharpe}**.
+
 ---
 """
 

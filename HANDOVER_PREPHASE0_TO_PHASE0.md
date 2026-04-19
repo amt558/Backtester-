@@ -678,3 +678,111 @@ Doctor: all critical checks passed.
 td_key is the one expected fail — set the .env file and re-run.
 
 End of discovery-polish addendum.
+
+---
+
+## Strategy-authoring Addendum — shipped 2026-04-19, same session
+
+Triggered by user's ask: "this backtest should allow me to place any pinscript / python / report of my proposed strategy and backtest it exactly as intended."
+
+Realistic scope: full Pine Script auto-translation is out of reach (would need a Pine parser + runtime model). What I shipped instead is the infrastructure to make any strategy translation a 30-minute job: SimpleStrategy base class + scaffolding command + authoring guide + worked example port.
+
+### What shipped
+
+**1. `--full` mega-flag** — `tradelab run X --full` activates `--optimize --walkforward --cost-sweep --robustness` simultaneously. One command for the complete forensic package.
+
+**2. P&L prominence** — Net dollar P&L is now in the executive verdict line of the markdown report ("Net P&L: $1,234 on $100,000 starting capital, 1.23% return — 88 trades, win rate 60.45%, profit factor 1.69, Sharpe 2.473"). Dashboard header now shows the same headline before any other meta.
+
+**3. SimpleStrategy base class** (`src/tradelab/strategies/simple.py`)
+- Subclass-able with two methods: `entry_signal(row, prev, params, prev2=None)` and optional `entry_score(...)`.
+- Mirrors the Pine `strategy.entry()` shape and the `/c/TradingScripts/FINAL STRATEGYIE/` `entry_fn` pattern.
+- Generates the `buy_signal` / `entry_stop` / `entry_score` columns the engine consumes.
+- Engine's default ATR-trailing exit is reused (custom exits would need exit_signal hook — Phase 4+).
+- 6 unit tests including subclass-bug isolation.
+
+**4. `tradelab init-strategy NAME`** (`src/tradelab/cli_init.py`)
+- Two templates: `--type=simple` (SimpleStrategy boilerplate) or `--type=advanced` (full Strategy.generate_signals).
+- Auto-registers in `tradelab.yaml`.
+- Validates name (snake_case, no leading digit), refuses overwrite without `--force`, normalises `My-Cool-Strat` → `my_cool_strat` + `MyCoolStrat`.
+- 10 unit tests including syntax-validity check via `compile()`.
+
+**5. S4 Inside Day Breakout port** (`src/tradelab/strategies/s4_inside_day_breakout.py`)
+- Worked example using SimpleStrategy. Logic verbatim from `/c/TradingScripts/FINAL STRATEGYIE/s4_inside_day_breakout.py`.
+- Registered in tradelab.yaml as `s4_inside_day_breakout`.
+- Live-tested via `tradelab run s4_inside_day_breakout --universe smoke_5 --robustness` → verdict FRAGILE (9 trades, PF 1.047, Sharpe 0.409 — exactly what the tool should say about a strategy with too few signals on a small universe).
+
+**6. AUTHORING.md** — top-level authoring guide covering:
+- Three paths (Python pseudocode, Pine Script, existing Python files)
+- Full indicator reference (every column on `row`)
+- The contract: required attrs, required exit knobs in default_params
+- Pine → tradelab translation table (RSI, SMA, ATR, Vol, inside-day, strategy.entry, strategy.exit, input.float)
+- C-pattern translation (entry_fn → entry_signal) with before/after example
+- When to use `--type=advanced`
+
+### Test counts
+
+- Before this block: 157 passing
+- After authoring block: **173 passing**, 0 failed, 0 skipped
+- Net new: +16 tests (6 SimpleStrategy + 10 init-strategy)
+
+### How users add a strategy now
+
+```bash
+# 60 seconds:
+tradelab init-strategy my_idea --type=simple --description "RSI oversold + breakout"
+# Edit src/tradelab/strategies/my_idea.py — fill in entry_signal()
+tradelab run my_idea --universe magnificent_7 --start 2022-01-01 --robustness
+```
+
+For Pine Script, paste the `strategy.entry()` and `strategy.exit()` blocks; the AUTHORING.md table maps each Pine call to its tradelab equivalent.
+
+### Live S4 result for context
+
+Command:
+```
+tradelab run s4_inside_day_breakout --universe smoke_5 --start 2022-01-01 --end 2024-06-30 --robustness
+```
+
+Output:
+- Net P&L: small (9 trades on 5 symbols over 2.5 years — undertraded)
+- PF: 1.047 (just above breakeven)
+- Sharpe: 0.409
+- Verdict: **FRAGILE** (1 robust / 3 inconclusive / 3 fragile)
+
+The tool correctly flagged it. With a wider universe (say `big_tech_15`) and longer window, S4 may look better — that's the appropriate next experiment.
+
+### Files added
+
+Source:
+- `src/tradelab/strategies/simple.py`
+- `src/tradelab/strategies/s4_inside_day_breakout.py`
+- `src/tradelab/cli_init.py`
+
+Docs:
+- `AUTHORING.md`
+
+Tests:
+- `tests/strategies/__init__.py`
+- `tests/strategies/test_simple_strategy.py`
+- `tests/cli/test_cli_init.py`
+
+### Modified
+
+- `src/tradelab/cli.py` — +1 line registering init-strategy
+- `src/tradelab/cli_run.py` — `--full` mega-flag
+- `src/tradelab/dashboard/builder.py` — P&L line in header
+- `src/tradelab/reporting/templates.py` + `executive.py` — P&L line in verdict block
+- `tradelab.yaml` — s4_inside_day_breakout entry promoted from comment to registered
+- `tests/cli/test_cli_run.py` + `test_cli_universes.py` — pass `full=False` kwarg
+
+### Phase-4 next moves (ports of remaining 4 strategies)
+
+The remaining strategies in `/c/TradingScripts/FINAL STRATEGYIE/`:
+- s7_rdz_momentum.py
+- s8_bullish_outside_day.py
+- s10_rs_new_highs.py
+- s12_momentum_acceleration.py
+
+Each follows the same `entry_fn`/`exit_fn` pattern and ports the same way as S4. ~30-45 min each now that the SimpleStrategy + scaffolding workflow is established. User to pick priority.
+
+End of strategy-authoring addendum.

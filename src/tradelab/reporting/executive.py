@@ -237,10 +237,22 @@ def generate_executive_report(
         universe=universe_str,
     )]
 
-    # Verdict
+    # Verdict + headline P&L (initial_capital from config; defaults to 100k if config missing)
     wfe_val = wf_result.wfe_ratio if wf_result else 0.0
+    try:
+        from ..config import get_config
+        initial_capital = float(get_config().defaults.initial_capital)
+    except Exception:
+        initial_capital = 100_000.0
     parts.append(T.VERDICT.format(
-        verdict_line=_verdict_line(m.profit_factor, m.sharpe_ratio, wfe_val)
+        verdict_line=_verdict_line(m.profit_factor, m.sharpe_ratio, wfe_val),
+        net_pnl=m.net_pnl,
+        initial_capital=initial_capital,
+        pct_return=m.pct_return,
+        trades=m.total_trades,
+        win_rate=m.win_rate,
+        pf=m.profit_factor,
+        sharpe=m.sharpe_ratio,
     ))
 
     # Edge metrics

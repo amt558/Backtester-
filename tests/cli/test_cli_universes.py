@@ -100,7 +100,7 @@ def test_cli_run_universe_resolves_symbol_list(tmp_path, monkeypatch):
             universe="big_tech",
             start="2024-01-01", end="2024-03-31",
             optimize=False, walkforward=False, n_trials=100,
-            cost_sweep=False, robustness=False, mc_simulations=500,
+            cost_sweep=False, robustness=False, full=False, mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
             allow_yfinance_fallback=False, open_dashboard=False,
         )
@@ -121,7 +121,7 @@ def test_cli_run_universe_unknown_exits(tmp_path, monkeypatch):
             universe="not_a_real_universe",
             start="2024-01-01", end="2024-03-31",
             optimize=False, walkforward=False, n_trials=100,
-            cost_sweep=False, robustness=False, mc_simulations=500,
+            cost_sweep=False, robustness=False, full=False, mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
             allow_yfinance_fallback=False, open_dashboard=False,
         )

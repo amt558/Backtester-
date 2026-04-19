@@ -112,14 +112,16 @@ strategies:
       fast_n: 50.0
       slow_n: 200.0
 
-  # Example for future strategies (disabled for now)
-  # s4_inside_day_breakout:
-  #   module: "tradelab.strategies.s4_inside_day_breakout"
-  #   class_name: "S4InsideDayBreakout"
-  #   description: "Inside-day tight-range breakout with volume confirmation"
-  #   status: "pending"
-  #   params:
-  #     min_range_contraction: 0.5
+  s4_inside_day_breakout:
+    module: "tradelab.strategies.s4_inside_day_breakout"
+    class_name: "S4InsideDayBreakout"
+    description: "Inside-day tight-range breakout with volume confirmation"
+    status: "ported"
+    params:
+      atr_pct_max: 8.0
+      rs_threshold: 0.0
+      vol_ratio_min: 1.2
+      stop_atr_mult: 1.5
 
 # Named universes — pass via `tradelab run --universe NAME` instead of
 # typing each ticker. Edit freely. SPY is auto-included for strategies

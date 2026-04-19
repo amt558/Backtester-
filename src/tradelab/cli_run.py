@@ -44,6 +44,9 @@ def run(
     robustness: bool = typer.Option(False, "--robustness/--no-robustness",
                                      help="Run the full robustness suite (MC + param landscape "
                                           "+ entry delay + LOSO + verdict)"),
+    full: bool = typer.Option(False, "--full/--no-full",
+                               help="Mega-flag: turns on --optimize, --walkforward, "
+                                    "--cost-sweep, and --robustness simultaneously"),
     mc_simulations: int = typer.Option(500, help="Monte Carlo simulations per method"),
     noise_seeds: int = typer.Option(50, help="Noise injection seed count"),
     noise_sigma_bp: float = typer.Option(5.0, help="Noise sigma in basis points"),
@@ -59,6 +62,13 @@ def run(
     """
     Run a full strategy evaluation and produce a report + interactive dashboard.
     """
+    # --- mega-flag: --full implies all four pillars ---
+    if full:
+        optimize = True
+        walkforward = True
+        cost_sweep = True
+        robustness = True
+
     # --- resolve universe ---
     symbol_list: list[str] = []
     if universe:
