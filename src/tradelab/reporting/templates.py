@@ -108,7 +108,7 @@ Observed values with their percentile in the resampling distributions ({n_sims} 
 
 PF drop from 0→+1 bar: **{pf_drop:.1%}**
 
-### 5d. LOSO cross-symbol ({n_folds} folds)
+### 5d. LOSO cross-symbol ({n_folds} folds, {loso_mode})
 
 - Per-fold PF mean: {pf_mean:.3f} · min: {pf_min:.3f} · max: {pf_max:.3f}
 - Spread (max−min): **{pf_spread:.3f}**
@@ -116,6 +116,12 @@ PF drop from 0→+1 bar: **{pf_drop:.1%}**
 | Held-out symbol | Trades | PF | Sharpe | Return% |
 |---|---|---|---|---|
 {loso_rows}
+
+### 5e. Noise injection ({n_noise_seeds} seeds at {noise_sigma_bp} bp)
+
+- Baseline PF: {baseline_pf} · Mean noisy PF: {pf_mean_noise:.3f} · Stdev: {pf_std_noise:.3f}
+- P5 noisy PF: {pf_p5_noise:.3f} · P95: {pf_p95_noise:.3f}
+- PF drop from baseline to P5: **{pf_drop_p5:.1%}**
 
 ---
 """

@@ -493,3 +493,113 @@ tradelab history diff <a> <b>
 - LOSO with per-fold Optuna (Phase 1.1 upgrade).
 
 End of Phase 1 addendum.
+
+---
+
+## Phase 1.1 + 2 + 3 Addendum — shipped 2026-04-19, same session
+
+Continued same session per Amit's "contenue" instruction. Wraps up the plan's remaining Phase 1.1 LOSO upgrade + Phase 2 noise injection + canary aggregator + Phase 3 config promotion + UX polish.
+
+### What shipped
+
+**1. LOSO per-fold Optuna (Phase 1.1)**
+- `run_loso(..., n_trials_per_fold=N, seed_base=42)` runs a fresh Optuna study in each fold. Seed = `seed_base + fold_idx` so studies are deterministic but distinct (no cross-fold leakage, per master-plan anti-drift rule).
+- `LOSOFold.best_params` populated when per-fold Optuna runs.
+- `LOSOResult.n_trials_per_fold` (0 = baseline-params mode).
+- New CLI flag `--loso-trials-per-fold`.
+- New test: `test_loso_per_fold_optuna_populates_best_params`.
+
+**2. Noise injection test (Phase 2a)**
+- `src/tradelab/robustness/noise_injection.py` — 6th robustness test.
+- ATR-scaled Gaussian noise on OHLC with bar-structure preservation (H ≥ max(O,C), L ≤ min(O,C) enforced).
+- Default 50 seeds × 5bp sigma per master plan. Indicators re-computed per noisy realisation.
+- `NoiseInjectionResult.pf_drop_p5_from_baseline` — key metric: fraction PF drops at 5th-percentile noisy run.
+- Integrated into `compute_verdict` with thresholds `noise_pf_drop_p5_fragile=0.40`, `noise_pf_drop_p5_robust=0.10`.
+- New CLI flags `--noise-seeds`, `--noise-sigma-bp`.
+- Report section 5e + dashboard histogram (with baseline PF marker).
+- 5 unit tests including OHLC-inequality preservation and determinism.
+
+**3. Canary aggregator (Phase 2b)**
+- `src/tradelab/cli_canary.py` — `tradelab canary-health` subcommand.
+- Pulls the most-recent audit row for each of the 4 registered canaries; renders a one-page HTML card per canary.
+- Flags in red if any canary produced `ROBUST` verdict (= tool broken).
+- Terminal colored summary in addition to HTML.
+- 4 unit tests including the ROBUST-is-broken assertion.
+
+**4. Verdict thresholds promoted to config (Phase 3a)**
+- `config.RobustnessThresholds` pydantic model; nested under `RobustnessConfig.thresholds`.
+- `tradelab.yaml` now has a `robustness.thresholds:` block exposing every threshold.
+- `verdict._resolve_thresholds()` reads config on every call, falls back to code defaults when yaml is unavailable. No restart needed for yaml edits to take effect.
+- 3 tests including a monkey-patched yaml override that flips `baseline_pf` from `robust` to `inconclusive`.
+
+**5. Progress bars + fuzzy error hints (Phase 3b)**
+- `run_monte_carlo(..., progress=True)` shows a Rich progress bar per method. `run_robustness_suite(..., show_progress=True)` routes through to MC (the only long-running inner loop). CLI's `--robustness` run now shows bars for free.
+- `registry.get_strategy_entry()` uses `difflib.get_close_matches(cutoff=0.5)`: `Strategy 'pocket' not registered. Did you mean: s2_pocket_pivot?`.
+- 3 fuzzy-suggestion tests.
+
+### Test counts
+
+- Before this session block: 123
+- After Phase 1.1/2/3: **139 passing**, 0 failed, 0 skipped
+- Net new: +16 tests (1 LOSO Optuna + 5 noise + 4 canary-health + 3 config + 3 fuzzy)
+
+### Full CLI surface now
+
+```
+tradelab version
+tradelab config
+tradelab list
+tradelab backtest <strategy>
+tradelab optimize <strategy>
+tradelab wf <strategy>
+tradelab robustness <strategy>              (old stub; prefer `run --robustness`)
+tradelab run <strategy> [--symbols] [--start] [--end]
+        [--optimize] [--walkforward] [--n-trials N]
+        [--robustness] [--mc-simulations 500]
+        [--noise-seeds 50] [--noise-sigma-bp 5.0]
+        [--loso-trials-per-fold 0]
+        [--cost-sweep]
+        [--allow-yfinance-fallback]
+        [--open-dashboard]
+tradelab history list [--strategy] [--since] [--limit]
+tradelab history show <run_id_or_short>
+tradelab history diff <a> <b>
+tradelab canary-health [--out PATH] [--open / --no-open]
+```
+
+### Files added
+
+Source:
+- `src/tradelab/robustness/noise_injection.py`
+- `src/tradelab/cli_canary.py`
+
+Tests:
+- `tests/robustness/test_noise_injection.py`
+- `tests/robustness/test_verdict_config.py`
+- `tests/cli/test_cli_canary.py`
+- `tests/test_registry_fuzzy.py`
+
+Modified:
+- `src/tradelab/robustness/loso.py` (per-fold Optuna mode)
+- `src/tradelab/robustness/suite.py` (noise + progress routing)
+- `src/tradelab/robustness/verdict.py` (noise signal + config-sourced thresholds)
+- `src/tradelab/robustness/__init__.py` (exports)
+- `src/tradelab/robustness/monte_carlo.py` (progress bar)
+- `src/tradelab/config.py` (RobustnessThresholds model)
+- `src/tradelab/registry.py` (fuzzy suggestions)
+- `src/tradelab/cli.py` (+1 line for canary-health)
+- `src/tradelab/cli_run.py` (new flags + progress + noise wiring)
+- `src/tradelab/reporting/executive.py` + `templates.py` (section 5e noise, LOSO mode label)
+- `src/tradelab/dashboard/tabs.py` (noise histogram)
+- `tradelab.yaml` (thresholds block)
+- Several test files updated for new kwargs
+
+### What's left for real Phase 4+
+
+- Phase 4 ports: CG-TFE v1.5, Viprasol v8.2, third reference — need their source.
+- Phase 5 research ports: DeepVue strategies, marketcalls templates — same.
+- Phase 6 deep diagnostics: `tradelab diagnose` for prescription, regime conditioning — build only when triggered.
+
+tradelab is at the end of its plannable discovery work. Running strategies through it now produces a full forensic package: executive report with DSR + robustness section 5 (MC + landscape + delay + LOSO + noise) + aggregate verdict + optional Optuna + optional WF + optional cost sweep, plus an interactive HTML dashboard with all of the above plus the audit trail for long-term forensics.
+
+End of Phase 1.1/2/3 addendum.

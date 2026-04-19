@@ -41,6 +41,21 @@ robustness:
   noise_sigma_pct: 0.05      # 5 bps Gaussian price noise
   param_sensitivity_pct: 10  # perturb each param by ±10%
   entry_delay_bars: [-2, -1, 0, 1, 2]  # test signal shift robustness
+  thresholds:
+    # Verdict-engine thresholds. Edit here to retune without touching code.
+    pf_robust: 1.5
+    pf_fragile: 1.1
+    dsr_robust: 0.95
+    dsr_fragile: 0.50
+    mc_dd_fragile_percentile: 10.0
+    smoothness_robust: 0.15
+    smoothness_fragile: 0.40
+    entry_delay_fragile: 0.50
+    loso_fragile_spread: 1.0
+    wfe_robust: 0.75
+    wfe_fragile: 0.50
+    noise_pf_drop_p5_fragile: 0.40
+    noise_pf_drop_p5_robust: 0.10
 
 # Registered strategies — add entries here as you build more.
 # Each entry maps a friendly name to its Python module path.

@@ -148,6 +148,7 @@ def run_monte_carlo(
     metrics: list[str] = None,
     seed: int = 101,
     starting_equity: float = 100_000.0,
+    progress: bool = False,
 ) -> MonteCarloResult:
     """
     Resample the trade P&L sequence N times per method and compute each
@@ -191,14 +192,27 @@ def run_monte_carlo(
         )
 
     rng = np.random.default_rng(seed)
+
+    # Optional Rich progress bar
+    pbar_ctx = None
+    if progress:
+        try:
+            from rich.progress import Progress
+            pbar_ctx = Progress()
+            pbar_ctx.start()
+            task_ids = {m: pbar_ctx.add_task(f"MC {m}", total=n_simulations) for m in methods}
+        except Exception:
+            pbar_ctx = None
+
     for method in methods:
-        # Samples accumulator: method -> metric -> list of sim values
         sims: dict[str, list[float]] = {m: [] for m in metrics}
         for _ in range(n_simulations):
             resampled = _resample(pnls, method, rng)
             eq = _cumulative_equity(resampled, starting_equity)
             for m in metrics:
                 sims[m].append(METRIC_FUNCS[m](resampled, eq))
+            if pbar_ctx is not None:
+                pbar_ctx.update(task_ids[method], advance=1)
 
         for metric in metrics:
             samples = sims[metric]
@@ -214,6 +228,9 @@ def run_monte_carlo(
                 samples=samples,
                 percentile_of_observed=pct,
             ))
+
+    if pbar_ctx is not None:
+        pbar_ctx.stop()
 
     return MonteCarloResult(
         n_simulations=n_simulations, n_trades=n_trades,

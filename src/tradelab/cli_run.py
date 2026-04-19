@@ -44,6 +44,9 @@ def run(
                                      help="Run the full robustness suite (MC + param landscape "
                                           "+ entry delay + LOSO + verdict)"),
     mc_simulations: int = typer.Option(500, help="Monte Carlo simulations per method"),
+    noise_seeds: int = typer.Option(50, help="Noise injection seed count"),
+    noise_sigma_bp: float = typer.Option(5.0, help="Noise sigma in basis points"),
+    loso_trials_per_fold: int = typer.Option(0, help="Optuna trials per LOSO fold (0 = baseline params)"),
     allow_yfinance_fallback: bool = typer.Option(
         False, "--allow-yfinance-fallback/--no-allow-yfinance-fallback",
         help="Permit yfinance fallback when TWELVEDATA_API_KEY is missing "
@@ -149,6 +152,10 @@ def run(
             optuna_result=opt_result, wf_result=wf_result,
             spy_close=spy_close, start=start, end=end,
             mc_n_simulations=mc_simulations,
+            loso_n_trials_per_fold=loso_trials_per_fold or None,
+            noise_n_seeds=noise_seeds,
+            noise_sigma_bp=noise_sigma_bp,
+            show_progress=True,
         )
         v = robustness_result.verdict
         typer.echo(f"  Verdict: {v.verdict} "

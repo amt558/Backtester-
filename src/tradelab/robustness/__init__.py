@@ -19,6 +19,7 @@ verdict: rule-based aggregator into ROBUST / INCONCLUSIVE / FRAGILE.
 from .entry_delay import EntryDelayResult, run_entry_delay
 from .loso import LOSOResult, run_loso
 from .monte_carlo import MonteCarloResult, run_monte_carlo
+from .noise_injection import NoiseInjectionResult, run_noise_injection
 from .param_landscape import ParamLandscapeResult, run_param_landscape
 from .suite import RobustnessSuiteResult, run_robustness_suite
 from .verdict import compute_verdict, VerdictResult
@@ -27,6 +28,7 @@ __all__ = [
     "EntryDelayResult", "run_entry_delay",
     "LOSOResult", "run_loso",
     "MonteCarloResult", "run_monte_carlo",
+    "NoiseInjectionResult", "run_noise_injection",
     "ParamLandscapeResult", "run_param_landscape",
     "RobustnessSuiteResult", "run_robustness_suite",
     "VerdictResult", "compute_verdict",

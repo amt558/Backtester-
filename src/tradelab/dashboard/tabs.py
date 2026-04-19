@@ -172,6 +172,23 @@ def robustness_tab(
                               height=260, margin=dict(l=50, r=20, t=50, b=40))
             parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
 
+        # Noise injection — histogram of PF across seeds, with baseline marker
+        ni = getattr(robustness, "noise_injection", None)
+        if ni and ni.points:
+            pfs = [p.metrics.profit_factor for p in ni.points]
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=pfs, nbinsx=20, marker_color="#6a5acd",
+                                        name=f"{ni.n_seeds} seeds"))
+            fig.add_vline(x=ni.baseline_pf, line_dash="dash", line_color="#2d9c3a",
+                          annotation_text=f"Baseline PF {ni.baseline_pf:.2f}")
+            fig.update_layout(
+                title=f"Noise injection: PF across {ni.n_seeds} noisy runs "
+                      f"({ni.noise_sigma_bp}bp sigma)",
+                xaxis_title="Profit factor", yaxis_title="Count",
+                height=260, margin=dict(l=50, r=20, t=50, b=40),
+            )
+            parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
+
         # LOSO bar chart
         lo = robustness.loso
         if lo and lo.folds:

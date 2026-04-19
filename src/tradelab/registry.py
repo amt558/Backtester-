@@ -31,9 +31,16 @@ def get_strategy_entry(name: str) -> StrategyEntry:
     """Look up a registered strategy's config entry by friendly name."""
     strategies = list_registered_strategies()
     if name not in strategies:
-        available = ", ".join(sorted(strategies.keys())) or "(none)"
+        import difflib
+        available = sorted(strategies.keys())
+        close = difflib.get_close_matches(name, available, n=3, cutoff=0.5)
+        suggestion = ""
+        if close:
+            suggestion = f" Did you mean: {', '.join(close)}?"
+        available_str = ", ".join(available) or "(none)"
         raise StrategyNotRegistered(
-            f"Strategy '{name}' not registered. Available: {available}"
+            f"Strategy '{name}' not registered.{suggestion} "
+            f"Available: {available_str}"
         )
     return strategies[name]
 

@@ -163,6 +163,29 @@ def _render_robustness_section(robust) -> str:
         pf_mean = pf_min = pf_max = pf_spread = 0.0
         n_folds = 0
     loso_rows = "\n".join(loso_rows_list) if loso_rows_list else "| - | - | - | - | - |"
+    loso_mode = (
+        f"per-fold Optuna: {lo.n_trials_per_fold} trials/fold"
+        if lo and lo.n_trials_per_fold > 0
+        else "baseline params"
+    )
+
+    # Noise injection
+    ni = getattr(robust, "noise_injection", None)
+    if ni and ni.points:
+        n_noise_seeds = ni.n_seeds
+        noise_sigma_bp = ni.noise_sigma_bp
+        baseline_pf = ni.baseline_pf
+        pf_mean_noise = ni.pf_mean
+        pf_std_noise = ni.pf_std
+        pf_p5_noise = ni.pf_p5
+        pf_p95_noise = ni.pf_p95
+        pf_drop_p5 = ni.pf_drop_p5_from_baseline
+    else:
+        n_noise_seeds = 0
+        noise_sigma_bp = 0.0
+        baseline_pf = 0.0
+        pf_mean_noise = pf_std_noise = pf_p5_noise = pf_p95_noise = 0.0
+        pf_drop_p5 = 0.0
 
     parts.append(T.ROBUSTNESS_DETAILS.format(
         n_sims=mc.n_simulations if mc else 0,
@@ -173,7 +196,12 @@ def _render_robustness_section(robust) -> str:
         ed_rows=ed_rows,
         pf_drop=pf_drop,
         n_folds=n_folds, pf_mean=pf_mean, pf_min=pf_min, pf_max=pf_max, pf_spread=pf_spread,
-        loso_rows=loso_rows,
+        loso_rows=loso_rows, loso_mode=loso_mode,
+        n_noise_seeds=n_noise_seeds, noise_sigma_bp=noise_sigma_bp,
+        baseline_pf=baseline_pf,
+        pf_mean_noise=pf_mean_noise, pf_std_noise=pf_std_noise,
+        pf_p5_noise=pf_p5_noise, pf_p95_noise=pf_p95_noise,
+        pf_drop_p5=pf_drop_p5,
     ))
     return "".join(parts)
 

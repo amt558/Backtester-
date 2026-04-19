@@ -25,6 +25,7 @@ from ..results import BacktestResult, WalkForwardResult
 from .entry_delay import EntryDelayResult
 from .loso import LOSOResult
 from .monte_carlo import MonteCarloResult
+from .noise_injection import NoiseInjectionResult
 from .param_landscape import ParamLandscapeResult
 
 
@@ -49,22 +50,39 @@ class VerdictResult(BaseModel):
         return [s for s in self.signals if s.outcome == "robust"]
 
 
-# Thresholds — per anti-drift rule, these live here (code) only because the
-# robustness configs haven't been promoted to tradelab.yaml yet. Phase 3 UX
-# polish should move these into config.
-THRESHOLDS = {
+# Code-level fallback defaults — used only when the config subsystem is
+# unavailable (e.g. during unit tests that import verdict without a yaml).
+# The authoritative source is tradelab.yaml under `robustness.thresholds`
+# (see config.RobustnessThresholds).
+_FALLBACK_THRESHOLDS = {
     "pf_robust": 1.5,
     "pf_fragile": 1.1,
     "dsr_robust": 0.95,
     "dsr_fragile": 0.50,
-    "mc_dd_fragile_percentile": 10.0,   # observed DD is in top 10% worst
+    "mc_dd_fragile_percentile": 10.0,
     "smoothness_robust": 0.15,
     "smoothness_fragile": 0.40,
-    "entry_delay_fragile": 0.50,         # PF drops >50% on +1 bar
+    "entry_delay_fragile": 0.50,
     "loso_fragile_spread": 1.0,
     "wfe_robust": 0.75,
     "wfe_fragile": 0.50,
+    "noise_pf_drop_p5_fragile": 0.40,
+    "noise_pf_drop_p5_robust": 0.10,
 }
+
+
+def _resolve_thresholds() -> dict:
+    """Read thresholds from active config if available, else fall back to code defaults."""
+    try:
+        from ..config import get_config
+        cfg = get_config()
+        return cfg.robustness.thresholds.model_dump()
+    except Exception:
+        return dict(_FALLBACK_THRESHOLDS)
+
+
+# Backwards-compat module-level name; tests may inspect it.
+THRESHOLDS = _FALLBACK_THRESHOLDS
 
 
 def compute_verdict(
@@ -75,7 +93,11 @@ def compute_verdict(
     entry_delay: Optional[EntryDelayResult] = None,
     loso: Optional[LOSOResult] = None,
     wf: Optional[WalkForwardResult] = None,
+    noise: Optional[NoiseInjectionResult] = None,
 ) -> VerdictResult:
+    # Read thresholds from config on each call so yaml edits take effect
+    # without a process restart.
+    THRESHOLDS = _resolve_thresholds()
     signals: list[VerdictSignal] = []
 
     # --- Edge baseline ---
@@ -160,6 +182,19 @@ def compute_verdict(
         else:
             signals.append(VerdictSignal(name="loso", outcome="inconclusive",
                                           reason=f"PF spread {spread:.2f}"))
+
+    # --- Noise injection ---
+    if noise and noise.points:
+        drop = noise.pf_drop_p5_from_baseline
+        if drop >= THRESHOLDS["noise_pf_drop_p5_fragile"]:
+            signals.append(VerdictSignal(name="noise_injection", outcome="fragile",
+                                          reason=f"PF drops {drop*100:.0f}% at p5 noisy run"))
+        elif drop <= THRESHOLDS["noise_pf_drop_p5_robust"]:
+            signals.append(VerdictSignal(name="noise_injection", outcome="robust",
+                                          reason=f"PF drop ≤{THRESHOLDS['noise_pf_drop_p5_robust']*100:.0f}% at p5 noisy run"))
+        else:
+            signals.append(VerdictSignal(name="noise_injection", outcome="inconclusive",
+                                          reason=f"PF drop {drop*100:.0f}% at p5 noisy run"))
 
     # --- WFE ---
     if wf and wf.n_windows > 0:

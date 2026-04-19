@@ -77,3 +77,20 @@ def test_loso_spread_is_nonneg(enriched):
                  spy_close=spy, start="2023-01-02", end="2024-06-30")
     assert r.pf_spread >= 0
     assert r.pf_min <= r.pf_mean <= r.pf_max
+    assert r.n_trials_per_fold == 0  # baseline mode
+
+
+def test_loso_per_fold_optuna_populates_best_params(enriched):
+    """Phase 1.1: each fold runs its own Optuna study; never shared."""
+    strat = S2PocketPivot()
+    spy = enriched["SPY"].set_index("Date")["Close"]
+    r = run_loso(
+        strat, enriched, benchmark="SPY",
+        spy_close=spy, start="2023-01-02", end="2024-06-30",
+        n_trials_per_fold=3,   # tiny for test speed
+    )
+    assert r.n_trials_per_fold == 3
+    assert len(r.folds) == 3
+    # Per-fold Optuna mode should populate best_params
+    for f in r.folds:
+        assert f.best_params, f"fold {f.held_out_symbol} missing best_params"

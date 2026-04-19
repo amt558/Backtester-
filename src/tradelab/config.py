@@ -53,11 +53,29 @@ class WalkForwardConfig(BaseModel):
     warmup_months: int = 2
 
 
+class RobustnessThresholds(BaseModel):
+    """Verdict-engine thresholds. Override in tradelab.yaml under robustness_thresholds."""
+    pf_robust: float = 1.5
+    pf_fragile: float = 1.1
+    dsr_robust: float = 0.95
+    dsr_fragile: float = 0.50
+    mc_dd_fragile_percentile: float = 10.0
+    smoothness_robust: float = 0.15
+    smoothness_fragile: float = 0.40
+    entry_delay_fragile: float = 0.50
+    loso_fragile_spread: float = 1.0
+    wfe_robust: float = 0.75
+    wfe_fragile: float = 0.50
+    noise_pf_drop_p5_fragile: float = 0.40
+    noise_pf_drop_p5_robust: float = 0.10
+
+
 class RobustnessConfig(BaseModel):
     monte_carlo_shuffles: int = 1000
     noise_sigma_pct: float = 0.05
     param_sensitivity_pct: float = 10.0
     entry_delay_bars: list[int] = Field(default_factory=lambda: [-2, -1, 0, 1, 2])
+    thresholds: RobustnessThresholds = Field(default_factory=RobustnessThresholds)
 
 
 class StrategyEntry(BaseModel):

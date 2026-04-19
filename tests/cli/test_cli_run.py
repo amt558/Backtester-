@@ -62,6 +62,9 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             cost_sweep=False,
             robustness=False,
             mc_simulations=500,
+            noise_seeds=50,
+            noise_sigma_bp=5.0,
+            loso_trials_per_fold=0,
             allow_yfinance_fallback=False,
             open_dashboard=False,
         )
