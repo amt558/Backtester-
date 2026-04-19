@@ -855,3 +855,81 @@ Modified:
 - `tests/cli/test_cli_run.py` + `test_cli_universes.py` — pass new kwargs
 
 End of dashboard + tuning depth addendum.
+
+---
+
+## Tearsheets + Leak Detection + Smart Screener Addendum — shipped 2026-04-19, same session
+
+User asked for QuantStats tearsheets (30+ metrics), HTML robustness tearsheet, look-ahead bias check, and smart screener. All four shipped.
+
+### What shipped
+
+**1. QuantStats integration**
+- `compute_quantstats_metrics(result)` returns 35 metrics across edge / risk / drawdown / distribution / benchmark-relative panels (CAGR, Sharpe, Smart Sharpe, Sortino, Calmar, Omega, Profit factor, Common-sense ratio, CPC, Tail ratio, Payoff ratio, Win rate, Volatility, VaR 95, ES, Max/Avg DD, Recovery factor, Risk of ruin, Ulcer / UPI, Skew, Kurtosis, Kelly criterion, Best/Worst day, Avg return/win/loss, Consecutive wins/losses, Exposure %).
+- New "## 9. Quantitative metrics panel" section in executive markdown.
+- `--tearsheet/--no-tearsheet` flag on `tradelab run` (default ON) → `quantstats_tearsheet.html`.
+
+**2. Robustness HTML tearsheet** (`src/tradelab/reporting/robustness_tearsheet.py`)
+- Single flat HTML page combining: header (verdict pill + headline P&L), QuantStats metric grid (35 KPI tiles), verdict signal table, full robustness charts. Auto-linked to QS tearsheet at top.
+- Auto-generated when `--robustness` is set. Output: `reports/<strategy>_<ts>/robustness_tearsheet.html`.
+- Distinct from dashboard: dashboard = interactive (tabs); tearsheet = flat scroll page (sharing/printing).
+
+**3. `tradelab leak-check`** (`src/tradelab/engines/leak_check.py` + `src/tradelab/cli_leak.py`)
+Three-layer detector:
+- **Static**: regex scan for `.shift(-N)`, `iloc[i+N]`, `iloc[-N]`, `.tail()`, `future_*` names, `.iat[i+N]`.
+- **Dynamic**: re-runs the backtest with `buy_signal` shifted +1 bar; flag fragile if PF drop ≥ 50%, suspect ≥ 25%.
+- **Aggregate**: ok / suspect / fragile. Non-zero exit on fragile.
+
+Live test on `LeakCanary`: static caught 3 hits, dynamic showed PF 11.243 → 0.844 (92.5% drop), suspected leakage P&L **$2,956,872**, verdict FRAGILE.
+
+**4. `tradelab screen`** (`src/tradelab/engines/screener.py` + `src/tradelab/cli_screen.py`)
+Per-symbol screener:
+- Single-symbol backtest per stock; ranks by composite score `PF * sqrt(trades) * (1 - |DD|/100)`.
+- Outputs: terminal table (top-N filtered) + sortable HTML page + optional `--save-universe NAME` writes top-N to tradelab.yaml.
+
+Live test (S2 on big_tech_15) ranked top: META (Sharpe 4.16, PF 3.52), AMD (6.14, 2.90), ADBE, NVDA, AMZN. Saved as `s2_top_10_big_tech` universe.
+
+Re-running S2 on the screened universe: **PF 2.163 / Sharpe 3.904** (vs baseline 1.282 / 1.445 on full big_tech_15).
+
+### Test counts
+
+- Before: 176 → After: **191** (+15: 6 leak-check + 8 screener + 1 fixture polish)
+
+### Files added
+
+Source:
+- `src/tradelab/engines/leak_check.py`
+- `src/tradelab/engines/screener.py`
+- `src/tradelab/cli_leak.py`
+- `src/tradelab/cli_screen.py`
+- `src/tradelab/reporting/robustness_tearsheet.py`
+
+Tests: `tests/engines/test_leak_check.py`, `tests/engines/test_screener.py`
+
+### Modified
+
+- `src/tradelab/cli.py` — +2 lines (register leak-check + screen)
+- `src/tradelab/cli_run.py` — `--tearsheet` flag + tearsheet + robustness tearsheet wiring
+- `src/tradelab/reporting/{__init__.py, tearsheet.py, executive.py, templates.py}` — QuantStats metric panel
+- `tests/cli/test_cli_run.py` + `test_cli_universes.py` — `tearsheet=False` kwarg
+
+### Workflow this enables
+
+```bash
+# 1. Prove strategy isn't cheating:
+tradelab leak-check my_strategy --universe big_tech_15
+
+# 2. Find symbols where it has edge:
+tradelab screen my_strategy --universe big_tech_15 --save-universe my_focused
+
+# 3. Full forensic package on focused universe:
+tradelab run my_strategy --universe my_focused --full --fitness sharpe --pruner median
+
+# 4. Four artifacts in reports/<strategy>_<ts>/:
+#    executive_report.md          (9 sections, observations only, 35-metric panel)
+#    dashboard.html               (interactive 4-tab)
+#    quantstats_tearsheet.html    (full QuantStats HTML)
+#    robustness_tearsheet.html    (flat single-page combining QS + robustness)
+```
+
+End of tearsheets + leak detection + smart screener addendum.

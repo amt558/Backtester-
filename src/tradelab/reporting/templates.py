@@ -139,3 +139,15 @@ OBSERVATIONS_HEADER = """## 7. Observations
 FOOTER_HEADER = """---
 
 """
+
+QUANTSTATS_PANEL_HEADER = """## 9. Quantitative metrics panel (QuantStats)
+
+{n_metrics} metrics across edge, risk, drawdown, distribution shape, and benchmark relative.
+
+| Metric | Value |
+|---|---|
+"""
+
+QUANTSTATS_ROW = "| {name} | {value} |\n"
+
+QUANTSTATS_NONE = "## 9. Quantitative metrics panel\n\n*Insufficient return history for QuantStats panel (need ≥ 30 daily returns).*\n\n---\n"

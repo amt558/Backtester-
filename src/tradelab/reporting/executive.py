@@ -331,6 +331,27 @@ def generate_executive_report(
         parts.append(f"- {obs}\n")
     parts.append("\n")
 
+    # QuantStats metrics panel — pulled lazily so quantstats failures don't
+    # break the whole report.
+    try:
+        from .tearsheet import compute_quantstats_metrics
+        qs_metrics = compute_quantstats_metrics(backtest_result)
+    except Exception:
+        qs_metrics = {}
+    if qs_metrics:
+        parts.append(T.QUANTSTATS_PANEL_HEADER.format(n_metrics=len(qs_metrics)))
+        for name, value in qs_metrics.items():
+            if abs(value) >= 1000:
+                vstr = f"{value:,.2f}"
+            elif abs(value) >= 1:
+                vstr = f"{value:.3f}"
+            else:
+                vstr = f"{value:.4f}"
+            parts.append(T.QUANTSTATS_ROW.format(name=name, value=vstr))
+        parts.append("\n---\n")
+    else:
+        parts.append(T.QUANTSTATS_NONE)
+
     # Footer
     parts.append(T.FOOTER_HEADER)
     data_hash = hash_universe(universe) if universe else None

@@ -104,7 +104,7 @@ def test_cli_run_universe_resolves_symbol_list(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False, open_dashboard=False,
+            allow_yfinance_fallback=False, tearsheet=False, open_dashboard=False,
         )
     args, _ = dl_mock.call_args
     # Symbol list should equal the big_tech universe
@@ -127,5 +127,5 @@ def test_cli_run_universe_unknown_exits(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False, open_dashboard=False,
+            allow_yfinance_fallback=False, tearsheet=False, open_dashboard=False,
         )

@@ -84,6 +84,105 @@ def render_backtest_tearsheet(
     return output_path
 
 
+def compute_quantstats_metrics(result: BacktestResult,
+                                 benchmark_returns: Optional[pd.Series] = None) -> dict[str, float]:
+    """
+    Pull a comprehensive metric panel from QuantStats. Returns a flat dict
+    of {metric_name: value} ready for tabular rendering. Returns {} if
+    quantstats can't be imported or the equity curve is too short.
+    """
+    try:
+        import quantstats as qs
+    except ImportError:
+        return {}
+
+    returns = result.daily_returns()
+    if returns is None or len(returns) < 30:
+        return {}
+
+    out: dict[str, float] = {}
+    # Each tuple: (display_name, callable_on_returns)
+    # We swallow per-metric errors so one bad metric doesn't kill the panel.
+    metric_calls: list[tuple[str, callable]] = [
+        ("CAGR",                lambda r: qs.stats.cagr(r) * 100),
+        ("Sharpe",              lambda r: qs.stats.sharpe(r)),
+        ("Sortino",             lambda r: qs.stats.sortino(r)),
+        ("Smart Sharpe",        lambda r: qs.stats.smart_sharpe(r)),
+        ("Smart Sortino",       lambda r: qs.stats.smart_sortino(r)),
+        ("Calmar",              lambda r: qs.stats.calmar(r)),
+        ("Omega",               lambda r: qs.stats.omega(r)),
+        ("Profit factor",       lambda r: qs.stats.profit_factor(r)),
+        ("Profit ratio",        lambda r: qs.stats.profit_ratio(r)),
+        ("Common-sense ratio",  lambda r: qs.stats.common_sense_ratio(r)),
+        ("CPC index",           lambda r: qs.stats.cpc_index(r)),
+        ("Tail ratio",          lambda r: qs.stats.tail_ratio(r)),
+        ("Payoff ratio",        lambda r: qs.stats.payoff_ratio(r)),
+        ("Win rate %",          lambda r: qs.stats.win_rate(r) * 100),
+        ("Win/loss ratio",      lambda r: qs.stats.win_loss_ratio(r)),
+        ("Volatility (ann) %",  lambda r: qs.stats.volatility(r) * 100),
+        ("VaR 95 % (daily)",    lambda r: qs.stats.value_at_risk(r) * 100),
+        ("Expected shortfall %", lambda r: qs.stats.conditional_value_at_risk(r) * 100),
+        ("Max drawdown %",      lambda r: qs.stats.max_drawdown(r) * 100),
+        ("Avg drawdown %",      lambda r: qs.stats.to_drawdown_series(r).mean() * 100),
+        ("Recovery factor",     lambda r: qs.stats.recovery_factor(r)),
+        ("Risk of ruin %",      lambda r: qs.stats.risk_of_ruin(r) * 100),
+        ("Ulcer index",         lambda r: qs.stats.ulcer_index(r)),
+        ("Ulcer perf index",    lambda r: qs.stats.ulcer_performance_index(r)),
+        ("Skew",                lambda r: qs.stats.skew(r)),
+        ("Kurtosis",            lambda r: qs.stats.kurtosis(r)),
+        ("Kelly criterion",     lambda r: qs.stats.kelly_criterion(r)),
+        ("Best day %",          lambda r: qs.stats.best(r) * 100),
+        ("Worst day %",         lambda r: qs.stats.worst(r) * 100),
+        ("Avg return %",        lambda r: qs.stats.avg_return(r) * 100),
+        ("Avg win %",           lambda r: qs.stats.avg_win(r) * 100),
+        ("Avg loss %",          lambda r: qs.stats.avg_loss(r) * 100),
+        ("Consecutive wins",    lambda r: qs.stats.consecutive_wins(r)),
+        ("Consecutive losses",  lambda r: qs.stats.consecutive_losses(r)),
+        ("Exposure %",          lambda r: qs.stats.exposure(r) * 100),
+    ]
+    for name, fn in metric_calls:
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                v = fn(returns)
+            if v is None:
+                continue
+            try:
+                vf = float(v)
+            except (TypeError, ValueError):
+                continue
+            if vf == vf and abs(vf) < 1e15:    # NaN guard + sanity bound
+                out[name] = vf
+        except Exception:
+            continue
+
+    # Benchmark-relative metrics (only if benchmark provided)
+    if benchmark_returns is not None and len(benchmark_returns) > 30:
+        rel_calls: list[tuple[str, callable]] = [
+            ("Alpha (vs bench)", lambda r, b: qs.stats.greeks(r, b).get("alpha", float("nan"))),
+            ("Beta (vs bench)",  lambda r, b: qs.stats.greeks(r, b).get("beta", float("nan"))),
+            ("Information ratio", lambda r, b: qs.stats.information_ratio(r, b)),
+            ("R^2 vs bench",     lambda r, b: qs.stats.r_squared(r, b)),
+        ]
+        for name, fn in rel_calls:
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    v = fn(returns, benchmark_returns)
+                if v is None:
+                    continue
+                try:
+                    vf = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if vf == vf and abs(vf) < 1e15:
+                    out[name] = vf
+            except Exception:
+                continue
+
+    return out
+
+
 def smoke_test_tearsheet(output_path: Optional[Path] = None) -> Path:
     """
     Generate a tearsheet from synthetic random-walk returns.

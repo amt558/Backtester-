@@ -123,6 +123,21 @@ strategies:
       vol_ratio_min: 1.2
       stop_atr_mult: 1.5
 
+  s7_rdz_momentum:
+    module: "tradelab.strategies.s7_rdz_momentum"
+    class_name: "S7RdzMomentum"
+    description: "RDZ (RSI z-score) mean-reversion entry on trending stocks"
+    status: "ported"
+    params:
+      atr_pct_max: 10.0
+      rs_threshold: 3.0
+      rdz_entry: -1.2
+      sigma_max: 3.0
+      stop_atr_mult: 1.5
+      trail_tight_mult: 0.8
+      trail_wide_mult: 1.5
+      trail_tighten_atr: 0.8
+
 # Named universes — pass via `tradelab run --universe NAME` instead of
 # typing each ticker. Edit freely. SPY is auto-included for strategies
 # that require a benchmark.
@@ -138,3 +153,6 @@ universes:
     [SPY, NVDA, MSFT, AVGO, AMD, LLY]
   smoke_5:
     [SPY, NVDA, MSFT, AAPL, META]
+  s2_top_10_big_tech:
+    [SPY, META, AMD, ADBE, NVDA, AMZN]
+

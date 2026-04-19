@@ -27,7 +27,11 @@ from .marketdata import (
     enrich_universe,
 )
 from .registry import instantiate_strategy, StrategyNotRegistered
-from .reporting import generate_executive_report
+from .reporting import (
+    generate_executive_report,
+    render_backtest_tearsheet,
+    render_robustness_tearsheet,
+)
 
 
 def run(
@@ -64,6 +68,8 @@ def run(
         help="Permit yfinance fallback when TWELVEDATA_API_KEY is missing "
              "(default: refuse, Twelve Data is authoritative)",
     ),
+    tearsheet: bool = typer.Option(True, "--tearsheet/--no-tearsheet",
+                                     help="Generate QuantStats HTML tearsheet alongside report+dashboard"),
     open_dashboard: bool = typer.Option(True, "--open-dashboard/--no-open-dashboard",
                                          help="Auto-open dashboard after build"),
 ) -> None:
@@ -251,6 +257,33 @@ def run(
     )
     typer.echo(f"Report:    {report_path}")
     typer.echo(f"Dashboard: {dashboard_path}")
+
+    # --- QuantStats tearsheet (optional, default on) ---
+    tearsheet_path = None
+    if tearsheet:
+        try:
+            tearsheet_path = render_backtest_tearsheet(
+                bt, output_path=out_dir / "quantstats_tearsheet.html",
+                title=f"{strategy} — QuantStats tearsheet",
+            )
+            typer.echo(f"Tearsheet: {tearsheet_path}")
+        except Exception as e:
+            typer.echo(f"(QuantStats tearsheet skipped: {type(e).__name__}: {e})", err=True)
+
+    # --- Robustness tearsheet (when robustness suite ran) ---
+    if robustness_result is not None:
+        try:
+            qs_link = "quantstats_tearsheet.html" if tearsheet_path else None
+            rob_tearsheet = render_robustness_tearsheet(
+                bt, optuna_result=opt_result, wf_result=wf_result,
+                robustness_result=robustness_result,
+                universe=data,
+                out_path=out_dir / "robustness_tearsheet.html",
+                quantstats_link=qs_link,
+            )
+            typer.echo(f"Robustness tearsheet: {rob_tearsheet}")
+        except Exception as e:
+            typer.echo(f"(Robustness tearsheet skipped: {type(e).__name__}: {e})", err=True)
 
     # --- audit trail ---
     returns = bt.daily_returns()

@@ -70,6 +70,7 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             noise_sigma_bp=5.0,
             loso_trials_per_fold=0,
             allow_yfinance_fallback=False,
+            tearsheet=False,
             open_dashboard=False,
             universe="",
         )
@@ -93,7 +94,7 @@ def test_cli_run_exits_on_no_symbols(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False,
+            allow_yfinance_fallback=False, tearsheet=False,
         )
 
 
@@ -115,7 +116,7 @@ def test_cli_run_resolves_symbol_file(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False,
+            allow_yfinance_fallback=False, tearsheet=False,
         )
     args, _ = dl_mock.call_args
     assert args[0] == ["AAPL", "MSFT"]
@@ -133,7 +134,7 @@ def test_cli_run_missing_symbol_file_exits(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False,
+            allow_yfinance_fallback=False, tearsheet=False,
         )
 
 
@@ -153,5 +154,5 @@ def test_cli_run_exits_on_unknown_strategy(tmp_path, monkeypatch):
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
-            allow_yfinance_fallback=False,
+            allow_yfinance_fallback=False, tearsheet=False,
         )
