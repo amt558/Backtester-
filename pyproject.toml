@@ -35,3 +35,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "canary_integration: end-to-end canary verification through the robustness suite (slower)",
+]
