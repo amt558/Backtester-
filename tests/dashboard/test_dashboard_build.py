@@ -48,12 +48,37 @@ def test_dashboard_builds_file(simple_backtest, tmp_path):
     assert "dash_test" in content
 
 
-def test_dashboard_has_three_tabs(simple_backtest, tmp_path):
+def test_dashboard_has_four_tabs(simple_backtest, tmp_path):
     path = build_dashboard(simple_backtest, out_dir=tmp_path)
     content = path.read_text()
     assert 'data-tab="performance"' in content
+    assert 'data-tab="trades"' in content
     assert 'data-tab="robustness"' in content
     assert 'data-tab="parameters"' in content
+
+
+def test_dashboard_trades_tab_renders_table(simple_backtest, tmp_path):
+    path = build_dashboard(simple_backtest, out_dir=tmp_path)
+    content = path.read_text()
+    # Trade table + per-symbol chart
+    assert "All trades" in content
+    assert "AAPL" in content                   # ticker from fixture
+    assert "Trail Stop" in content             # exit reason from fixture
+    assert "Net P&L by symbol" in content
+
+
+def test_dashboard_header_has_verdict_pill(simple_backtest, tmp_path):
+    path = build_dashboard(simple_backtest, out_dir=tmp_path)
+    content = path.read_text()
+    assert 'class="verdict' in content   # the verdict pill class is rendered
+
+
+def test_dashboard_performance_kpi_strip_present(simple_backtest, tmp_path):
+    path = build_dashboard(simple_backtest, out_dir=tmp_path)
+    content = path.read_text()
+    assert "Net P&L" in content or "Net P&amp;L" in content
+    assert "Profit factor" in content
+    assert "Max drawdown" in content
 
 
 def test_dashboard_shows_dsr_and_robustness_stub(simple_backtest, tmp_path):

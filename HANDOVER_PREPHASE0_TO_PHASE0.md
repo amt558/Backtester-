@@ -786,3 +786,72 @@ The remaining strategies in `/c/TradingScripts/FINAL STRATEGYIE/`:
 Each follows the same `entry_fn`/`exit_fn` pattern and ports the same way as S4. ~30-45 min each now that the SimpleStrategy + scaffolding workflow is established. User to pick priority.
 
 End of strategy-authoring addendum.
+
+---
+
+## Dashboard + Tuning Depth Addendum — shipped 2026-04-19, same session
+
+User asked for "better dashboard, more in-depth tuning." Shipped 7 changes touching both surfaces.
+
+### Dashboard upgrades
+
+**1. Performance tab additions** — KPI strip at top (Net P&L / Return / Annual / Trades / WR / PF / Sharpe / DD), monthly returns heatmap (year × month, RdYlGn diverging), trade returns distribution histogram with mean line, and per-trade scatter now uses size-by-magnitude with hover tooltips.
+
+**2. New Trades tab** (4th tab) — net P&L by symbol bar chart, exit-reason donut, trade-duration histogram, win/loss KPI strip (avg win %, avg loss %, avg win bars, avg loss bars, best/worst trade), and a sortable HTML table of every trade with ticker, dates, bars held, prices, $ P&L, % P&L, exit reason. Click any column header to sort.
+
+**3. Robustness tab additions** — MC distribution histograms (one per metric) overlaying the 3 resampling-method distributions with a vertical red line at the observed value. Replaces the percentile-only view with the actual shape of each distribution.
+
+**4. Parameters tab additions** — best-params card at top showing the winning trial's params as KPI tiles + headline fitness; parallel-coordinates plot (canonical Optuna view, color = fitness); fitness-trajectory chart now overlays the running-best line; top-20 trials table is now sortable.
+
+**5. Header verdict pill** — color-coded ROBUST/INCONCLUSIVE/FRAGILE pill placed before the P&L line.
+
+**6. CSS upgrades** — `.kpi-grid` for KPI tiles, `.dual-grid` two-column responsive layouts, `.win`/`.loss` text colours, sortable-table JavaScript.
+
+### Tuning upgrades
+
+**7. `--fitness FORMULA` flag** — pick the metric Optuna maximises:
+   - `pf_sqrt_trades_dd` (default — original behavior)
+   - `pf` (raw profit factor, capped at 10)
+   - `sharpe` (Sharpe ratio)
+   - `sortino` (mean / downside-std of trade pnl_pct)
+   - `annual_return` (annualised return %)
+   - `calmar` (annual return / |max DD|)
+
+**8. `--pruner median` flag** — Optuna `MedianPruner` kills underperforming trials early; ~30-50% wall-time saving on large-N runs.
+
+**9. `--sensitivity-pct N` flag** — post-Optuna 1-axis sensitivity sweep around the optimum. For each tunable param, hold others at best and vary this param by ±N% (default 20%) across 5 grid points. Renders as small charts in Parameters tab → "Sensitivity around the best trial". Flat = robust; spike at best = cliff.
+
+### Live smoke test (proves new features end-to-end)
+
+```
+tradelab run s2_pocket_pivot --universe big_tech_15 --start 2022-01-01 \
+    --optimize --n-trials 30 --fitness sharpe --pruner median \
+    --robustness --no-open-dashboard
+```
+
+Result:
+- Baseline: 239 trades, PF 1.282, Sharpe 1.445
+- Optuna w/ Sharpe fitness + median pruner: best trial PF **1.857**
+- Sensitivity sweep ran (5 grid points × 7 params = 35 extra backtests)
+- Robustness verdict: INCONCLUSIVE (2 robust / 4 inconclusive / 1 fragile)
+
+The Optuna upgrade alone moved PF from 1.28 → 1.86 — a real improvement Optuna found by optimizing for Sharpe instead of the default composite.
+
+### Test counts
+
+- Before this block: 173 passing
+- After dashboard + tuning depth: **176 passing**, 0 failed, 0 skipped
+- Net new: +3 dashboard tests (4-tab check, trades-tab table render, KPI strip, verdict pill)
+
+### Files added / modified
+
+Modified:
+- `src/tradelab/dashboard/templates.py` — KPI / verdict pill / dual-grid CSS, 4-tab skeleton, sortable-table JS
+- `src/tradelab/dashboard/tabs.py` — major rewrite of `performance_tab`, new `trades_tab`, MC histograms in `robustness_tab`, parallel coords + best-params card + sensitivity in `parameters_tab`
+- `src/tradelab/dashboard/builder.py` — verdict pill, trades-tab wiring, sensitivity passthrough
+- `src/tradelab/engines/optimizer.py` — `_fitness` accepts formula, `run_optimization` accepts `fitness` and `pruner` kwargs, new `run_param_sensitivity` function
+- `src/tradelab/cli_run.py` — new flags `--fitness`, `--pruner`, `--sensitivity-pct`; sensitivity wiring
+- `tests/dashboard/test_dashboard_build.py` — 3 new tests
+- `tests/cli/test_cli_run.py` + `test_cli_universes.py` — pass new kwargs
+
+End of dashboard + tuning depth addendum.

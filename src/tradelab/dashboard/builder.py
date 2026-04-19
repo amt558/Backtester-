@@ -18,6 +18,7 @@ def build_dashboard(
     universe: Optional[dict] = None,
     out_dir: Optional[Path] = None,
     robustness_result = None,
+    sensitivity: Optional[dict] = None,
 ) -> Path:
     ts = datetime.now()
     if out_dir is None:
@@ -27,6 +28,21 @@ def build_dashboard(
     title = f"{backtest_result.strategy} — tradelab dashboard"
     universe_str = ", ".join(sorted(universe.keys())) if universe else "see config"
     m = backtest_result.metrics
+    # Verdict pill — pulled from robustness suite if it ran, else from DSR
+    verdict_label = "UNKNOWN"
+    if robustness_result is not None:
+        verdict_label = robustness_result.verdict.verdict
+    elif backtest_result.daily_returns() is not None:
+        from ..engines.dsr import classify_dsr, deflated_sharpe_ratio
+        import math
+        n_tr = optuna_result.n_trials if optuna_result else 1
+        try:
+            p = deflated_sharpe_ratio(backtest_result.daily_returns().values, n_trials=n_tr)
+            if not math.isnan(p):
+                verdict_label = classify_dsr(p).upper()
+        except Exception:
+            pass
+
     # Headline P&L line gets prime real estate in the header
     pnl_line = (
         f"Net P&amp;L: ${m.net_pnl:,.0f} · "
@@ -35,16 +51,18 @@ def build_dashboard(
         f"WR {m.win_rate}% · PF {m.profit_factor} · Sharpe {m.sharpe_ratio}"
     )
     meta = (
+        f'<span class="verdict {verdict_label}">{verdict_label}</span> '
         f"<b>{pnl_line}</b><br>"
         f"Window: {backtest_result.start_date} → {backtest_result.end_date} · "
         f"Universe: {universe_str} · Run: {ts.strftime('%Y-%m-%d %H:%M:%S')}"
     )
 
     performance_html = tabs.performance_tab(backtest_result, wf_result)
+    trades_html = tabs.trades_tab(backtest_result, wf_result)
     robustness_html = tabs.robustness_tab(
         backtest_result, wf_result, optuna_result, robustness=robustness_result
     )
-    parameters_html = tabs.parameters_tab(optuna_result)
+    parameters_html = tabs.parameters_tab(optuna_result, sensitivity=sensitivity)
 
     data_hash = hash_universe(universe) if universe else None
     config_hash = hash_config(backtest_result.params)
@@ -53,6 +71,7 @@ def build_dashboard(
     html = HTML_SKELETON.format(
         title=title, meta=meta,
         performance_html=performance_html,
+        trades_html=trades_html,
         robustness_html=robustness_html,
         parameters_html=parameters_html,
         footer=footer_text,

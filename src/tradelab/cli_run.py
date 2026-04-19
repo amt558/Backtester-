@@ -16,7 +16,7 @@ from .determinism import hash_config, hash_universe
 from .engines.backtest import run_backtest
 from .engines.cost_sweep import format_cost_sweep_markdown, run_cost_sweep
 from .engines.dsr import classify_dsr, deflated_sharpe_ratio
-from .engines.optimizer import run_optimization
+from .engines.optimizer import run_optimization, run_param_sensitivity
 from .engines.walkforward import run_walkforward
 from .robustness import run_robustness_suite
 from .marketdata import (
@@ -39,6 +39,14 @@ def run(
     optimize: bool = typer.Option(False, "--optimize/--no-optimize", help="Run Optuna"),
     walkforward: bool = typer.Option(False, "--walkforward/--no-walkforward", help="Run walk-forward"),
     n_trials: int = typer.Option(100, help="Optuna trials (if --optimize)"),
+    fitness: str = typer.Option(
+        "pf_sqrt_trades_dd",
+        help="Optuna fitness: pf_sqrt_trades_dd | pf | sharpe | sortino | annual_return | calmar",
+    ),
+    pruner: str = typer.Option("none", help="Optuna pruner: none | median"),
+    sensitivity_pct: float = typer.Option(
+        20.0, help="Post-Optuna sensitivity sweep span (% above/below best, 0 = skip)",
+    ),
     cost_sweep: bool = typer.Option(False, "--cost-sweep/--no-cost-sweep",
                                      help="Append cost-sensitivity sweep to the report"),
     robustness: bool = typer.Option(False, "--robustness/--no-robustness",
@@ -158,15 +166,26 @@ def run(
 
     # --- optional optimize ---
     opt_result = None
+    sensitivity_result = None
     if optimize:
-        typer.echo(f"Running Optuna ({n_trials} trials) ...")
+        typer.echo(f"Running Optuna ({n_trials} trials, fitness={fitness}, pruner={pruner}) ...")
         opt_result = run_optimization(
             strat, data, n_trials=n_trials, spy_close=spy_close,
             start=start, end=end, verbose=False, rerun_best=True,
+            fitness=fitness, pruner=pruner,
         )
         if opt_result.best_backtest is not None:
             bt = opt_result.best_backtest
             typer.echo(f"  Best trial PF: {bt.metrics.profit_factor}")
+
+        # Post-Optuna sensitivity sweep around the optimum
+        if sensitivity_pct > 0 and opt_result.best_trial:
+            typer.echo(f"Sensitivity sweep around best (±{sensitivity_pct}%) ...")
+            sensitivity_result = run_param_sensitivity(
+                strat, data, opt_result.best_trial.params,
+                spy_close=spy_close, start=start, end=end,
+                span_pct=sensitivity_pct, n_steps=5, fitness=fitness,
+            )
 
     # --- optional walk-forward ---
     wf_result = None
@@ -228,6 +247,7 @@ def run(
         bt, optuna_result=opt_result, wf_result=wf_result,
         universe=data, out_dir=out_dir,
         robustness_result=robustness_result,
+        sensitivity=sensitivity_result,
     )
     typer.echo(f"Report:    {report_path}")
     typer.echo(f"Dashboard: {dashboard_path}")
