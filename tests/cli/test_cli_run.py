@@ -67,6 +67,7 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             loso_trials_per_fold=0,
             allow_yfinance_fallback=False,
             open_dashboard=False,
+            universe="",
         )
 
     assert dl_mock.called
@@ -84,6 +85,9 @@ def test_cli_run_exits_on_no_symbols(tmp_path, monkeypatch):
         cli_run.run(
             strategy="foo", symbols="", start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
+            universe="", cost_sweep=False, robustness=False, mc_simulations=500,
+            noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
         )
 
 
@@ -101,6 +105,9 @@ def test_cli_run_resolves_symbol_file(tmp_path, monkeypatch):
             strategy="foo", symbols=f"@{syms_file}",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
+            universe="", cost_sweep=False, robustness=False, mc_simulations=500,
+            noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
         )
     args, _ = dl_mock.call_args
     assert args[0] == ["AAPL", "MSFT"]
@@ -114,6 +121,9 @@ def test_cli_run_missing_symbol_file_exits(tmp_path, monkeypatch):
             strategy="foo", symbols="@nonexistent.txt",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
+            universe="", cost_sweep=False, robustness=False, mc_simulations=500,
+            noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
         )
 
 
@@ -129,4 +139,7 @@ def test_cli_run_exits_on_unknown_strategy(tmp_path, monkeypatch):
             strategy="nonexistent", symbols="AAPL",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
+            universe="", cost_sweep=False, robustness=False, mc_simulations=500,
+            noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
         )

@@ -120,3 +120,19 @@ strategies:
   #   status: "pending"
   #   params:
   #     min_range_contraction: 0.5
+
+# Named universes — pass via `tradelab run --universe NAME` instead of
+# typing each ticker. Edit freely. SPY is auto-included for strategies
+# that require a benchmark.
+universes:
+  magnificent_7:
+    [SPY, AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA]
+  big_tech_15:
+    [SPY, AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, AVGO, ORCL,
+     CRM, ADBE, AMD, NFLX, QCOM]
+  semis:
+    [SPY, NVDA, AVGO, AMD, QCOM, MU, MRVL, TXN, AMAT, KLAC, LRCX, ASML, ARM]
+  survivor_canary_universe:
+    [SPY, NVDA, MSFT, AVGO, AMD, LLY]
+  smoke_5:
+    [SPY, NVDA, MSFT, AAPL, META]

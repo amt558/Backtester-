@@ -33,6 +33,7 @@ from .reporting import generate_executive_report
 def run(
     strategy: str = typer.Argument(..., help="Strategy name (from registry)"),
     symbols: str = typer.Option("", help="Comma-separated tickers, or @file.txt"),
+    universe: str = typer.Option("", help="Named universe from tradelab.yaml (overrides --symbols)"),
     start: str = typer.Option("2020-01-01", help="Data start date"),
     end: str = typer.Option("", help="Data end date (default: today)"),
     optimize: bool = typer.Option(False, "--optimize/--no-optimize", help="Run Optuna"),
@@ -59,17 +60,41 @@ def run(
     Run a full strategy evaluation and produce a report + interactive dashboard.
     """
     # --- resolve universe ---
-    if not symbols:
-        typer.echo("No symbols provided (--symbols).", err=True)
-        raise typer.Exit(2)
-    if symbols.startswith("@"):
+    symbol_list: list[str] = []
+    if universe:
+        # Named universe from tradelab.yaml takes precedence
+        from .config import get_config
+        try:
+            cfg = get_config()
+        except Exception as e:
+            typer.echo(f"Cannot load config to resolve --universe: {e}", err=True)
+            raise typer.Exit(2)
+        if universe not in cfg.universes:
+            import difflib
+            available = sorted(cfg.universes.keys())
+            close = difflib.get_close_matches(universe, available, n=3, cutoff=0.5)
+            hint = f" Did you mean: {', '.join(close)}?" if close else ""
+            typer.echo(
+                f"Universe '{universe}' not in tradelab.yaml.{hint} "
+                f"Available: {', '.join(available) or '(none)'}",
+                err=True,
+            )
+            raise typer.Exit(2)
+        symbol_list = list(cfg.universes[universe])
+    elif symbols.startswith("@"):
         path = Path(symbols[1:])
         if not path.exists():
             typer.echo(f"Symbol file not found: {path}", err=True)
             raise typer.Exit(2)
         symbol_list = [s.strip() for s in path.read_text().splitlines() if s.strip()]
-    else:
+    elif symbols:
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    else:
+        typer.echo(
+            "No symbols provided. Use --symbols, --universe, or --symbols @file.txt.",
+            err=True,
+        )
+        raise typer.Exit(2)
 
     if not end:
         end = datetime.now().strftime("%Y-%m-%d")

@@ -95,6 +95,7 @@ class Config(BaseModel):
     walkforward: WalkForwardConfig = WalkForwardConfig()
     robustness: RobustnessConfig = RobustnessConfig()
     strategies: dict[str, StrategyEntry] = Field(default_factory=dict)
+    universes: dict[str, list[str]] = Field(default_factory=dict)
 
     # Populated at load time
     config_path: Optional[Path] = None

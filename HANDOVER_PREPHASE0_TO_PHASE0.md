@@ -603,3 +603,78 @@ Modified:
 tradelab is at the end of its plannable discovery work. Running strategies through it now produces a full forensic package: executive report with DSR + robustness section 5 (MC + landscape + delay + LOSO + noise) + aggregate verdict + optional Optuna + optional WF + optional cost sweep, plus an interactive HTML dashboard with all of the above plus the audit trail for long-term forensics.
 
 End of Phase 1.1/2/3 addendum.
+
+---
+
+## Discovery Polish Addendum — shipped 2026-04-19, same session
+
+User chose option D ("skip ports — build XYZ"). Built three pieces that close the "ready to test and use" loop without needing external strategy source.
+
+### What shipped
+
+**1. Named universes (`tradelab.yaml` + `--universe` CLI flag)**
+- New `Config.universes` field: `dict[str, list[str]]`.
+- `tradelab.yaml` now ships 5 starter universes: `magnificent_7`, `big_tech_15`, `semis`, `survivor_canary_universe`, `smoke_5`.
+- `tradelab run --universe NAME` resolves to the symbol list (overrides `--symbols` if both passed). Fuzzy suggestion on unknown name.
+- New `tradelab universes list` and `tradelab universes show <name>` subcommands.
+- 6 unit tests including end-to-end `--universe big_tech` resolution.
+
+**2. `tradelab doctor` self-test command**
+- `src/tradelab/cli_doctor.py` — 9-step environment + install verification:
+  - Python ≥ 3.12
+  - All required deps (pandas / numpy / scipy / pydantic / optuna / typer / rich / yaml / plotly / pyarrow / requests)
+  - Optional deps (yfinance / vectorbt / quantstats)
+  - `TWELVEDATA_API_KEY` present (loaded from `.env` if needed)
+  - Config loads
+  - All registered strategies importable
+  - Cache dir writable
+  - Audit DB queryable
+  - No canary's most recent verdict was ROBUST
+- Color-coded `OK / FAIL` per check (ASCII to avoid Windows cp1252 issues). Critical failures exit non-zero.
+- 7 unit tests including the canary-ROBUST-is-failure assertion.
+
+**3. README rewrite**
+- Old README (76 lines) was from session 1 and described session-3 features that were stubs.
+- New README (240+ lines): 4-questions framing, 60-second quick-start (install + .env + first run), full CLI reference table, robustness-suite breakdown, canary protocol, project layout, anti-drift summary.
+- Onboarding-grade — a fresh dev cloning the repo can reach a working `tradelab run` in under 2 minutes.
+
+### Test counts
+
+- Before this block: 144 passing
+- After discovery polish: **157 passing**, 0 failed, 0 skipped
+- Net new: +13 tests (6 universes + 7 doctor)
+
+### Files added
+
+- `src/tradelab/cli_doctor.py`
+- `src/tradelab/cli_universes.py`
+- `tests/cli/test_cli_doctor.py`
+- `tests/cli/test_cli_universes.py`
+
+### Modified
+
+- `src/tradelab/cli.py` — +2 lines (register `universes` and `doctor`)
+- `src/tradelab/cli_run.py` — `--universe` arg + resolution branch
+- `src/tradelab/config.py` — `Config.universes` field
+- `tradelab.yaml` — `universes:` block (5 starters)
+- `tests/cli/test_cli_run.py` — kwargs updated for new params
+- `README.md` — full rewrite
+
+### Live `tradelab doctor` on this machine
+
+```
+OK  python        Python 3.12.8
+OK  deps_req      All 11 required deps importable
+OK  deps_opt     (optional)  All 3 optional deps importable
+FAIL td_key       (optional)  TWELVEDATA_API_KEY not set
+OK  config        Config loaded from tradelab.yaml
+OK  strategies    All 5 strategies importable
+OK  cache         Cache dir writable
+OK  audit_db     (optional)  Audit DB has N rows; latest: ... verdict=INCONCLUSIVE
+OK  canaries      No canary returned ROBUST in audit history
+Doctor: all critical checks passed.
+```
+
+td_key is the one expected fail — set the .env file and re-run.
+
+End of discovery-polish addendum.

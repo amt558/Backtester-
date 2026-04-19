@@ -381,6 +381,8 @@ def robustness_cmd(
 from .cli_run import run as _run_cmd; app.command(name="run")(_run_cmd)
 from .cli_history import history_app as _history_app; app.add_typer(_history_app, name="history")
 from .cli_canary import canary_health as _canary_cmd; app.command(name="canary-health")(_canary_cmd)
+from .cli_universes import universes_app as _univ_app; app.add_typer(_univ_app, name="universes")
+from .cli_doctor import doctor as _doctor_cmd; app.command(name="doctor")(_doctor_cmd)
 
 
 if __name__ == "__main__":
