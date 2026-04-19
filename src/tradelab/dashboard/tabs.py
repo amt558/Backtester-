@@ -57,12 +57,43 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
     return "\n".join(parts)
 
 
-def robustness_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> str:
+def robustness_tab(
+    bt: BacktestResult,
+    wf: Optional[WalkForwardResult] = None,
+    opt: Optional[OptunaResult] = None,
+) -> str:
+    import math
+    from ..engines.dsr import classify_dsr, deflated_sharpe_ratio
+
     parts = []
 
+    # DSR readout
+    returns = bt.daily_returns()
+    dsr_html = ""
+    if returns is not None and len(returns) >= 10:
+        n_trials = opt.n_trials if opt else 1
+        dsr = deflated_sharpe_ratio(returns.values, n_trials=n_trials)
+        if not math.isnan(dsr):
+            verdict = classify_dsr(dsr)
+            colour = {"robust": "#2d9c3a", "inconclusive": "#d6a02a",
+                      "fragile": "#d0443e", "undefined": "#888"}.get(verdict, "#888")
+            dsr_html = (
+                f'<div class="section"><div class="chart">'
+                f'<h2>Deflated Sharpe Ratio</h2>'
+                f'<p style="font-size:24px;margin:8px 0;">'
+                f'<b style="color:{colour};">{dsr:.3f}</b> '
+                f'<span style="color:#666;font-size:14px;">({verdict} · {n_trials} trial{"s" if n_trials != 1 else ""})</span>'
+                f'</p>'
+                f'<p style="color:#555;font-size:12px;">Probability the observed edge is not luck from multiple testing. '
+                f'Bands: &lt;0.50 fragile · 0.50–0.95 inconclusive · &gt;0.95 robust.</p>'
+                f'</div></div>'
+            )
+    parts.append(dsr_html if dsr_html else
+                 '<div class="note">Deflated Sharpe: insufficient return history.</div>')
+
     parts.append(
-        '<div class="note">Full robustness suite (MC, param landscape, entry delay, LOSO) '
-        'lands in Phase 1. Current view is walk-forward only. DSR: <b>pending Phase 0</b>.</div>'
+        '<div class="note">Remaining robustness suite (MC, param landscape, entry delay, LOSO) '
+        'lands in Phase 1. Current view is walk-forward + DSR only.</div>'
     )
 
     if wf and wf.windows:

@@ -12,9 +12,15 @@ import typer
 
 from .dashboard import build_dashboard
 from .engines.backtest import run_backtest
+from .engines.cost_sweep import format_cost_sweep_markdown, run_cost_sweep
 from .engines.optimizer import run_optimization
 from .engines.walkforward import run_walkforward
-from .marketdata import download_symbols
+from .marketdata import (
+    PITViolation,
+    assert_pit_valid,
+    download_symbols,
+    enrich_universe,
+)
 from .registry import instantiate_strategy, StrategyNotRegistered
 from .reporting import generate_executive_report
 
@@ -27,6 +33,8 @@ def run(
     optimize: bool = typer.Option(False, "--optimize/--no-optimize", help="Run Optuna"),
     walkforward: bool = typer.Option(False, "--walkforward/--no-walkforward", help="Run walk-forward"),
     n_trials: int = typer.Option(100, help="Optuna trials (if --optimize)"),
+    cost_sweep: bool = typer.Option(False, "--cost-sweep/--no-cost-sweep",
+                                     help="Append cost-sensitivity sweep to the report"),
     open_dashboard: bool = typer.Option(True, "--open-dashboard/--no-open-dashboard",
                                          help="Auto-open dashboard after build"),
 ) -> None:
@@ -50,7 +58,7 @@ def run(
         end = datetime.now().strftime("%Y-%m-%d")
 
     typer.echo(f"Symbols: {symbol_list}")
-    typer.echo(f"Window:  {start} \u2192 {end}")
+    typer.echo(f"Window:  {start} -> {end}")
 
     # --- download ---
     typer.echo("Downloading / reading cache ...")
@@ -58,6 +66,17 @@ def run(
     if not data:
         typer.echo("No data retrieved for any symbol.", err=True)
         raise typer.Exit(1)
+
+    # --- PIT inception check ---
+    try:
+        assert_pit_valid(data, start=start)
+    except PITViolation as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(3)
+
+    # --- enrich with indicators ---
+    typer.echo("Computing indicators ...")
+    data = enrich_universe(data, benchmark="SPY")
 
     # --- resolve strategy via registry ---
     try:
@@ -99,6 +118,17 @@ def run(
         )
         typer.echo(f"  WFE: {wf_result.wfe_ratio}  OOS PF: {wf_result.aggregate_oos.profit_factor}")
 
+    # --- optional cost-sensitivity sweep ---
+    cost_sweep_result = None
+    if cost_sweep:
+        typer.echo("Running cost-sensitivity sweep ...")
+        cost_sweep_result = run_cost_sweep(
+            strat, data, spy_close=spy_close, start=start, end=end,
+        )
+        for p in cost_sweep_result.points:
+            typer.echo(f"  {p.multiplier:g}x cost: trades={p.metrics.total_trades} "
+                       f"PF={p.metrics.profit_factor} ret={p.metrics.pct_return}%")
+
     # --- reports ---
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out_dir = Path("reports") / f"{strategy}_{ts}"
@@ -106,6 +136,13 @@ def run(
         bt, optuna_result=opt_result, wf_result=wf_result,
         universe=data, out_dir=out_dir,
     )
+
+    # If cost-sweep was run, append its markdown section to the executive report
+    if cost_sweep_result is not None:
+        with report_path.open("a", encoding="utf-8") as f:
+            f.write("\n\n---\n\n")
+            f.write(format_cost_sweep_markdown(cost_sweep_result))
+
     dashboard_path = build_dashboard(
         bt, optuna_result=opt_result, wf_result=wf_result,
         universe=data, out_dir=out_dir,

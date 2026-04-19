@@ -43,8 +43,9 @@ def test_report_generates_file(minimal_backtest, tmp_path):
 def test_report_handles_no_optuna_no_wf(minimal_backtest, tmp_path):
     path = generate_executive_report(minimal_backtest, out_dir=tmp_path)
     content = path.read_text()
-    assert "Pending Phase 0" in content  # DSR stub
-    assert "Pending Phase 1" in content  # Robustness stub
+    # DSR now live (not a stub). Robustness-suite stub remains for Phase 1.
+    assert "Deflated Sharpe (DSR)" in content
+    assert "Pending Phase 1" in content  # Robustness suite stub
     assert "No optimization" in content or "Parameter importance" in content
 
 

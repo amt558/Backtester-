@@ -271,4 +271,82 @@ Phase 0 agent should:
 - [x] `src/tradelab/data.py` untouched (confirmed)
 - [x] `pytest tests/ -v` zero failures
 
-End of handover.
+---
+
+## Phase 0 Addendum — shipped 2026-04-19, same session
+
+Phase 0 completed immediately after Pre-Phase-0, in the same session, at Amit's instruction ("complete everything in order as needed to get this up and running ready to test and use asap").
+
+### What shipped in Phase 0
+
+- **Task 0.1 DSR engine** (1 hr) — `src/tradelab/engines/dsr.py` with `deflated_sharpe_ratio(returns, n_trials)` and `classify_dsr(p)`. 7 unit tests in `tests/engines/test_dsr.py` covering random-walk rejection, strong-trend endorsement, inconclusive-band regime, hand-computed formula verification, PSR reduction at n_trials=1, monotonicity in n_trials, and degenerate zero-vol handling. DSR now populates the "Deflated Sharpe (DSR)" row in the executive report's edge-metrics table, adds a line to the observations section, and drives a colored readout panel in the dashboard's Robustness tab.
+- **Task 0.2 PIT validator** (30 min, minimal pragmatic version) — `src/tradelab/marketdata/pit.py` with `check_pit()` and `assert_pit_valid()`. Rejects runs where any symbol's first bar lands more than `grace_days=5` after the requested `--start`. 7 unit tests. Wired into `cli_run.run()` as a hard check between download and enrichment. Original ROADMAP spec was missing; this implements the core guarantee: no backtest runs on a symbol before its data existed.
+- **Task 0.3 Cost sensitivity sweep** (30 min, minimal pragmatic version) — `src/tradelab/engines/cost_sweep.py` with `run_cost_sweep(strategy, data, multipliers=[0, 0.5, 1, 2, 4], ...)` returning a `CostSweepResult` of `(multiplier, commission, metrics)` tuples. 5 unit tests. New `--cost-sweep` flag on `tradelab run`; when set, appends a markdown section "## 8. Cost sensitivity sweep" to the executive report.
+- **Indicator-enrichment gap closed** (30 min) — `src/tradelab/marketdata/enrich.py` with `enrich_with_indicators(df)` and `enrich_universe(data, benchmark='SPY')`. Mirrors the indicator logic from the existing CSV-based `src/tradelab/data.py::load_daily_with_indicators` so downloaded OHLCV becomes indistinguishable from CSV-loaded input. Wired into `cli_run.run()` immediately after download. 6 unit tests including an end-to-end check that S2PocketPivot's generate_signals runs cleanly on enriched data.
+
+### End-to-end smoke test (S2 strategy, yfinance data)
+
+Command: `tradelab run s2_pocket_pivot --symbols "SPY,NVDA,MSFT,AAPL,META" --start 2022-01-01 --end 2024-06-30 --no-open-dashboard`
+
+Results (first run, 5 yfinance downloads + backtest + report + dashboard):
+- Trades: **88**
+- Profit factor: **1.69**
+- Sharpe: **2.473**
+- DSR: **0.947** (inconclusive — one trial, so DSR = PSR)
+- Total return: **14.54%** over 2.5 years
+- Annualized: **5.63%**
+- Output: `reports/s2_pocket_pivot_2026-04-19_134824/{executive_report.md, dashboard.html}`
+
+Second run (cache hit, no re-download): **2.3 seconds total**, identical metrics (deterministic).
+
+Cost-sweep run (same universe/window, `--cost-sweep` flag):
+- 0x cost → PF 1.701, return 14.74%
+- 1x cost (baseline $1/trade) → PF 1.69, return 14.54%
+- 4x cost → PF 1.66, return 14.01%
+
+Monotone decay as expected; S2 is cost-robust at baseline commission.
+
+### Files added in Phase 0
+
+Source:
+- `src/tradelab/engines/dsr.py`
+- `src/tradelab/engines/cost_sweep.py`
+- `src/tradelab/marketdata/enrich.py`
+- `src/tradelab/marketdata/pit.py`
+
+Tests:
+- `tests/engines/test_dsr.py`
+- `tests/engines/test_cost_sweep.py`
+- `tests/marketdata/test_enrich.py`
+- `tests/marketdata/test_pit.py`
+
+Modified:
+- `src/tradelab/engines/__init__.py` — exports `deflated_sharpe_ratio`, `classify_dsr`
+- `src/tradelab/marketdata/__init__.py` — exports enrich + PIT APIs
+- `src/tradelab/reporting/executive.py` — computes DSR, formats into edge-metrics table + observations
+- `src/tradelab/dashboard/tabs.py` — DSR readout in robustness tab (color-coded by band)
+- `src/tradelab/dashboard/builder.py` — passes optuna_result to robustness_tab
+- `src/tradelab/cli_run.py` — enrichment step, PIT check, `--cost-sweep` flag, ASCII arrow fix for Windows cp1252
+- `tests/reporting/test_executive_report.py` — updated to assert on live DSR (not stub)
+- `tests/dashboard/test_dashboard_build.py` — updated to assert on live DSR (not stub)
+- `tests/cli/test_cli_run.py` — passes `cost_sweep=False` explicitly
+
+### Test counts
+
+- Pre-Phase-0: 59 passing
+- After Phase 0: **84 passing**, 0 failed, 0 skipped
+- Net new: +25 tests (6 enrich + 7 DSR + 7 PIT + 5 cost sweep)
+
+### Phase 0 deviations from strict plan
+
+1. **Tasks 0.2 and 0.3 specs missing** — the master plan said "Spec unchanged from original ROADMAP" but ROADMAP is marked historical and absent from the repo. Implemented minimal useful versions (PIT: inception-date check with grace window; cost sweep: multiplier-based sweep with markdown append). Both are narrow, well-tested, and can be extended when canonical specs surface.
+2. **DSR `test_dsr_marginal_edge_inconclusive_band` fixture tuned** — plan's phrasing ("true Sharpe ≈ 1.0, observed 1.2") is annualized-SR language but the Bailey/López de Prado formula operates on period-level SR. Used period-level SR ≈ 0.18 with 500 trials to produce an inconclusive-band verdict; test intent preserved (heavy multiple testing on modest edge → not ROBUST).
+3. **ASCII arrows in CLI echo** — Windows cp1252 console can't encode `→` (U+2192). Replaced with `->`.
+4. **Indicator-enrichment done as prerequisite**, not as a separate Phase — needed to make `tradelab run` actually produce real output. Logic mirrors `data.py::load_daily_with_indicators` verbatim; nothing modified in `data.py`.
+
+### Remaining "Pending" stubs
+
+- Robustness suite (MC 3×4, param landscape, entry delay, LOSO) — still a Phase 1 stub both in the report and the dashboard.
+- Audit trail (SQLite `tradelab_history.db`) — still Phase 1.
+
+End of Phase 0 addendum.

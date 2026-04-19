@@ -59,6 +59,7 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             optimize=False,
             walkforward=False,
             n_trials=100,
+            cost_sweep=False,
             open_dashboard=False,
         )
 

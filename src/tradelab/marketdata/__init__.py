@@ -14,5 +14,11 @@ See src/tradelab/marketdata/downloader.py for orchestration logic.
 """
 from .downloader import download_symbols
 from .cache import cache_status, clear_cache
+from .enrich import enrich_with_indicators, enrich_universe
+from .pit import assert_pit_valid, check_pit, PITViolation
 
-__all__ = ["download_symbols", "cache_status", "clear_cache"]
+__all__ = [
+    "download_symbols", "cache_status", "clear_cache",
+    "enrich_with_indicators", "enrich_universe",
+    "assert_pit_valid", "check_pit", "PITViolation",
+]

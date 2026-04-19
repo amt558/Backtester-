@@ -11,8 +11,27 @@ from pathlib import Path
 from typing import Optional
 
 from ..determinism import hash_config, hash_universe, render_footer
+from ..engines.dsr import classify_dsr, deflated_sharpe_ratio
 from ..results import BacktestResult, OptunaResult, WalkForwardResult
 from . import templates as T
+
+
+def _compute_dsr(bt: BacktestResult, opt: Optional[OptunaResult]) -> tuple[float, str]:
+    """Compute DSR from backtest equity curve. Returns (probability, classification)."""
+    import math
+    returns = bt.daily_returns()
+    if returns is None or len(returns) < 10:
+        return float("nan"), "undefined"
+    n_trials = opt.n_trials if opt else 1
+    p = deflated_sharpe_ratio(returns.values, n_trials=n_trials)
+    return p, classify_dsr(p)
+
+
+def _fmt_dsr(p: float, verdict: str) -> str:
+    import math
+    if math.isnan(p):
+        return "—"
+    return f"{p:.3f} ({verdict})"
 
 
 def _verdict_line(pf: float, sharpe: float, wfe: float) -> str:
@@ -36,11 +55,20 @@ def _collect_weak_windows(wf: WalkForwardResult, threshold: float = 0.9) -> list
 
 
 def _observations(bt: BacktestResult, opt: Optional[OptunaResult], wf: Optional[WalkForwardResult]) -> list[str]:
+    import math
     obs = []
     m = bt.metrics
     obs.append(f"Total trades: {m.total_trades}. Average bars held: {m.avg_bars_held}.")
     obs.append(f"Win rate {m.win_rate}%; average win {m.avg_win_pct}% vs average loss {m.avg_loss_pct}%.")
     obs.append(f"Peak-to-trough drawdown: {m.max_drawdown_pct}%.")
+
+    dsr_p, dsr_verdict = _compute_dsr(bt, opt)
+    if not math.isnan(dsr_p):
+        n_trials = opt.n_trials if opt else 1
+        obs.append(
+            f"Deflated Sharpe: {dsr_p:.3f} ({dsr_verdict}) "
+            f"after {n_trials} trial{'s' if n_trials != 1 else ''}."
+        )
 
     if opt and opt.param_importance:
         top = sorted(opt.param_importance.items(), key=lambda kv: kv[1], reverse=True)[0]
@@ -96,10 +124,11 @@ def generate_executive_report(
 
     # Edge metrics
     oos_is = wf_result.wfe_ratio if wf_result else "N/A"
+    dsr_p, dsr_verdict = _compute_dsr(backtest_result, optuna_result)
     parts.append(T.EDGE_METRICS.format(
         pf=m.profit_factor,
         sharpe=m.sharpe_ratio,
-        dsr="*Pending Phase 0*",
+        dsr=_fmt_dsr(dsr_p, dsr_verdict),
         total_return=m.pct_return,
         annual_return=m.annual_return,
         wfe=wf_result.wfe_ratio if wf_result else "N/A",
