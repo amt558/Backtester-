@@ -138,6 +138,20 @@ strategies:
       trail_wide_mult: 1.5
       trail_tighten_atr: 0.8
 
+  s8_bullish_outside_day:
+    module: "tradelab.strategies.s8_bullish_outside_day"
+    class_name: "S8BullishOutsideDay"
+    description: "Bullish outside day (engulfing candle) in uptrend with 1.5x volume"
+    status: "ported"
+    params:
+      atr_pct_max: 8.0
+      rs_threshold: 2.0
+      vol_ratio_min: 1.5
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 1.5
+      trail_tighten_atr: 1.5
+
 # Named universes — pass via `tradelab run --universe NAME` instead of
 # typing each ticker. Edit freely. SPY is auto-included for strategies
 # that require a benchmark.
