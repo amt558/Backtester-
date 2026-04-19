@@ -1,0 +1,11 @@
+# Catalog of all seeds used across tradelab.
+optuna_default: 42
+walkforward_per_window: 42
+rand_canary_default: 42
+test_synthetic_ohlcv: 7
+test_multi_symbol_base: 10
+mc_shuffle: 101
+mc_bootstrap: 102
+mc_block_bootstrap: 103
+noise_injection_base: 200
+loso_per_fold: 42

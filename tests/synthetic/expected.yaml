@@ -1,0 +1,10 @@
+version: 1
+universe:
+  symbol: DIAL
+  start: '2022-01-03'
+  n_bars: 500
+metrics:
+  total_trades: 100
+  profit_factor: 0.051
+  final_equity: 81699.98
+  max_drawdown_pct: -19.234

@@ -378,5 +378,8 @@ def robustness_cmd(
     _check_strategy_exists(strategy)
 
 
+from .cli_run import run as _run_cmd; app.command(name="run")(_run_cmd)
+
+
 if __name__ == "__main__":
     app()
