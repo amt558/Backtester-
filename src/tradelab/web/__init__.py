@@ -52,9 +52,14 @@ def supports_progress_log() -> bool:
     import subprocess as _sp
     import sys as _sys
     try:
+        # text=True without explicit encoding uses the locale (cp1252 on US
+        # Windows), which crashes if the CLI's --help output contains the
+        # Unicode chars Rich/Typer emit for table borders. Force UTF-8 with
+        # error replacement so the probe never crashes on encoding alone.
         out = _sp.run(
             [_sys.executable, "-m", "tradelab.cli", "run", "--help"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10,
         )
         _supports_pl = "--progress-log" in (out.stdout + out.stderr)
     except Exception:
