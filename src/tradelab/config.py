@@ -14,7 +14,10 @@ from pydantic import BaseModel, Field
 
 
 class PathsConfig(BaseModel):
-    data_dir: str
+    # data_dir is DEPRECATED — the legacy CSV loader path. Kept as an
+    # optional field with an empty default so existing configs/tests that
+    # include it still validate, but the active workflow uses cache_dir only.
+    data_dir: str = ""
     reports_dir: str
     cache_dir: str
 
@@ -68,6 +71,17 @@ class RobustnessThresholds(BaseModel):
     wfe_fragile: float = 0.50
     noise_pf_drop_p5_fragile: float = 0.40
     noise_pf_drop_p5_robust: float = 0.10
+    regime_spread_fragile: float = 0.40
+    regime_spread_robust: float = 0.70
+    # Extreme regime concentration - auto-force FRAGILE regardless of
+    # other signals. Set to 0 to disable the hard-gate.
+    regime_spread_hard_fragile: float = 0.20
+    # Sample-size guard: a regime bucket needs at least
+    # max(regime_min_trades_abs, total_trades * regime_min_trades_pct / 100)
+    # trades to contribute to the spread computation. Prevents noisy
+    # signals from tiny-sample regime buckets.
+    regime_min_trades_pct: float = 10.0
+    regime_min_trades_abs: int = 5
 
 
 class RobustnessConfig(BaseModel):

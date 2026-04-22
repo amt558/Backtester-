@@ -19,6 +19,69 @@ from urllib.parse import parse_qs, urlparse
 from tradelab.web import audit_reader, freshness, new_strategy, ranges, whatif
 
 
+# Allowed (strategy-agnostic) commands the web tracker can launch.
+# Maps "run --robustness" → ["run", "--robustness"] argv tail.
+_ALLOWED_COMMANDS = {
+    "optimize":         ["optimize"],
+    "wf":               ["wf"],
+    "run":              ["run"],
+    "run --robustness": ["run", "--robustness"],
+    "run --full":       ["run", "--full"],
+}
+
+
+def _resolve_active_universe() -> str:
+    """Return the universe name the web dashboard should pass to tradelab CLI.
+
+    Same precedence the PowerShell launcher uses:
+    1. .cache/launcher-state.json::activeUniverse (the launcher's last selection,
+       shared state so CLI and web agree on what's active)
+    2. First universe in tradelab.yaml (alphabetical) as a final fallback
+    3. Empty string if nothing is defined — caller treats as "no --universe flag"
+    """
+    try:
+        state_path = Path(".cache") / "launcher-state.json"
+        if state_path.exists():
+            # PowerShell writes JSON with a UTF-8 BOM; utf-8-sig strips it.
+            state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+            active = state.get("activeUniverse")
+            if active:
+                return str(active)
+    except Exception:
+        pass
+    try:
+        from tradelab.config import get_config
+        cfg = get_config()
+        if cfg.universes:
+            return sorted(cfg.universes.keys())[0]
+    except Exception:
+        pass
+    return ""
+
+
+def _build_tradelab_argv(strategy: str, command: str) -> Optional[list]:
+    """Build the subprocess argv for a (strategy, command) pair.
+
+    Returns None if the command is not in _ALLOWED_COMMANDS.
+    Strategy must match a-z0-9_ pattern (no shell metacharacters).
+
+    Injects --universe from launcher-state.json so the CLI has data to
+    operate on (mirrors what the PowerShell launcher does via $activeUniverse).
+    Without this, run/optimize/wf exit 2 with "No symbols provided".
+    """
+    if command not in _ALLOWED_COMMANDS:
+        return None
+    if not re.match(r"^[a-z0-9_]+$", strategy):
+        return None
+    cmd_argv = _ALLOWED_COMMANDS[command]
+    universe_args: list = []
+    universe = _resolve_active_universe()
+    if universe:
+        universe_args = ["--universe", universe]
+    # tradelab CLI is `python -m tradelab.cli <subcommand> <strategy> [flags]`
+    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:], *universe_args]
+
+
 # ─── Configurable roots (monkeypatched in tests) ─────────────────────
 
 
@@ -100,6 +163,15 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         if r is None:
             return _ok({"ranges": None}), 200
         return _ok({"ranges": r}), 200
+
+    if path == "/tradelab/jobs":
+        from tradelab.web import get_job_manager
+        jm = get_job_manager()
+        return _ok({
+            "jobs": [j.to_dict() for j in jm.list_jobs()],
+            "running_id": jm._running_id,
+            "queue": list(jm._queue),
+        }), 200
 
     if path == "/tradelab/strategies":
         from tradelab.registry import list_registered_strategies
@@ -245,6 +317,115 @@ def handle_post(path: str, body: bytes) -> str:
             return _err(f"refresh failed: {e}")
 
     return _err("not found")
+
+
+def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
+    """POST dispatcher with explicit status. Mirrors handle_get_with_status.
+
+    Routes that need explicit status codes (201/400/409/410) live here.
+    Other POSTs delegate to the legacy handle_post() for backward compat.
+    """
+    try:
+        payload = json.loads(body.decode()) if body else {}
+    except json.JSONDecodeError:
+        return _err("invalid JSON body"), 400
+
+    if path == "/tradelab/jobs":
+        return _post_job(payload)
+
+    if path.startswith("/tradelab/jobs/") and path.endswith("/cancel"):
+        job_id = path[len("/tradelab/jobs/"):-len("/cancel")]
+        return _cancel_job(job_id)
+
+    # Fallback to legacy POST dispatcher for everything else
+    return handle_post(path, body), 200
+
+
+def _post_job(payload: dict) -> Tuple[str, int]:
+    import tradelab.web as web_pkg
+    from tradelab.web import get_job_manager
+    from tradelab.web import jobs as jobs_mod
+
+    if not web_pkg.supports_progress_log():
+        return _err(
+            "this tradelab build is missing --progress-log; rebuild from current master"
+        ), 503
+
+    strategy = payload.get("strategy", "")
+    command = payload.get("command", "")
+    if not strategy or not command:
+        return _err("strategy and command required"), 400
+
+    argv = _build_tradelab_argv(strategy, command)
+    if argv is None:
+        return _err(f"invalid command or strategy name: {command!r} / {strategy!r}"), 400
+
+    jm = get_job_manager()
+    try:
+        job_id, status = jm.submit(strategy, command, argv)
+    except jobs_mod.DuplicateJobError as e:
+        return _err("job already in flight",
+                    data={"existing_job_id": e.existing_job_id}), 409
+
+    return _ok({
+        "job_id": job_id,
+        "status": status.value,
+    }), 201
+
+
+def handle_sse(wfile) -> None:
+    """SSE endpoint for /tradelab/jobs/stream.
+
+    Called by launch_dashboard.py's do_GET branch directly. Subscribes the
+    connection to the broadcaster and blocks until the client disconnects.
+
+    The caller (HTTP server) is responsible for sending the response headers
+    (200 OK, Content-Type: text/event-stream, Cache-Control: no-cache,
+    Connection: keep-alive) before invoking this.
+    """
+    from tradelab.web import get_broadcaster, get_job_manager
+
+    bc = get_broadcaster()
+    jm = get_job_manager()
+
+    # Build the initial-state replay: one synthetic event per active job
+    initial_state = []
+    for j in jm.list_jobs():
+        if j.status.value in ("running", "queued"):
+            initial_state.append({
+                "job_id": j.id,
+                "event": {
+                    "type": "state",
+                    "status": j.status.value,
+                    "summary": j.last_event_summary or "",
+                    "strategy": j.strategy,
+                    "command": j.command,
+                },
+            })
+
+    token = bc.subscribe(wfile, initial_state=initial_state)
+    # Block until the broadcaster prunes our token (broken-pipe on a write
+    # detected during a broadcast removes the client from the registry).
+    # Poll once per second; the actual disconnect detection happens inside
+    # broadcast(), this loop just waits for it.
+    try:
+        import time
+        while bc.is_subscribed(token):
+            time.sleep(1.0)
+    finally:
+        bc.unsubscribe(token)
+
+
+def _cancel_job(job_id: str) -> Tuple[str, int]:
+    from tradelab.web import get_job_manager
+    jm = get_job_manager()
+    job = jm.get(job_id)
+    if job is None:
+        return _err("job not found"), 404
+    if job.status.value not in ("queued", "running"):
+        return _err(f"job is in terminal state {job.status.value!r}"), 410
+    jm.cancel(job_id)
+    return _ok({"job_id": job_id, "status": "cancelled"}), 200
 
 
 # ─── Envelope helpers ────────────────────────────────────────────────

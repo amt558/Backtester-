@@ -219,80 +219,100 @@ def optimize_cmd(
     strategy: str = typer.Argument(..., help="Registered strategy name"),
     trials: int = typer.Option(None, help="Number of Optuna trials (default from config)"),
     tearsheet: bool = typer.Option(True, help="Generate tearsheet of best-params backtest"),
+    progress_log: str = typer.Option(
+        "", "--progress-log",
+        help="Path to JSONL file for stage progress events (used by the web Job Tracker)."
+    ),
 ):
     """Run Optuna parameter search."""
-    _check_strategy_exists(strategy)
-    from .engines import run_optimization
+    from .web.progress_events import ProgressEmitter
+    _emit = ProgressEmitter(progress_log)
+    try:
+        _check_strategy_exists(strategy)
+        from .engines import run_optimization
 
-    strat, ticker_data, spy_close = _load_data_for(strategy)
+        strat, ticker_data, spy_close = _load_data_for(strategy)
 
-    console.print(f"[dim]Running Optuna ({trials or 'default'} trials)...[/dim]")
-    t0 = time.time()
-    opt_result = run_optimization(
-        strat, ticker_data,
-        n_trials=trials, spy_close=spy_close,
-        verbose=True, rerun_best=True,
-    )
-    console.print(f"[dim]  finished in {time.time() - t0:.1f}s[/dim]\n")
-
-    # Best trial summary
-    best = opt_result.best_trial
-    console.print(f"[bold]Best trial:[/bold] #{best.number}  "
-                  f"(fitness = [green]{best.fitness:.2f}[/green])")
-    pt = Table(show_header=False, box=None)
-    pt.add_column("", style="dim")
-    pt.add_column("", justify="right")
-    for k, v in best.params.items():
-        pt.add_row(k, f"{v:.4f}")
-    console.print(pt)
-    console.print()
-
-    if opt_result.best_backtest:
-        _print_metrics_table(f"{strategy} — best params", opt_result.best_backtest.metrics)
-
-    # Param importance
-    if opt_result.param_importance:
-        console.print("\n[bold]Parameter importance[/bold] (higher = more impact on fitness)")
-        it = Table(show_header=False, box=None)
-        it.add_column("", style="dim")
-        it.add_column("", justify="right")
-        for k, v in opt_result.param_importance.items():
-            bar = "█" * int(v * 40)
-            it.add_row(k, f"{v:.3f}  {bar}")
-        console.print(it)
-
-    # Top 5 trials
-    all_sorted = sorted(opt_result.all_trials, key=lambda t: t.fitness, reverse=True)[:5]
-    if all_sorted:
-        console.print("\n[bold]Top 5 trials[/bold]")
-        tt = Table(show_header=True, header_style="bold")
-        tt.add_column("#", justify="right")
-        tt.add_column("Fitness", justify="right")
-        tt.add_column("PF", justify="right")
-        tt.add_column("Trades", justify="right")
-        tt.add_column("WR%", justify="right")
-        tt.add_column("DD%", justify="right")
-        tt.add_column("AnnRet%", justify="right")
-        for t in all_sorted:
-            m = t.metrics
-            tt.add_row(
-                str(t.number),
-                f"{t.fitness:.2f}",
-                f"{m.get('pf', 0):.2f}",
-                str(m.get('trades', 0)),
-                f"{m.get('win_rate', 0):.1f}",
-                f"{m.get('max_dd', 0):.1f}",
-                f"{m.get('annual_return', 0):.1f}",
-            )
-        console.print(tt)
-
-    if tearsheet and opt_result.best_backtest:
-        from .reporting.tearsheet import render_backtest_tearsheet
-        path = render_backtest_tearsheet(
-            opt_result.best_backtest,
-            title=f"{strategy} Optuna best (trial #{best.number})",
+        console.print(f"[dim]Running Optuna ({trials or 'default'} trials)...[/dim]")
+        t0 = time.time()
+        _emit.start("optuna")
+        opt_result = run_optimization(
+            strat, ticker_data,
+            n_trials=trials, spy_close=spy_close,
+            verbose=True, rerun_best=True,
         )
-        console.print(f"\n[green]✓[/green] Tearsheet: [cyan]{path}[/cyan]")
+        _emit.complete("optuna", duration_s=time.time() - t0)
+        console.print(f"[dim]  finished in {time.time() - t0:.1f}s[/dim]\n")
+
+        # Best trial summary
+        best = opt_result.best_trial
+        console.print(f"[bold]Best trial:[/bold] #{best.number}  "
+                      f"(fitness = [green]{best.fitness:.2f}[/green])")
+        pt = Table(show_header=False, box=None)
+        pt.add_column("", style="dim")
+        pt.add_column("", justify="right")
+        for k, v in best.params.items():
+            pt.add_row(k, f"{v:.4f}")
+        console.print(pt)
+        console.print()
+
+        if opt_result.best_backtest:
+            _print_metrics_table(f"{strategy} — best params", opt_result.best_backtest.metrics)
+
+        # Param importance
+        if opt_result.param_importance:
+            console.print("\n[bold]Parameter importance[/bold] (higher = more impact on fitness)")
+            it = Table(show_header=False, box=None)
+            it.add_column("", style="dim")
+            it.add_column("", justify="right")
+            for k, v in opt_result.param_importance.items():
+                bar = "█" * int(v * 40)
+                it.add_row(k, f"{v:.3f}  {bar}")
+            console.print(it)
+
+        # Top 5 trials
+        all_sorted = sorted(opt_result.all_trials, key=lambda t: t.fitness, reverse=True)[:5]
+        if all_sorted:
+            console.print("\n[bold]Top 5 trials[/bold]")
+            tt = Table(show_header=True, header_style="bold")
+            tt.add_column("#", justify="right")
+            tt.add_column("Fitness", justify="right")
+            tt.add_column("PF", justify="right")
+            tt.add_column("Trades", justify="right")
+            tt.add_column("WR%", justify="right")
+            tt.add_column("DD%", justify="right")
+            tt.add_column("AnnRet%", justify="right")
+            for t in all_sorted:
+                m = t.metrics
+                tt.add_row(
+                    str(t.number),
+                    f"{t.fitness:.2f}",
+                    f"{m.get('pf', 0):.2f}",
+                    str(m.get('trades', 0)),
+                    f"{m.get('win_rate', 0):.1f}",
+                    f"{m.get('max_dd', 0):.1f}",
+                    f"{m.get('annual_return', 0):.1f}",
+                )
+            console.print(tt)
+
+        if tearsheet and opt_result.best_backtest:
+            from .reporting.tearsheet import render_backtest_tearsheet
+            path = render_backtest_tearsheet(
+                opt_result.best_backtest,
+                title=f"{strategy} Optuna best (trial #{best.number})",
+            )
+            console.print(f"\n[green]✓[/green] Tearsheet: [cyan]{path}[/cyan]")
+
+        _emit.done(exit_code=0)
+    except typer.Exit as e:
+        _emit.done(exit_code=int(e.exit_code or 0))
+        raise
+    except Exception as e:
+        _emit.error(str(e))
+        _emit.done(exit_code=1)
+        raise
+    finally:
+        _emit.close()
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -303,66 +323,86 @@ def optimize_cmd(
 def walkforward_cmd(
     strategy: str = typer.Argument(..., help="Registered strategy name"),
     trials: int = typer.Option(None, help="Optuna trials per window (default from config)"),
+    progress_log: str = typer.Option(
+        "", "--progress-log",
+        help="Path to JSONL file for stage progress events (used by the web Job Tracker)."
+    ),
 ):
     """Walk-forward validation with per-window Optuna."""
-    _check_strategy_exists(strategy)
-    from .engines import run_walkforward
+    from .web.progress_events import ProgressEmitter
+    _emit = ProgressEmitter(progress_log)
+    try:
+        _check_strategy_exists(strategy)
+        from .engines import run_walkforward
 
-    strat, ticker_data, spy_close = _load_data_for(strategy)
+        strat, ticker_data, spy_close = _load_data_for(strategy)
 
-    console.print(f"[dim]Running walk-forward...[/dim]")
-    t0 = time.time()
-    wf = run_walkforward(
-        strat, ticker_data, spy_close=spy_close,
-        n_trials_per_window=trials, verbose=True,
-    )
-    console.print(f"[dim]  finished in {time.time() - t0:.1f}s[/dim]\n")
-
-    # Per-window table
-    tt = Table(title="Per-window OOS results", show_header=True, header_style="bold")
-    tt.add_column("#", justify="right")
-    tt.add_column("Train", no_wrap=True)
-    tt.add_column("Test", no_wrap=True)
-    tt.add_column("Tr", justify="right")
-    tt.add_column("WR%", justify="right")
-    tt.add_column("PF", justify="right")
-    tt.add_column("DD%", justify="right")
-    tt.add_column("Ret%", justify="right")
-
-    for w in wf.windows:
-        if w.test_metrics is None:
-            tt.add_row(str(w.index + 1), w.train_start[:7], w.test_start[:7],
-                       "—", "—", "—", "—", "—")
-            continue
-        m = w.test_metrics
-        tt.add_row(
-            str(w.index + 1),
-            f"{w.train_start[:7]}→{w.train_end[:7]}",
-            f"{w.test_start[:7]}→{w.test_end[:7]}",
-            str(m.total_trades),
-            f"{m.win_rate:.1f}",
-            f"{m.profit_factor:.2f}",
-            f"{m.max_drawdown_pct:.1f}",
-            f"{m.pct_return:.1f}",
+        console.print(f"[dim]Running walk-forward...[/dim]")
+        t0 = time.time()
+        _emit.start("walk_forward")
+        wf = run_walkforward(
+            strat, ticker_data, spy_close=spy_close,
+            n_trials_per_window=trials, verbose=True,
         )
-    console.print(tt)
+        _emit.complete("walk_forward", duration_s=time.time() - t0)
+        console.print(f"[dim]  finished in {time.time() - t0:.1f}s[/dim]\n")
 
-    # Aggregate OOS
-    _print_metrics_table(f"{strategy} — aggregate OOS", wf.aggregate_oos)
+        # Per-window table
+        tt = Table(title="Per-window OOS results", show_header=True, header_style="bold")
+        tt.add_column("#", justify="right")
+        tt.add_column("Train", no_wrap=True)
+        tt.add_column("Test", no_wrap=True)
+        tt.add_column("Tr", justify="right")
+        tt.add_column("WR%", justify="right")
+        tt.add_column("PF", justify="right")
+        tt.add_column("DD%", justify="right")
+        tt.add_column("Ret%", justify="right")
 
-    # WFE verdict
-    wfe = wf.wfe_ratio
-    if wfe < 0.5:
-        verdict = "[red]WEAK: OOS retains <50% of IS edge — likely overfit[/red]"
-    elif wfe < 0.75:
-        verdict = "[yellow]MARGINAL: OOS retains 50–75% of IS edge[/yellow]"
-    elif wfe < 0.90:
-        verdict = "[green]GOOD: OOS retains 75–90% of IS edge — robust[/green]"
-    else:
-        verdict = "[bold green]EXCELLENT: OOS retains >90% of IS edge[/bold green]"
+        for w in wf.windows:
+            if w.test_metrics is None:
+                tt.add_row(str(w.index + 1), w.train_start[:7], w.test_start[:7],
+                           "—", "—", "—", "—", "—")
+                continue
+            m = w.test_metrics
+            tt.add_row(
+                str(w.index + 1),
+                f"{w.train_start[:7]}→{w.train_end[:7]}",
+                f"{w.test_start[:7]}→{w.test_end[:7]}",
+                str(m.total_trades),
+                f"{m.win_rate:.1f}",
+                f"{m.profit_factor:.2f}",
+                f"{m.max_drawdown_pct:.1f}",
+                f"{m.pct_return:.1f}",
+            )
+        console.print(tt)
 
-    console.print(f"\n[bold]WFE ratio:[/bold] {wfe:.2f}")
-    console.print(verdict)
+        # Aggregate OOS
+        _print_metrics_table(f"{strategy} — aggregate OOS", wf.aggregate_oos)
+
+        # WFE verdict
+        wfe = wf.wfe_ratio
+        if wfe < 0.5:
+            verdict = "[red]WEAK: OOS retains <50% of IS edge — likely overfit[/red]"
+        elif wfe < 0.75:
+            verdict = "[yellow]MARGINAL: OOS retains 50–75% of IS edge[/yellow]"
+        elif wfe < 0.90:
+            verdict = "[green]GOOD: OOS retains 75–90% of IS edge — robust[/green]"
+        else:
+            verdict = "[bold green]EXCELLENT: OOS retains >90% of IS edge[/bold green]"
+
+        console.print(f"\n[bold]WFE ratio:[/bold] {wfe:.2f}")
+        console.print(verdict)
+
+        _emit.done(exit_code=0)
+    except typer.Exit as e:
+        _emit.done(exit_code=int(e.exit_code or 0))
+        raise
+    except Exception as e:
+        _emit.error(str(e))
+        _emit.done(exit_code=1)
+        raise
+    finally:
+        _emit.close()
 
 
 # ─────────────────────────────────────────────────────────────────────
