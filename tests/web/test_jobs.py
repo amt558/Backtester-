@@ -161,6 +161,16 @@ def test_queue_promotes_next_on_exit(jm):
     assert jm._queue == []
 
 
+def test_bounded_retention_only_keeps_last_50_terminal(jm):
+    # Spam 60 short jobs
+    for i in range(60):
+        jid, _ = jm.submit(f"strat_{i}", "run", _fake_argv())
+        assert jm.wait_for_terminal(jid, timeout=10)
+
+    # All 60 finished, but only the last 50 should remain
+    assert len(jm.list_jobs()) == jobs.RETENTION_TERMINAL_JOBS  # 50
+
+
 def _fake_argv(script: str = "happy_short") -> list[str]:
     """Build argv that points at the fake CLI."""
     return [

@@ -110,9 +110,22 @@ class JobManager:
 
     def _persist(self) -> None:
         # caller must hold self._lock
+        terminal_states = {
+            JobStatus.DONE, JobStatus.FAILED,
+            JobStatus.CANCELLED, JobStatus.INTERRUPTED,
+        }
+        active = [j for j in self._jobs.values() if j.status not in terminal_states]
+        terminal = [j for j in self._jobs.values() if j.status in terminal_states]
+        terminal.sort(key=lambda j: j.ended_at or "")
+        if len(terminal) > RETENTION_TERMINAL_JOBS:
+            drop = terminal[: len(terminal) - RETENTION_TERMINAL_JOBS]
+            for j in drop:
+                self._jobs.pop(j.id, None)
+            terminal = terminal[len(terminal) - RETENTION_TERMINAL_JOBS:]
+
         data = {
             "schema_version": SCHEMA_VERSION,
-            "jobs": [j.to_dict() for j in self._jobs.values()],
+            "jobs": [j.to_dict() for j in (active + terminal)],
             "queue": list(self._queue),
             "running_id": self._running_id,
         }
