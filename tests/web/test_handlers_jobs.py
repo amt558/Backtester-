@@ -120,3 +120,42 @@ def test_post_cancel_done_job_returns_410(fresh_job_manager, monkeypatch):
 def test_post_cancel_unknown_job_returns_404(fresh_job_manager):
     body_str, status = handlers.handle_post_with_status("/tradelab/jobs/does-not-exist/cancel", b"")
     assert status == 404
+
+
+def test_handle_sse_writes_retry_hint_and_initial_state(fresh_job_manager, monkeypatch):
+    """Sanity: subscribing to SSE writes the retry hint and replays state."""
+    import io, threading
+    monkeypatch.setattr(handlers, "_build_tradelab_argv",
+                        lambda s, c: [sys.executable, str(Path(__file__).parent / "_fake_cli.py"),
+                                      "--script", "long_running"])
+    # Submit one job so initial_state is non-empty
+    body = json.dumps({"strategy": "momo", "command": "run"}).encode()
+    handlers.handle_post_with_status("/tradelab/jobs", body)
+    import time; time.sleep(0.2)
+
+    # Use a buffered wfile substitute. handle_sse blocks, so run in a thread
+    # and "disconnect" by removing the subscription.
+    class W:
+        def __init__(self): self.buf = io.BytesIO(); self.writes = 0
+        def write(self, b): self.writes += 1; return self.buf.write(b)
+        def flush(self): pass
+
+    wf = W()
+    t = threading.Thread(target=handlers.handle_sse, args=(wf,), daemon=True)
+    t.start()
+    time.sleep(0.3)  # let subscribe + initial-state writes happen
+
+    out = wf.buf.getvalue().decode()
+    assert "retry: 3000" in out
+    assert "data: " in out  # at least the one running job
+
+    # Force unsubscribe by clearing all clients
+    from tradelab.web import get_broadcaster
+    get_broadcaster()._clients.clear()
+    t.join(timeout=2)
+
+    # Cleanup the long_running job
+    for j in fresh_job_manager.list_jobs():
+        if j.status.value == "running":
+            fresh_job_manager.cancel(j.id)
+            fresh_job_manager.wait_for_terminal(j.id, timeout=5)

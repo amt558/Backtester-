@@ -80,6 +80,15 @@ def test_initial_state_replay_sends_one_event_per_active_job():
     assert out.count("data: ") == 2
 
 
+def test_is_subscribed_returns_true_for_active_token():
+    b = sse.Broadcaster()
+    wf = FakeWfile()
+    token = b.subscribe(wf)
+    assert b.is_subscribed(token) is True
+    b.unsubscribe(token)
+    assert b.is_subscribed(token) is False
+
+
 def test_concurrent_broadcast_modification_safe():
     """Subscribing while broadcast iterates must not raise."""
     b = sse.Broadcaster()

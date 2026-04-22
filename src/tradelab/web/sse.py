@@ -61,6 +61,10 @@ class Broadcaster:
         with self._lock:
             return len(self._clients)
 
+    def is_subscribed(self, token: str) -> bool:
+        with self._lock:
+            return token in self._clients
+
     def broadcast(self, event: dict) -> None:
         """Write one SSE-formatted event to every connected client.
 

@@ -330,6 +330,51 @@ def _post_job(payload: dict) -> Tuple[str, int]:
     }), 201
 
 
+def handle_sse(wfile) -> None:
+    """SSE endpoint for /tradelab/jobs/stream.
+
+    Called by launch_dashboard.py's do_GET branch directly. Subscribes the
+    connection to the broadcaster and blocks until the client disconnects.
+
+    The caller (HTTP server) is responsible for sending the response headers
+    (200 OK, Content-Type: text/event-stream, Cache-Control: no-cache,
+    Connection: keep-alive) before invoking this.
+    """
+    from tradelab.web import get_broadcaster, get_job_manager
+
+    bc = get_broadcaster()
+    jm = get_job_manager()
+
+    # Build the initial-state replay: one synthetic event per active job
+    initial_state = []
+    for j in jm.list_jobs():
+        if j.status.value in ("running", "queued"):
+            initial_state.append({
+                "job_id": j.id,
+                "event": {
+                    "type": "state",
+                    "status": j.status.value,
+                    "summary": j.last_event_summary or "",
+                    "strategy": j.strategy,
+                    "command": j.command,
+                },
+            })
+
+    token = bc.subscribe(wfile, initial_state=initial_state)
+    # Block until the client disconnects. The subscribe() call already wrote
+    # the retry hint + initial state. We need to keep this thread blocking
+    # so the http.server doesn't close the connection.
+    import threading
+    stop = threading.Event()
+    # When broadcast prunes us (broken pipe), we'll know via client_count;
+    # poll occasionally to detect that, or wait for an explicit shutdown.
+    while not stop.is_set():
+        if not bc.is_subscribed(token):
+            break
+        stop.wait(timeout=1.0)
+    bc.unsubscribe(token)
+
+
 def _cancel_job(job_id: str) -> Tuple[str, int]:
     from tradelab.web import get_job_manager
     jm = get_job_manager()
