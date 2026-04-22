@@ -26,7 +26,18 @@ from tradelab.registry import list_registered_strategies
 from tradelab.strategies.base import Strategy
 
 
-NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]+$")
+# Input pattern — accepts hyphens and uppercase (normalized to snake_case before use).
+# User can type TEST-A5, Test_A5, test-a5, or test_a5; all become test_a5 internally.
+NAME_INPUT_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]+$")
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize user input to snake_case Python identifier form.
+
+    Python modules must be valid identifiers, so hyphens/uppercase have to collapse.
+    UI accepts the friendly form; filesystem + registry use the canonical form.
+    """
+    return name.strip().lower().replace("-", "_")
 
 
 def _is_registered(name: str) -> bool:
@@ -45,20 +56,28 @@ def validate_and_stage(
 ) -> dict:
     """Run the full validation pipeline. Returns result dict.
 
-    Success:   {error: None, stage: "complete", metrics, equity_curves_by_symbol}
+    Success:   {error: None, stage: "complete", metrics, equity_curves_by_symbol, canonical_name}
     Failure:   {error: "<msg>", stage: "name"|"import"|"discover"|"instantiate"|"backtest"}
 
-    Side effect on success: staged file at staging_root/<name>.py.
+    Side effect on success: staged file at staging_root/<canonical>.py.
     Side effect on failure: staged file is removed.
     """
     staging_root.mkdir(parents=True, exist_ok=True)
-    staging_file = staging_root / f"{name}.py"
 
     # Stage 1: name
-    if not NAME_PATTERN.match(name):
-        return {"error": f"name must match {NAME_PATTERN.pattern}", "stage": "name"}
-    if _is_registered(name):
-        return {"error": f"name '{name}' is already registered", "stage": "name"}
+    if not NAME_INPUT_PATTERN.match(name):
+        return {
+            "error": f"name must match {NAME_INPUT_PATTERN.pattern} "
+                     f"(letters, digits, underscores, hyphens; starts with letter)",
+            "stage": "name",
+        }
+    canonical = _normalize_name(name)
+    if _is_registered(canonical):
+        return {"error": f"name '{canonical}' is already registered", "stage": "name"}
+
+    # All further filesystem/registry operations use the canonical (snake_case) form.
+    name = canonical
+    staging_file = staging_root / f"{name}.py"
 
     # Stage 2: import
     staging_file.write_text(code)
@@ -114,6 +133,7 @@ def validate_and_stage(
         "metrics": metrics,
         "equity_curves_by_symbol": equity_by_sym,
         "class_name": StrategyClass.__name__,
+        "canonical_name": name,
     }
 
 
@@ -126,9 +146,13 @@ def register_strategy(
 ) -> dict:
     """Move staged file into src/tradelab/strategies/ and append to tradelab.yaml.
 
+    Accepts either the raw user-typed name or the canonical snake_case form;
+    normalizes internally so callers don't have to remember.
+
     Returns {error, final_path} on result.
     """
     from tradelab.registry import list_registered_strategies
+    name = _normalize_name(name)
     # Re-check collision — could have been created while user viewed results
     if _is_registered(name):
         return {"error": f"name '{name}' is now taken (register blocked)", "final_path": None}
@@ -155,8 +179,11 @@ def register_strategy(
 
 
 def discard_staging(name: str, staging_root: Path) -> None:
-    """Delete staged file if present. No error if missing."""
-    path = staging_root / f"{name}.py"
+    """Delete staged file if present. No error if missing.
+
+    Accepts raw user input or canonical name — normalizes internally.
+    """
+    path = staging_root / f"{_normalize_name(name)}.py"
     path.unlink(missing_ok=True)
 
 

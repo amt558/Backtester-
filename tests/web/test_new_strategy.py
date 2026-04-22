@@ -100,3 +100,25 @@ def test_cleanup_removes_old_files(fake_tradelab_root: Path):
     assert removed == 1
     assert not old.exists()
     assert fresh.exists()
+
+
+def test_normalize_name_handles_hyphens_and_case():
+    assert new_strategy._normalize_name("TEST-A5") == "test_a5"
+    assert new_strategy._normalize_name("My-Strategy_V2") == "my_strategy_v2"
+    assert new_strategy._normalize_name("  spaced  ") == "spaced"
+    assert new_strategy._normalize_name("already_snake") == "already_snake"
+
+
+def test_validate_accepts_hyphen_and_uppercase_input(
+    fake_tradelab_root: Path, monkeypatch
+):
+    """TEST-A5 passes name-stage validation and progresses to discover stage."""
+    monkeypatch.setattr(new_strategy, "_is_registered", lambda n: False)
+    result = new_strategy.validate_and_stage(
+        name="TEST-A5",
+        code="x = 1\n",  # no Strategy subclass → fails at discover, not name
+        staging_root=fake_tradelab_root / ".cache" / "new_strategy_staging",
+        src_root=fake_tradelab_root / "src",
+    )
+    # Past name stage (no name error) — failed at discover stage
+    assert result["stage"] == "discover"
