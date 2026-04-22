@@ -159,3 +159,11 @@ def test_handle_sse_writes_retry_hint_and_initial_state(fresh_job_manager, monke
         if j.status.value == "running":
             fresh_job_manager.cancel(j.id)
             fresh_job_manager.wait_for_terminal(j.id, timeout=5)
+
+
+def test_post_jobs_returns_503_if_progress_log_unsupported(fresh_job_manager, monkeypatch):
+    import tradelab.web as web_pkg
+    monkeypatch.setattr(web_pkg, "supports_progress_log", lambda: False)
+    body = json.dumps({"strategy": "momo", "command": "run"}).encode()
+    _, status = handlers.handle_post_with_status("/tradelab/jobs", body)
+    assert status == 503

@@ -31,3 +31,27 @@ def get_broadcaster() -> Broadcaster:
 
 def get_job_manager() -> JobManager:
     return _job_manager
+
+
+def supports_progress_log() -> bool:
+    """Return True if the installed tradelab CLI knows the --progress-log flag.
+
+    Cached on first call. Used by handlers to short-circuit POST /tradelab/jobs
+    with 503 if the local tradelab is too old.
+    """
+    global _supports_pl
+    try:
+        return _supports_pl  # type: ignore[name-defined]
+    except NameError:
+        pass
+    import subprocess as _sp
+    import sys as _sys
+    try:
+        out = _sp.run(
+            [_sys.executable, "-m", "tradelab.cli", "run", "--help"],
+            capture_output=True, text=True, timeout=10,
+        )
+        _supports_pl = "--progress-log" in (out.stdout + out.stderr)
+    except Exception:
+        _supports_pl = False
+    return _supports_pl

@@ -305,8 +305,14 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
 
 
 def _post_job(payload: dict) -> Tuple[str, int]:
+    import tradelab.web as web_pkg
     from tradelab.web import get_job_manager
     from tradelab.web import jobs as jobs_mod
+
+    if not web_pkg.supports_progress_log():
+        return _err(
+            "this tradelab build is missing --progress-log; rebuild from current master"
+        ), 503
 
     strategy = payload.get("strategy", "")
     command = payload.get("command", "")
