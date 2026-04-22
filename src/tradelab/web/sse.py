@@ -29,14 +29,19 @@ class Broadcaster:
         with self._lock:
             self._clients[token] = wfile
 
-        # Only send retry hint + replay when an initial_state was supplied.
-        # Without initial_state, subscribe() is a pure registration so callers
-        # can race subscribe with broadcast without triggering a write here.
-        if initial_state:
+        # Two distinct guards:
+        #   - initial_state IS NOT None ─► caller signals "real client connection"
+        #     so write the SSE retry hint per spec §6.3 (always, even when the
+        #     replay is empty — empty active-job list is normal on cold start).
+        #   - initial_state IS truthy   ─► also replay the per-job state events.
+        # When initial_state is None (test default), subscribe() is a pure
+        # registration with no IO — tests can race subscribe + broadcast safely.
+        if initial_state is not None:
             try:
                 wfile.write(f"retry: {SSE_RETRY_MS}\n\n".encode("utf-8"))
-                for ev in initial_state:
-                    wfile.write(f"data: {json.dumps(ev)}\n\n".encode("utf-8"))
+                if initial_state:
+                    for ev in initial_state:
+                        wfile.write(f"data: {json.dumps(ev)}\n\n".encode("utf-8"))
                 try:
                     wfile.flush()
                 except Exception:
