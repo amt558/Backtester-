@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
@@ -97,16 +97,20 @@ class JobManager:
             _backup_corrupted(p, reason="parse_error")
             return
 
-        # Liveness check: any RUNNING job whose PID is dead → INTERRUPTED
-        if self._running_id:
-            running = self._jobs.get(self._running_id)
-            if running is None or running.pid is None:
-                self._running_id = None
-            elif not _pid_alive(running.pid):
-                running.status = JobStatus.INTERRUPTED
-                running.ended_at = _ts()
-                self._running_id = None
-                self._persist()
+        # Liveness check: any RUNNING job whose PID is dead → INTERRUPTED.
+        # Take the lock for invariant correctness; in __init__ we are
+        # single-threaded but a future "reload from disk" admin path
+        # would otherwise violate _persist's lock-required contract.
+        with self._lock:
+            if self._running_id:
+                running = self._jobs.get(self._running_id)
+                if running is None or running.pid is None:
+                    self._running_id = None
+                elif not _pid_alive(running.pid):
+                    running.status = JobStatus.INTERRUPTED
+                    running.ended_at = _ts()
+                    self._running_id = None
+                    self._persist()
 
     def _persist(self) -> None:
         # caller must hold self._lock
@@ -116,7 +120,10 @@ class JobManager:
         }
         active = [j for j in self._jobs.values() if j.status not in terminal_states]
         terminal = [j for j in self._jobs.values() if j.status in terminal_states]
-        terminal.sort(key=lambda j: j.ended_at or "")
+        # Stable sort with id tiebreaker — _ts() is 1-second resolution, so
+        # collisions are common when many jobs finish quickly. id keeps the
+        # drop order deterministic across dict-rebuild paths.
+        terminal.sort(key=lambda j: (j.ended_at or "", j.id))
         if len(terminal) > RETENTION_TERMINAL_JOBS:
             drop = terminal[: len(terminal) - RETENTION_TERMINAL_JOBS]
             for j in drop:
