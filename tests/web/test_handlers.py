@@ -66,3 +66,21 @@ def test_handle_new_strategy_test_action(fake_tradelab_root: Path, monkeypatch):
     data = json.loads(body)
     # Discard of non-existent staging is idempotent — error is None
     assert data["error"] is None
+
+
+def test_handle_runs_folder_lookup(fake_audit_db, fake_run_folder, monkeypatch):
+    import sqlite3
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-003'",
+        (str(fake_run_folder),),
+    )
+    conn.commit(); conn.close()
+
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+
+    body, status = handlers.handle_get_with_status("/tradelab/runs/run-003/folder")
+    assert status == 200
+    assert json.loads(body)["data"]["folder"].endswith("s4_inside_day_breakout_2026-04-20_120000")

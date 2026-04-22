@@ -83,6 +83,14 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     if m:
         return _ok(audit_reader.get_run_metrics(m.group(1), db_path=_db_path())), 200
 
+    m = re.match(r"^/tradelab/runs/([^/]+)/folder$", path)
+    if m:
+        folder = audit_reader.get_run_folder(m.group(1), db_path=_db_path())
+        if folder is None:
+            return _err("run not found"), 404
+        # Return path relative to tradelab root (used as iframe prefix)
+        return _ok({"folder": str(folder).replace("\\", "/")}), 200
+
     if path == "/tradelab/data-freshness":
         return _ok(freshness.get_freshness(cache_root=_cache_root())), 200
 
