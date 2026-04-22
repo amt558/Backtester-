@@ -84,3 +84,54 @@ def test_handle_runs_folder_lookup(fake_audit_db, fake_run_folder, monkeypatch):
     body, status = handlers.handle_get_with_status("/tradelab/runs/run-003/folder")
     assert status == 200
     assert json.loads(body)["data"]["folder"].endswith("s4_inside_day_breakout_2026-04-20_120000")
+
+
+def test_handle_save_variant_happy_path(fake_tradelab_root, monkeypatch):
+    # Prepare a base strategy file
+    strategies_dir = fake_tradelab_root / "src" / "tradelab" / "strategies"
+    strategies_dir.mkdir(parents=True, exist_ok=True)
+    (strategies_dir / "base_strat.py").write_text('''
+from tradelab.strategies.base import Strategy
+class BaseStrat(Strategy):
+    default_params = {"x": 1}
+    def generate_signals(self, data, spy_close=None):
+        return {k: v.copy() for k,v in data.items()}
+''')
+    # Fake yaml
+    yaml_path = fake_tradelab_root / "tradelab.yaml"
+    yaml_path.write_text("strategies:\n  base_strat:\n    module: tradelab.strategies.base_strat\n    class_name: BaseStrat\n    params: {}\n")
+
+    monkeypatch.setattr(handlers, "_db_path", lambda: Path("nope.db"))
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: fake_tradelab_root / "src")
+    monkeypatch.setattr(handlers, "_staging_root", lambda: fake_tradelab_root / ".cache" / "new_strategy_staging")
+    monkeypatch.setattr(handlers, "_yaml_path", lambda: yaml_path)
+
+    # Stub subprocess.Popen — no CLI run during test
+    monkeypatch.setattr(handlers.subprocess, "Popen", lambda *a, **kw: None)
+
+    # Skip the smoke_5 backtest by mocking validate_and_stage to succeed instantly
+    def fake_validate(name, code, staging_root, src_root):
+        (Path(staging_root) / f"{name}.py").write_text(code)
+        return {"error": None, "stage":"complete", "metrics":{}, "equity_curves_by_symbol":{}, "class_name":"BaseStrat"}
+    monkeypatch.setattr(handlers.new_strategy, "validate_and_stage", fake_validate)
+
+    # And stub _is_registered so register doesn't think name is taken
+    monkeypatch.setattr(handlers.new_strategy, "_is_registered", lambda n: False)
+
+    # Stub the registry so the route can resolve base_strat → module path
+    # (list_registered_strategies / get_strategy_entry read real tradelab.yaml via get_config)
+    from tradelab.config import StrategyEntry
+    import tradelab.registry as _registry
+    fake_entry = StrategyEntry(module="tradelab.strategies.base_strat", class_name="BaseStrat")
+    monkeypatch.setattr(_registry, "list_registered_strategies", lambda: {"base_strat": fake_entry})
+    monkeypatch.setattr(_registry, "get_strategy_entry", lambda name: fake_entry)
+
+    payload = {"base_strategy":"base_strat","new_name":"base_strat_v2","params":{"x":5}}
+    body = handlers.handle_post("/tradelab/save-variant", json.dumps(payload).encode())
+    data = json.loads(body)
+    assert data["error"] is None
+    # Confirm the variant file was written with new defaults
+    variant = fake_tradelab_root / "src" / "tradelab" / "strategies" / "base_strat_v2.py"
+    assert variant.exists()
+    assert "'x': 5" in variant.read_text() or '"x": 5' in variant.read_text()

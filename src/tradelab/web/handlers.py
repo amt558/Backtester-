@@ -180,6 +180,50 @@ def handle_post(path: str, body: bytes) -> str:
 
         return _err(f"unknown action: {action}")
 
+    if path == "/tradelab/save-variant":
+        try:
+            base = payload["base_strategy"]
+            new_name = payload["new_name"]
+            new_params = payload.get("params") or {}
+        except KeyError as e:
+            return _err(f"missing field: {e}")
+        from tradelab.registry import get_strategy_entry, list_registered_strategies
+        if new_name in list_registered_strategies():
+            return _err(f"name '{new_name}' already registered")
+        try:
+            entry = get_strategy_entry(base)
+        except Exception as e:
+            return _err(f"base strategy not registered: {e}")
+        module_path = entry.module.replace("tradelab.strategies.", "")
+        src_file = _src_root() / "tradelab" / "strategies" / f"{module_path}.py"
+        if not src_file.exists():
+            return _err(f"base strategy file missing: {src_file}")
+        # Read the original source, then write it with the new default params injected
+        code = src_file.read_text()
+        code = _inject_default_params(code, new_params)
+        result = new_strategy.validate_and_stage(
+            name=new_name,
+            code=code,
+            staging_root=_staging_root(),
+            src_root=_src_root(),
+        )
+        if result["error"]:
+            return _err(result["error"], data={"stage": result.get("stage")})
+        reg = new_strategy.register_strategy(
+            name=new_name,
+            class_name=result["class_name"],
+            staging_root=_staging_root(),
+            src_root=_src_root(),
+            yaml_path=_yaml_path(),
+        )
+        if reg["error"]:
+            return _err(reg["error"])
+        subprocess.Popen(
+            [sys.executable, "-m", "tradelab.cli", "run", new_name, "--robustness"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return _ok({"final_path": reg["final_path"]})
+
     if path == "/tradelab/refresh-data":
         # Fire-and-forget: launcher polls /tradelab/data-freshness afterward
         try:
@@ -205,3 +249,29 @@ def _ok(data) -> str:
 
 def _err(msg: str, data=None) -> str:
     return json.dumps({"error": msg, "data": data})
+
+
+# ─── Misc helpers ────────────────────────────────────────────────────
+
+
+def _inject_default_params(code: str, new_defaults: dict) -> str:
+    """Rewrite the `default_params = {...}` class attribute with new_defaults.
+
+    Naive replacement — expects a single `default_params = {` line in the file.
+    Falls back to inserting a new class-level assignment after the class
+    declaration if not found.
+    """
+    import re as _re
+    if not new_defaults:
+        return code
+    literal = repr(new_defaults)
+    pattern = _re.compile(r"default_params\s*=\s*\{[^}]*\}", _re.MULTILINE | _re.DOTALL)
+    if pattern.search(code):
+        return pattern.sub(f"default_params = {literal}", code, count=1)
+    # fallback: insert after first class definition line
+    cls = _re.compile(r"(class \w+\([^)]*Strategy[^)]*\):\s*\n)")
+    m = cls.search(code)
+    if m:
+        insertion = m.group(0) + f"    default_params = {literal}\n"
+        return cls.sub(insertion, code, count=1)
+    return code
