@@ -153,6 +153,7 @@ def handle_post(path: str, body: bytes) -> str:
                 "metrics": result.get("metrics", {}),
                 "equity_curves_by_symbol": result.get("equity_curves_by_symbol", {}),
                 "class_name": result.get("class_name"),
+                "canonical_name": result.get("canonical_name"),
             })
 
         if action == "register":
@@ -166,13 +167,19 @@ def handle_post(path: str, body: bytes) -> str:
             )
             if reg.get("error"):
                 return _err(reg["error"])
-            # Kick off background robustness run; don't wait
+            # Kick off background robustness run; don't wait.
+            # Use the normalized canonical form so the CLI can find the strategy.
+            canonical = new_strategy._normalize_name(name)
             subprocess.Popen(
-                [sys.executable, "-m", "tradelab.cli", "run", name, "--robustness"],
+                [sys.executable, "-m", "tradelab.cli", "run", canonical, "--robustness"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            return _ok({"final_path": reg["final_path"], "robustness_started": True})
+            return _ok({
+                "final_path": reg["final_path"],
+                "robustness_started": True,
+                "canonical_name": canonical,
+            })
 
         if action == "discard":
             new_strategy.discard_staging(name, staging_root=_staging_root())
