@@ -61,3 +61,4 @@ tradelab.local.yaml
 # scratch/temp files
 _*.py
 _*.txt
+.worktrees/
