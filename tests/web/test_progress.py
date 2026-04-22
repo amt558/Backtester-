@@ -100,6 +100,10 @@ def test_tail_stops_cleanly(tmp_path):
     received = []
     tailer = progress.ProgressTailer(log, on_event=received.append, poll_interval_s=0.05)
     tailer.start()
+    # Capture the thread reference BEFORE stop() — stop() sets _thread = None
+    # on success, so checking tailer._thread after the call would be vacuous.
+    t = tailer._thread
+    assert t is not None and t.is_alive()
     tailer.stop()
-    # No exceptions, no thread leak
-    assert not tailer._thread.is_alive() if tailer._thread else True
+    assert not t.is_alive()
+    assert tailer._thread is None

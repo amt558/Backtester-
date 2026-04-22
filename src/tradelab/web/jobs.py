@@ -265,8 +265,16 @@ class JobManager:
             job = self._jobs.get(job_id)
             if job is None:
                 return
-            # update last_event_summary for the UI
-            job.last_event_summary = _summarize_event(event)
+            new_summary = _summarize_event(event)
+            if new_summary != job.last_event_summary:
+                job.last_event_summary = new_summary
+                # Persist only on coarse stage transitions, not on every progress
+                # tick — Optuna runs can fire 500+ progress events per stage and
+                # we don't want a jobs.json rewrite per tick. Stage transitions
+                # are rare (~10/job), so post-restart UI shows the most recent
+                # stage milestone instead of stale data.
+                if event.get("type") in ("start", "complete", "done", "error"):
+                    self._persist()
         # call the SSE hook outside the lock
         if self._on_state_change:
             try:
