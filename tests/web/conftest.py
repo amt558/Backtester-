@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from datetime import datetime, timezone, timedelta
@@ -99,8 +100,6 @@ def fake_parquet_cache(fake_tradelab_root: Path) -> Path:
         p.write_bytes(b"fake")
     # Set mtimes: AAPL 2h old, NVDA 1h old, SPY just now
     now = time.time()
-    (cache / "AAPL.parquet").touch()  # default = now
-    import os
     os.utime(cache / "AAPL.parquet", (now - 7200, now - 7200))
     os.utime(cache / "NVDA.parquet", (now - 3600, now - 3600))
     return cache
