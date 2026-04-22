@@ -52,7 +52,12 @@ class ProgressTailer:
     def _run(self) -> None:
         position = 0
         buffer = ""
-        while not self._stop.is_set():
+        # We loop until stop is set, then do one final drain pass so any
+        # bytes written between the last poll and the stop signal still
+        # reach the callback (subprocesses often emit 'done' just before
+        # exiting, racing with the watcher that triggers stop()).
+        while True:
+            stopping = self._stop.is_set()
             try:
                 if self.path.exists():
                     size = self.path.stat().st_size
@@ -78,4 +83,6 @@ class ProgressTailer:
                         buffer = ""
             except (OSError, IOError):
                 pass  # transient disk error - retry next poll
+            if stopping:
+                return
             self._stop.wait(timeout=self.poll_interval_s)

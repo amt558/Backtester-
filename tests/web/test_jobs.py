@@ -197,6 +197,14 @@ def test_bounded_retention_only_keeps_last_50_terminal(jm):
     assert len(jm.list_jobs()) == jobs.RETENTION_TERMINAL_JOBS  # 50
 
 
+def test_progress_events_update_last_event_summary(jm):
+    job_id, _ = jm.submit("momo", "run", _fake_argv("happy_with_progress"))
+    assert jm.wait_for_terminal(job_id, timeout=10)
+    j = jm.get(job_id)
+    # The last summary depends on the script — happy_with_progress ends with done
+    assert j.last_event_summary in ("monte_carlo done", "done")
+
+
 def _fake_argv(script: str = "happy_short") -> list[str]:
     """Build argv that points at the fake CLI."""
     return [

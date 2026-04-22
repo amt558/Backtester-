@@ -19,6 +19,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
+from .progress import ProgressTailer
+
 
 SCHEMA_VERSION = 1
 RETENTION_TERMINAL_JOBS = 50
@@ -71,6 +73,7 @@ class JobManager:
         self._queue: list[str] = []
         self._running_id: Optional[str] = None
         self._processes: dict[str, subprocess.Popen] = {}
+        self._tailers: dict[str, ProgressTailer] = {}
         # event hook — wired by sse.py to push state changes
         self._on_state_change = None
         self._load_or_init()
@@ -206,6 +209,14 @@ class JobManager:
         self._running_id = job_id
         # start a watcher thread that flips status when subprocess exits
         threading.Thread(target=self._watch, args=(job_id,), daemon=True).start()
+        # tail progress.jsonl and route events to last_event_summary + sse
+        if job.progress_log:
+            tailer = ProgressTailer(
+                Path(job.progress_log),
+                on_event=lambda ev, jid=job_id: self._on_progress_event(jid, ev),
+            )
+            tailer.start()
+            self._tailers[job_id] = tailer
 
     def _watch(self, job_id: str) -> None:
         """Block on subprocess exit, then update state."""
@@ -216,6 +227,15 @@ class JobManager:
             stderr_bytes = proc.communicate()[1] or b""
         except Exception:
             stderr_bytes = b""
+        # Subprocess has exited. The tailer may be mid-poll-wait and could
+        # miss the final emitted events (the 'done' line written microseconds
+        # before exit). Stop the tailer now so its final drain pass reads
+        # any remaining bytes synchronously before we flip status to DONE.
+        # If we don't do this, callers using wait_for_terminal() can race
+        # the tailer and observe a stale last_event_summary.
+        tailer = self._tailers.get(job_id)
+        if tailer is not None:
+            tailer.stop()
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -231,12 +251,28 @@ class JobManager:
                 tail = stderr_bytes.decode(errors="replace").splitlines()[-100:]
                 job.error_tail = "\n".join(tail)
             self._processes.pop(job_id, None)
+            self._tailers.pop(job_id, None)  # already stopped above
             self._running_id = None
             # promote next queued job
             if self._queue:
                 next_id = self._queue.pop(0)
                 self._start(next_id)
             self._persist()
+
+    def _on_progress_event(self, job_id: str, event: dict) -> None:
+        """Callback fired by ProgressTailer for each parsed event."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            # update last_event_summary for the UI
+            job.last_event_summary = _summarize_event(event)
+        # call the SSE hook outside the lock
+        if self._on_state_change:
+            try:
+                self._on_state_change(job_id, event)
+            except Exception:
+                pass
 
     def get(self, job_id: str) -> Optional[Job]:
         with self._lock:
@@ -303,6 +339,23 @@ class DuplicateJobError(Exception):
 
 
 # ─── Module helpers ──────────────────────────────────────────────────
+
+
+def _summarize_event(event: dict) -> str:
+    """Compact human-readable summary like 'MC 320/500'."""
+    t = event.get("type", "")
+    stage = event.get("stage", "")
+    if t == "progress" and "i" in event and "total" in event:
+        return f"{stage} {event['i']}/{event['total']}"
+    if t == "start":
+        return f"{stage} starting"
+    if t == "complete":
+        return f"{stage} done"
+    if t == "done":
+        return "done"
+    if t == "error":
+        return "error"
+    return ""
 
 
 def _ts() -> str:
