@@ -35,14 +35,30 @@ def _build_tradelab_argv(strategy: str, command: str) -> Optional[list]:
 
     Returns None if the command is not in _ALLOWED_COMMANDS.
     Strategy must match a-z0-9_ pattern (no shell metacharacters).
+
+    Injects --universe from cfg.defaults.universe so the CLI has data to
+    operate on (mirrors what the PowerShell launcher does via $activeUniverse).
+    Without this, run/optimize/wf exit 2 with "No symbols provided".
     """
     if command not in _ALLOWED_COMMANDS:
         return None
     if not re.match(r"^[a-z0-9_]+$", strategy):
         return None
     cmd_argv = _ALLOWED_COMMANDS[command]
+    # Resolve the default universe from tradelab.yaml. If config can't load
+    # (e.g., bad yaml), fall back to no --universe and let the CLI emit its
+    # own error — better than silently picking a wrong universe.
+    universe_args: list = []
+    try:
+        from tradelab.config import get_config
+        cfg = get_config()
+        default_universe = getattr(cfg.defaults, "universe", "") or ""
+        if default_universe:
+            universe_args = ["--universe", default_universe]
+    except Exception:
+        pass
     # tradelab CLI is `python -m tradelab.cli <subcommand> <strategy> [flags]`
-    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:]]
+    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:], *universe_args]
 
 
 # ─── Configurable roots (monkeypatched in tests) ─────────────────────
