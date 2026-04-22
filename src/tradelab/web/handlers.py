@@ -19,6 +19,32 @@ from urllib.parse import parse_qs, urlparse
 from tradelab.web import audit_reader, freshness, new_strategy, ranges, whatif
 
 
+# Allowed (strategy-agnostic) commands the web tracker can launch.
+# Maps "run --robustness" → ["run", "--robustness"] argv tail.
+_ALLOWED_COMMANDS = {
+    "optimize":         ["optimize"],
+    "wf":               ["wf"],
+    "run":              ["run"],
+    "run --robustness": ["run", "--robustness"],
+    "run --full":       ["run", "--full"],
+}
+
+
+def _build_tradelab_argv(strategy: str, command: str) -> Optional[list]:
+    """Build the subprocess argv for a (strategy, command) pair.
+
+    Returns None if the command is not in _ALLOWED_COMMANDS.
+    Strategy must match a-z0-9_ pattern (no shell metacharacters).
+    """
+    if command not in _ALLOWED_COMMANDS:
+        return None
+    if not re.match(r"^[a-z0-9_]+$", strategy):
+        return None
+    cmd_argv = _ALLOWED_COMMANDS[command]
+    # tradelab CLI is `python -m tradelab.cli <subcommand> <strategy> [flags]`
+    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:]]
+
+
 # ─── Configurable roots (monkeypatched in tests) ─────────────────────
 
 
@@ -245,6 +271,66 @@ def handle_post(path: str, body: bytes) -> str:
             return _err(f"refresh failed: {e}")
 
     return _err("not found")
+
+
+def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
+    """POST dispatcher with explicit status. Mirrors handle_get_with_status.
+
+    Routes that need explicit status codes (201/400/409/410) live here.
+    Other POSTs delegate to the legacy handle_post() for backward compat.
+    """
+    try:
+        payload = json.loads(body.decode()) if body else {}
+    except json.JSONDecodeError:
+        return _err("invalid JSON body"), 400
+
+    if path == "/tradelab/jobs":
+        return _post_job(payload)
+
+    if path.startswith("/tradelab/jobs/") and path.endswith("/cancel"):
+        job_id = path[len("/tradelab/jobs/"):-len("/cancel")]
+        return _cancel_job(job_id)
+
+    # Fallback to legacy POST dispatcher for everything else
+    return handle_post(path, body), 200
+
+
+def _post_job(payload: dict) -> Tuple[str, int]:
+    from tradelab.web import get_job_manager
+    from tradelab.web import jobs as jobs_mod
+
+    strategy = payload.get("strategy", "")
+    command = payload.get("command", "")
+    if not strategy or not command:
+        return _err("strategy and command required"), 400
+
+    argv = _build_tradelab_argv(strategy, command)
+    if argv is None:
+        return _err(f"invalid command or strategy name: {command!r} / {strategy!r}"), 400
+
+    jm = get_job_manager()
+    try:
+        job_id, status = jm.submit(strategy, command, argv)
+    except jobs_mod.DuplicateJobError as e:
+        return _err("job already in flight",
+                    data={"existing_job_id": e.existing_job_id}), 409
+
+    return _ok({
+        "job_id": job_id,
+        "status": status.value,
+    }), 201
+
+
+def _cancel_job(job_id: str) -> Tuple[str, int]:
+    from tradelab.web import get_job_manager
+    jm = get_job_manager()
+    job = jm.get(job_id)
+    if job is None:
+        return _err("job not found"), 404
+    if job.status.value not in ("queued", "running"):
+        return _err(f"job is in terminal state {job.status.value!r}"), 410
+    jm.cancel(job_id)
+    return _ok({"job_id": job_id, "status": "cancelled"}), 200
 
 
 # ─── Envelope helpers ────────────────────────────────────────────────
