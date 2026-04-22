@@ -161,6 +161,32 @@ def test_queue_promotes_next_on_exit(jm):
     assert jm._queue == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="CTRL_BREAK_EVENT is Windows-specific")
+def test_cancel_running_job_uses_ctrl_break_then_kill(jm):
+    """Spawn a long_running fake CLI, cancel it, verify status flips to CANCELLED."""
+    job_id, _ = jm.submit("momo", "run", _fake_argv("long_running"))
+    # Give it a moment to actually start
+    time.sleep(0.5)
+    assert jm.cancel(job_id) is True
+    assert jm.wait_for_terminal(job_id, timeout=10)
+    assert jm.get(job_id).status == jobs.JobStatus.CANCELLED
+
+
+def test_cancel_queued_job_removes_from_queue(jm):
+    a_id, _ = jm.submit("momo", "run", _fake_argv("long_running"))
+    b_id, _ = jm.submit("mean_rev", "run", _fake_argv())
+    assert jm.get(b_id).status == jobs.JobStatus.QUEUED
+    assert jm.cancel(b_id) is True
+    assert jm.get(b_id).status == jobs.JobStatus.CANCELLED
+    assert b_id not in jm._queue
+    # Cleanup A
+    jm.cancel(a_id); jm.wait_for_terminal(a_id, timeout=10)
+
+
+def test_cancel_unknown_job_returns_false(jm):
+    assert jm.cancel("does-not-exist") is False
+
+
 def test_bounded_retention_only_keeps_last_50_terminal(jm):
     # Spam 60 short jobs
     for i in range(60):
