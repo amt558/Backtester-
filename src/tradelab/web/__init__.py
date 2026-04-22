@@ -38,6 +38,11 @@ def supports_progress_log() -> bool:
 
     Cached on first call. Used by handlers to short-circuit POST /tradelab/jobs
     with 503 if the local tradelab is too old.
+
+    Cache staleness: if the dashboard was started against an old tradelab and
+    the user later upgrades, the False result sticks until the dashboard is
+    restarted. Workaround is to restart launch_dashboard.py after a tradelab
+    upgrade. v1.5 doesn't expose a cache-invalidation hook.
     """
     global _supports_pl
     try:

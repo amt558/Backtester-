@@ -367,18 +367,16 @@ def handle_sse(wfile) -> None:
             })
 
     token = bc.subscribe(wfile, initial_state=initial_state)
-    # Block until the client disconnects. The subscribe() call already wrote
-    # the retry hint + initial state. We need to keep this thread blocking
-    # so the http.server doesn't close the connection.
-    import threading
-    stop = threading.Event()
-    # When broadcast prunes us (broken pipe), we'll know via client_count;
-    # poll occasionally to detect that, or wait for an explicit shutdown.
-    while not stop.is_set():
-        if not bc.is_subscribed(token):
-            break
-        stop.wait(timeout=1.0)
-    bc.unsubscribe(token)
+    # Block until the broadcaster prunes our token (broken-pipe on a write
+    # detected during a broadcast removes the client from the registry).
+    # Poll once per second; the actual disconnect detection happens inside
+    # broadcast(), this loop just waits for it.
+    try:
+        import time
+        while bc.is_subscribed(token):
+            time.sleep(1.0)
+    finally:
+        bc.unsubscribe(token)
 
 
 def _cancel_job(job_id: str) -> Tuple[str, int]:
