@@ -75,6 +75,78 @@ def test_duplicate_strategy_command_returns_existing_409(jm):
     jm.cancel(a_id)
 
 
+def test_restart_recovery_pid_alive_reattaches(tmp_path, monkeypatch):
+    """If the dashboard restarts but the subprocess is still alive,
+    JobManager should re-load the running job and treat it as still in flight."""
+    cache = tmp_path / ".cache"
+    cache.mkdir()
+
+    # Manually craft jobs.json as if a prior dashboard left a running job
+    # Use os.getpid() — guaranteed to be alive
+    own_pid = os.getpid()
+    state = {
+        "schema_version": jobs.SCHEMA_VERSION,
+        "jobs": [{
+            "id": "abc",
+            "strategy": "momo",
+            "command": "run",
+            "argv": ["echo"],
+            "status": "running",
+            "started_at": "2026-04-22T10:00:00Z",
+            "ended_at": None,
+            "pid": own_pid,
+            "exit_code": None,
+            "progress_log": str(cache / "jobs/abc/progress.jsonl"),
+            "last_event_summary": None,
+            "error_tail": None,
+        }],
+        "queue": [],
+        "running_id": "abc",
+    }
+    (cache / "jobs.json").write_text(json.dumps(state))
+
+    jm = jobs.JobManager(cache_root=cache)
+    # Re-loaded job should be present and still RUNNING because PID is alive
+    assert jm.get("abc").status == jobs.JobStatus.RUNNING
+    assert jm._running_id == "abc"
+
+
+def test_restart_recovery_pid_dead_marks_interrupted(tmp_path):
+    cache = tmp_path / ".cache"
+    cache.mkdir()
+    # PID 999999 is overwhelmingly likely to not exist
+    state = {
+        "schema_version": jobs.SCHEMA_VERSION,
+        "jobs": [{
+            "id": "abc", "strategy": "momo", "command": "run",
+            "argv": ["echo"], "status": "running",
+            "started_at": "2026-04-22T10:00:00Z", "ended_at": None,
+            "pid": 999999, "exit_code": None,
+            "progress_log": None, "last_event_summary": None, "error_tail": None,
+        }],
+        "queue": [], "running_id": "abc",
+    }
+    (cache / "jobs.json").write_text(json.dumps(state))
+
+    jm = jobs.JobManager(cache_root=cache)
+    j = jm.get("abc")
+    assert j.status == jobs.JobStatus.INTERRUPTED
+    assert j.ended_at is not None
+    assert jm._running_id is None
+
+
+def test_corrupted_jobs_json_is_renamed_and_fresh_state_starts(tmp_path):
+    cache = tmp_path / ".cache"
+    cache.mkdir()
+    (cache / "jobs.json").write_text("{not valid json")
+
+    jm = jobs.JobManager(cache_root=cache)
+    assert jm.list_jobs() == []
+    # backup file with .broken- prefix should exist
+    backups = list(cache.glob("jobs.broken-*.json"))
+    assert len(backups) == 1
+
+
 def test_queue_promotes_next_on_exit(jm):
     a_id, _ = jm.submit("momo", "run", _fake_argv("happy_short"))
     b_id, b_status = jm.submit("mean_rev", "run", _fake_argv("happy_short"))

@@ -95,6 +95,18 @@ class JobManager:
             self._running_id = raw.get("running_id")
         except (json.JSONDecodeError, KeyError, ValueError):
             _backup_corrupted(p, reason="parse_error")
+            return
+
+        # Liveness check: any RUNNING job whose PID is dead → INTERRUPTED
+        if self._running_id:
+            running = self._jobs.get(self._running_id)
+            if running is None or running.pid is None:
+                self._running_id = None
+            elif not _pid_alive(running.pid):
+                running.status = JobStatus.INTERRUPTED
+                running.ended_at = _ts()
+                self._running_id = None
+                self._persist()
 
     def _persist(self) -> None:
         # caller must hold self._lock
@@ -275,6 +287,22 @@ class DuplicateJobError(Exception):
 
 def _ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _pid_alive(pid: int) -> bool:
+    """Cross-platform liveness check."""
+    if pid <= 0:
+        return False
+    try:
+        if sys.platform == "win32":
+            # On Windows, os.kill(pid, 0) raises if dead, returns None if alive
+            os.kill(pid, 0)
+            return True
+        else:
+            os.kill(pid, 0)
+            return True
+    except (OSError, ProcessLookupError):
+        return False
 
 
 def _atomic_write_json(target: Path, data: dict) -> None:
