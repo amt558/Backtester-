@@ -75,6 +75,20 @@ def test_duplicate_strategy_command_returns_existing_409(jm):
     jm.cancel(a_id)
 
 
+def test_queue_promotes_next_on_exit(jm):
+    a_id, _ = jm.submit("momo", "run", _fake_argv("happy_short"))
+    b_id, b_status = jm.submit("mean_rev", "run", _fake_argv("happy_short"))
+    assert b_status == jobs.JobStatus.QUEUED
+
+    # wait for A to exit and B to be promoted + finish
+    assert jm.wait_for_terminal(a_id, timeout=10)
+    assert jm.wait_for_terminal(b_id, timeout=10)
+    assert jm.get(a_id).status == jobs.JobStatus.DONE
+    assert jm.get(b_id).status == jobs.JobStatus.DONE
+    assert jm._running_id is None
+    assert jm._queue == []
+
+
 def _fake_argv(script: str = "happy_short") -> list[str]:
     """Build argv that points at the fake CLI."""
     return [
