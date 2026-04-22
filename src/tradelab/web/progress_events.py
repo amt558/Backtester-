@@ -33,12 +33,17 @@ class ProgressEmitter:
     """
 
     def __init__(self, path: str | os.PathLike | None):
-        self.path: Optional[Path] = Path(path) if path else None
+        # Defensive no-op when path is empty, None, or a non-PathLike sentinel
+        # (e.g., Typer's OptionInfo when a command function is called directly
+        # in a unit test without going through CliRunner).
+        self.path: Optional[Path] = None
         self._fh = None
-        if self.path:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            # Line-buffered text mode so the tail loop sees each line immediately
-            self._fh = open(self.path, "a", encoding="utf-8", buffering=1)
+        if not path or not isinstance(path, (str, os.PathLike)):
+            return
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Line-buffered text mode so the tail loop sees each line immediately
+        self._fh = open(self.path, "a", encoding="utf-8", buffering=1)
 
     def emit(self, type_: str, **fields: Any) -> None:
         if not self._fh:
