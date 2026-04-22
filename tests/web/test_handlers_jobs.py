@@ -89,3 +89,34 @@ def test_get_jobs_returns_active_and_recent(fresh_job_manager, monkeypatch):
     payload = json.loads(body_str)
     jobs_list = payload["data"]["jobs"]
     assert any(j["id"] == job_id for j in jobs_list)
+
+
+def test_post_cancel_running_job_returns_200(fresh_job_manager, monkeypatch):
+    monkeypatch.setattr(handlers, "_build_tradelab_argv",
+                        lambda s, c: [sys.executable, str(Path(__file__).parent / "_fake_cli.py"),
+                                      "--script", "long_running"])
+    body = json.dumps({"strategy": "momo", "command": "run"}).encode()
+    body_str, _ = handlers.handle_post_with_status("/tradelab/jobs", body)
+    job_id = json.loads(body_str)["data"]["job_id"]
+    import time; time.sleep(0.3)
+
+    body_str, status = handlers.handle_post_with_status(f"/tradelab/jobs/{job_id}/cancel", b"")
+    assert status == 200
+    fresh_job_manager.wait_for_terminal(job_id, timeout=5)
+    assert fresh_job_manager.get(job_id).status.value == "cancelled"
+
+
+def test_post_cancel_done_job_returns_410(fresh_job_manager, monkeypatch):
+    monkeypatch.setattr(handlers, "_build_tradelab_argv", lambda s, c: _fake_argv())
+    body = json.dumps({"strategy": "momo", "command": "run"}).encode()
+    body_str, _ = handlers.handle_post_with_status("/tradelab/jobs", body)
+    job_id = json.loads(body_str)["data"]["job_id"]
+    fresh_job_manager.wait_for_terminal(job_id, timeout=10)
+
+    body_str, status = handlers.handle_post_with_status(f"/tradelab/jobs/{job_id}/cancel", b"")
+    assert status == 410
+
+
+def test_post_cancel_unknown_job_returns_404(fresh_job_manager):
+    body_str, status = handlers.handle_post_with_status("/tradelab/jobs/does-not-exist/cancel", b"")
+    assert status == 404
