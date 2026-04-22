@@ -127,6 +127,15 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             return _ok({"ranges": None}), 200
         return _ok({"ranges": r}), 200
 
+    if path == "/tradelab/jobs":
+        from tradelab.web import get_job_manager
+        jm = get_job_manager()
+        return _ok({
+            "jobs": [j.to_dict() for j in jm.list_jobs()],
+            "running_id": jm._running_id,
+            "queue": list(jm._queue),
+        }), 200
+
     if path == "/tradelab/strategies":
         from tradelab.registry import list_registered_strategies
         try:

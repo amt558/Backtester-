@@ -74,3 +74,18 @@ def test_post_jobs_duplicate_returns_409(fresh_job_manager, monkeypatch):
 
     # Cleanup
     fresh_job_manager.cancel(payload["data"]["existing_job_id"])
+
+
+def test_get_jobs_returns_active_and_recent(fresh_job_manager, monkeypatch):
+    monkeypatch.setattr(handlers, "_build_tradelab_argv", lambda s, c: _fake_argv())
+    # Submit one job, let it finish
+    body = json.dumps({"strategy": "momo", "command": "run"}).encode()
+    body_str, _ = handlers.handle_post_with_status("/tradelab/jobs", body)
+    job_id = json.loads(body_str)["data"]["job_id"]
+    fresh_job_manager.wait_for_terminal(job_id, timeout=10)
+
+    body_str, status = handlers.handle_get_with_status("/tradelab/jobs")
+    assert status == 200
+    payload = json.loads(body_str)
+    jobs_list = payload["data"]["jobs"]
+    assert any(j["id"] == job_id for j in jobs_list)
