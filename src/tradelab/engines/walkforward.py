@@ -16,6 +16,7 @@ uses window-end close for end-of-window liquidation rather than end-of-data.
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
@@ -30,6 +31,8 @@ from ..results import (
     WalkForwardResult,
     WalkForwardWindow,
 )
+from ._live import print_wf_chart
+from ._optuna_store import make_study_name, optuna_storage_url
 from .backtest import run_backtest
 
 
@@ -107,12 +110,16 @@ def _optimize_train_window(
     strategy, ticker_data, spy_close,
     train_start, train_end,
     n_trials, seed, min_trades,
+    study_name: Optional[str] = None,
 ):
     """Return (best_params_dict, train_metrics) or (None, None) if no viable trial."""
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     study = optuna.create_study(
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=seed),
+        study_name=study_name or make_study_name(strategy.name, "wf"),
+        storage=optuna_storage_url(),
+        load_if_exists=False,
     )
     study.optimize(
         lambda trial: _wf_objective(
@@ -167,66 +174,98 @@ def run_walkforward(
         warmup_months, train_months, test_months, step_months,
     )
 
-    if verbose:
-        print(f"Walk-forward: {len(splits)} splits, "
-              f"{train_months}mo train / {test_months}mo test, "
-              f"{n_trials_per_window} trials per window")
-
     wf_windows: list[WalkForwardWindow] = []
     all_oos_trades: list[Trade] = []
 
-    for i, sp in enumerate(splits):
-        if verbose:
-            print(f"[{i+1}/{len(splits)}] "
-                  f"Train {sp['train_start']} -> {sp['train_end']}  |  "
-                  f"Test {sp['test_start']} -> {sp['test_end']}")
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        best_params, train_metrics = _optimize_train_window(
-            strategy, ticker_data, spy_close,
-            sp["train_start"], sp["train_end"],
-            n_trials=n_trials_per_window,
-            seed=seed,
-            min_trades=min_trades_per_window,
+    # Build a Rich progress display when verbose; fall back to plain prints.
+    if verbose:
+        from rich.progress import (
+            BarColumn, Progress, SpinnerColumn, TextColumn,
+            TimeElapsedColumn, TimeRemainingColumn,
         )
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=None),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            refresh_per_second=4,
+        )
+        progress.__enter__()
+        wf_task = progress.add_task(
+            f"[{strategy.name}] walk-forward", total=len(splits),
+        )
+        log = progress.console.print
+    else:
+        progress = None
+        wf_task = None
+        log = lambda *a, **k: None
 
-        if best_params is None:
+    try:
+        log(f"Walk-forward: {len(splits)} splits, "
+            f"{train_months}mo train / {test_months}mo test, "
+            f"{n_trials_per_window} trials per window")
+
+        for i, sp in enumerate(splits):
+            log(f"[dim][{i+1}/{len(splits)}] "
+                f"Train {sp['train_start']} -> {sp['train_end']}  |  "
+                f"Test {sp['test_start']} -> {sp['test_end']}[/dim]")
+
+            best_params, train_metrics = _optimize_train_window(
+                strategy, ticker_data, spy_close,
+                sp["train_start"], sp["train_end"],
+                n_trials=n_trials_per_window,
+                seed=seed,
+                min_trades=min_trades_per_window,
+                study_name=make_study_name(strategy.name, "wf", timestamp=run_ts, window_idx=i + 1),
+            )
+
+            if best_params is None:
+                wf_windows.append(WalkForwardWindow(
+                    index=i,
+                    train_start=sp["train_start"], train_end=sp["train_end"],
+                    test_start=sp["test_start"], test_end=sp["test_end"],
+                    train_metrics=None, test_metrics=None, best_params={},
+                ))
+                log("  [yellow](no viable params)[/yellow]")
+                if progress is not None:
+                    progress.update(wf_task, advance=1)
+                continue
+
+            # Evaluate on OOS window — leakage fix is in run_backtest already
+            best_strat = copy.copy(strategy)
+            best_strat.params = {**strategy.params, **best_params}
+            test_result = run_backtest(
+                best_strat, ticker_data,
+                start=sp["test_start"], end=sp["test_end"], spy_close=spy_close,
+            )
+
             wf_windows.append(WalkForwardWindow(
                 index=i,
                 train_start=sp["train_start"], train_end=sp["train_end"],
                 test_start=sp["test_start"], test_end=sp["test_end"],
-                train_metrics=None, test_metrics=None, best_params={},
+                train_metrics=train_metrics,
+                test_metrics=test_result.metrics,
+                best_params=best_params,
             ))
-            if verbose:
-                print("  (no viable params)")
-            continue
 
-        # Evaluate on OOS window — leakage fix is in run_backtest already
-        best_strat = copy.copy(strategy)
-        best_strat.params = {**strategy.params, **best_params}
-        test_result = run_backtest(
-            best_strat, ticker_data,
-            start=sp["test_start"], end=sp["test_end"], spy_close=spy_close,
-        )
+            all_oos_trades.extend(test_result.trades)
 
-        wf_windows.append(WalkForwardWindow(
-            index=i,
-            train_start=sp["train_start"], train_end=sp["train_end"],
-            test_start=sp["test_start"], test_end=sp["test_end"],
-            train_metrics=train_metrics,
-            test_metrics=test_result.metrics,
-            best_params=best_params,
-        ))
-
-        all_oos_trades.extend(test_result.trades)
-
-        if verbose:
             tm = train_metrics
             om = test_result.metrics
-            print(f"  IS : PF={tm.profit_factor:.2f}  Tr={tm.total_trades:>4}  "
-                  f"WR={tm.win_rate:.1f}%  DD={tm.max_drawdown_pct:.1f}%")
-            print(f"  OOS: PF={om.profit_factor:.2f}  Tr={om.total_trades:>4}  "
-                  f"WR={om.win_rate:.1f}%  DD={om.max_drawdown_pct:.1f}%  "
-                  f"Ret={om.pct_return:.1f}%")
+            log(f"  IS : PF={tm.profit_factor:.2f}  Tr={tm.total_trades:>4}  "
+                f"WR={tm.win_rate:.1f}%  DD={tm.max_drawdown_pct:.1f}%")
+            log(f"  OOS: PF=[bold]{om.profit_factor:.2f}[/bold]  "
+                f"Tr={om.total_trades:>4}  WR={om.win_rate:.1f}%  "
+                f"DD={om.max_drawdown_pct:.1f}%  Ret={om.pct_return:.1f}%")
+            if progress is not None:
+                progress.update(wf_task, advance=1)
+    finally:
+        if progress is not None:
+            progress.__exit__(None, None, None)
 
     # --- AGGREGATE OOS METRICS ---
     sorted_trades = sorted(all_oos_trades, key=lambda t: t.exit_date)
@@ -287,7 +326,7 @@ def run_walkforward(
         for i, t in enumerate(sorted_trades)
     ]
 
-    return WalkForwardResult(
+    result = WalkForwardResult(
         strategy=strategy.name,
         n_windows=len(wf_windows),
         windows=wf_windows,
@@ -296,3 +335,8 @@ def run_walkforward(
         oos_trades=sorted_trades,
         oos_equity_curve=oos_equity_curve,
     )
+
+    if verbose:
+        print_wf_chart(result, title=f"Walk-forward IS vs OOS PF - {strategy.name}")
+
+    return result
