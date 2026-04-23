@@ -45,9 +45,18 @@ reports/leak_canary_*/
 reports/overfit_canary_*/
 reports/survivor_canary_*/
 
+# Phase verification run outputs (auto-generated)
+reports/_*/
+
 # Session pytest capture files
 pytest_full_output.txt
 pytest_phase0_output.txt
+
+# Logs
+*.log
+
+# Claude Code runtime (worktrees, session state)
+.claude/
 
 # OS
 .DS_Store
