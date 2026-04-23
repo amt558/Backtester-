@@ -355,6 +355,14 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         job_id = path[len("/tradelab/jobs/"):-len("/cancel")]
         return _cancel_job(job_id)
 
+    if path == "/tradelab/compare":
+        from tradelab.web.compare import run_compare
+        body_dict, status = run_compare(
+            run_ids=payload.get("run_ids") or [],
+            benchmark=payload.get("benchmark") or "SPY",
+        )
+        return json.dumps(body_dict), status
+
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
 
