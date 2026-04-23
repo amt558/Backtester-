@@ -30,6 +30,15 @@ def _cache_path(symbol: str, timeframe: str) -> Path:
     return _CACHE_ROOT / timeframe / f"{symbol.upper()}.parquet"
 
 
+def list_cached_symbols(timeframe: str = "1D") -> list[str]:
+    """Return sorted list of symbols that have a parquet cache entry at this
+    timeframe. Replaces the legacy CSV-based ``list_available_symbols``."""
+    root = _CACHE_ROOT / timeframe
+    if not root.exists():
+        return []
+    return sorted(p.stem.upper() for p in root.glob("*.parquet"))
+
+
 def _load_manifest() -> dict:
     if not _MANIFEST_PATH.exists():
         return {}

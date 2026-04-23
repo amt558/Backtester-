@@ -1,13 +1,18 @@
 ﻿"""
-Data layer for tradelab.
+DEPRECATED — CSV loader. DO NOT USE in new code.
+
+The active tradelab workflow reads from the Twelve Data parquet cache via
+``tradelab.marketdata.download_symbols``. This CSV-based module is kept only
+for backwards compatibility with external helper scripts and tests. All
+active CLI paths (run / backtest / optimize / compare / gate-check) have
+been migrated off this module.
+
+If you're writing new code, import from ``tradelab.marketdata`` instead.
+Setting ``paths.data_dir`` in the yaml is optional and has no effect on
+the active workflow.
 
 Loads 1-min OHLCV CSVs from the configured data dir. Handles multiple CSV
 formats, including mislabeled columns where Date_YMD contains ISO dates.
-
-Ported from C:/TradingScripts/s2_port.py with:
-  - DATA_DIR replaced by config lookup
-  - Format A hardened against ISO-formatted values in Date_YMD column
-  - low_memory=False on read_csv to silence DtypeWarning on mixed columns
 """
 from __future__ import annotations
 

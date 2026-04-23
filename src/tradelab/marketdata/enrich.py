@@ -1,13 +1,10 @@
 """
 Enrich raw OHLCV DataFrames with the indicators that strategies expect.
 
-This is the bridge between `marketdata.download_symbols` (which returns raw
-OHLCV: Date/Open/High/Low/Close/Volume) and strategies like S2PocketPivot
-(which require pre-computed Pocket_Pivot/Trend_OK/RS_21d/EMA10/ATR_pct/...).
-
-Indicator formulas match `tradelab.data.load_daily_with_indicators` so a
-strategy tested on CSV data produces identical signals when tested on
-downloaded data.
+This is the bridge between ``marketdata.download_symbols`` (which returns
+raw OHLCV: Date/Open/High/Low/Close/Volume) and strategies like
+S2PocketPivot (which require pre-computed Pocket_Pivot/Trend_OK/RS_21d/
+EMA10/ATR_pct/...).
 """
 from __future__ import annotations
 
