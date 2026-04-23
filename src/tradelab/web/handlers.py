@@ -309,7 +309,13 @@ def handle_post(path: str, body: bytes) -> str:
             from tradelab.marketdata import download_symbols
             from tradelab.config import get_config
             cfg = get_config()
-            universe_name = payload.get("universe") or cfg.defaults.universe
+            # DefaultsConfig has no `universe` field. Resolve from payload,
+            # then launcher-state.json, then the first universe in tradelab.yaml.
+            universe_name = payload.get("universe") or _resolve_active_universe()
+            if not universe_name:
+                return _err("no universe selected and no default available")
+            if universe_name not in cfg.universes:
+                return _err(f"unknown universe: {universe_name!r}")
             symbols = cfg.universes[universe_name]
             download_symbols(symbols)
             return _ok({"refreshed": len(symbols), "universe": universe_name})
