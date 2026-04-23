@@ -1,71 +1,66 @@
-# tradelab configuration
-# Edit this file to change data paths, default parameters, and registered strategies.
-# All paths are absolute Windows paths (forward slashes work fine on Windows too).
-
 paths:
-  data_dir: "C:/TradingScripts/AmiBroker_Data"
-  reports_dir: "C:/TradingScripts/tradelab/reports"
-  cache_dir: "C:/TradingScripts/tradelab/.cache"
-
+  reports_dir: C:/TradingScripts/tradelab/reports
+  cache_dir: C:/TradingScripts/tradelab/.cache
 benchmarks:
-  primary: "SPY"          # benchmark for RS calculations and report comparison
-
+  primary: SPY
 defaults:
   initial_capital: 100000.0
   commission_per_trade: 1.0
   position_size_pct: 25.0
   max_concurrent_positions: 5
-  data_start: "2024-04-08"
-  data_end: "2026-04-14"
-  warmup_days: 50          # SMA50 needs 50 bars before backtest can start
-
+  data_start: '2024-04-08'
+  data_end: '2026-04-14'
+  warmup_days: 50
 backtest:
-  timeframe_default: "1D"    # daily bars by default (resampled from 1-min)
-  session_filter: true       # 09:30 - 16:00 ET only
-
+  timeframe_default: 1D
+  session_filter: true
 optuna:
   n_trials_default: 50
   seed: 42
-  fitness_formula: "pf_sqrt_trades_dd"   # PF * sqrt(trades) * (1 - maxDD/100)
+  fitness_formula: pf_sqrt_trades_dd
   min_trades_threshold: 20
-
 walkforward:
   train_months: 6
   test_months: 2
   step_months: 2
   n_trials_per_window: 30
-  warmup_months: 2           # skip this much data before first train window
-
+  warmup_months: 2
 robustness:
   monte_carlo_shuffles: 1000
-  noise_sigma_pct: 0.05      # 5 bps Gaussian price noise
-  param_sensitivity_pct: 10  # perturb each param by ±10%
-  entry_delay_bars: [-2, -1, 0, 1, 2]  # test signal shift robustness
+  noise_sigma_pct: 0.05
+  param_sensitivity_pct: 10
+  entry_delay_bars:
+  - -2
+  - -1
+  - 0
+  - 1
+  - 2
   thresholds:
-    # Verdict-engine thresholds. Edit here to retune without touching code.
     pf_robust: 1.5
     pf_fragile: 1.1
     dsr_robust: 0.95
-    dsr_fragile: 0.50
+    dsr_fragile: 0.5
     mc_dd_fragile_percentile: 10.0
     smoothness_robust: 0.15
-    smoothness_fragile: 0.40
-    entry_delay_fragile: 0.50
+    smoothness_fragile: 0.4
+    entry_delay_fragile: 0.5
     loso_fragile_spread: 1.0
     wfe_robust: 0.75
-    wfe_fragile: 0.50
-    noise_pf_drop_p5_fragile: 0.40
-    noise_pf_drop_p5_robust: 0.10
-
-# Registered strategies — add entries here as you build more.
-# Each entry maps a friendly name to its Python module path.
+    wfe_fragile: 0.5
+    noise_pf_drop_p5_fragile: 0.4
+    noise_pf_drop_p5_robust: 0.1
+    regime_spread_fragile: 0.4
+    regime_spread_robust: 0.7
+    regime_spread_hard_fragile: 0.2
+    regime_min_trades_pct: 10.0
+    regime_min_trades_abs: 5
 strategies:
   s2_pocket_pivot:
-    module: "tradelab.strategies.s2_pocket_pivot"
-    class_name: "S2PocketPivot"
-    description: "Pocket Pivot with trend alignment, RS filter, dynamic ATR trailing stop"
-    status: "ported"
-    # Strategy-specific parameter overrides (optional)
+    module: tradelab.strategies.s2_pocket_pivot
+    class_name: S2PocketPivot
+    description: Pocket Pivot with trend alignment, RS filter, dynamic ATR trailing
+      stop
+    status: ported
     params:
       atr_pct_max: 8.0
       rs_threshold: 0.0
@@ -75,59 +70,52 @@ strategies:
       trail_wide_mult: 1.5
       trail_tighten_atr: 1.0
       hold_bars_max: 20
-
-  # Canaries — deliberately-broken strategies for tool health checks.
-  # Never trust their numbers; never promote them. See reports/canary_suite_readme.md.
   rand_canary:
-    module: "tradelab.canaries.rand_canary"
-    class_name: "RandCanary"
-    description: "RAND-CANARY: random entries. DSR must flag as fragile."
-    status: "canary"
+    module: tradelab.canaries.rand_canary
+    class_name: RandCanary
+    description: 'RAND-CANARY: random entries. DSR must flag as fragile.'
+    status: canary
     params:
       entry_probability: 0.02
       seed: 42
-
   overfit_canary:
-    module: "tradelab.canaries.overfit_canary"
-    class_name: "OverfitCanary"
-    description: "OVERFIT-CANARY: 6-param pathological. Optuna+WF must show IS/OOS decay."
-    status: "canary"
+    module: tradelab.canaries.overfit_canary
+    class_name: OverfitCanary
+    description: 'OVERFIT-CANARY: 6-param pathological. Optuna+WF must show IS/OOS
+      decay.'
+    status: canary
     params: {}
-
   leak_canary:
-    module: "tradelab.canaries.leak_canary"
-    class_name: "LeakCanary"
-    description: "LEAK-CANARY: look-ahead bias. Entry-delay test must collapse it."
-    status: "canary"
+    module: tradelab.canaries.leak_canary
+    class_name: LeakCanary
+    description: 'LEAK-CANARY: look-ahead bias. Entry-delay test must collapse it.'
+    status: canary
     params:
       lookahead_bars: 1.0
       up_threshold: 0.01
-
   survivor_canary:
-    module: "tradelab.canaries.survivor_canary"
-    class_name: "SurvivorCanary"
-    description: "SURVIVOR-CANARY: curated winners. LOSO must reveal per-symbol spread."
-    status: "canary"
+    module: tradelab.canaries.survivor_canary
+    class_name: SurvivorCanary
+    description: 'SURVIVOR-CANARY: curated winners. LOSO must reveal per-symbol spread.'
+    status: canary
     params:
       fast_n: 50.0
       slow_n: 200.0
-
   s4_inside_day_breakout:
-    module: "tradelab.strategies.s4_inside_day_breakout"
-    class_name: "S4InsideDayBreakout"
-    description: "Inside-day tight-range breakout with volume confirmation"
-    status: "ported"
+    module: tradelab.strategies.s4_inside_day_breakout
+    class_name: S4InsideDayBreakout
+    description: Inside-day tight-range breakout with volume confirmation
+    status: ported
     params:
       atr_pct_max: 8.0
       rs_threshold: 0.0
       vol_ratio_min: 1.2
       stop_atr_mult: 1.5
-
   s7_rdz_momentum:
-    module: "tradelab.strategies.s7_rdz_momentum"
-    class_name: "S7RdzMomentum"
-    description: "RDZ (RSI z-score) mean-reversion entry on trending stocks"
-    status: "ported"
+    module: tradelab.strategies.s7_rdz_momentum
+    class_name: S7RdzMomentum
+    description: RDZ (RSI z-score) mean-reversion entry on trending stocks
+    status: ported
     params:
       atr_pct_max: 10.0
       rs_threshold: 3.0
@@ -137,12 +125,11 @@ strategies:
       trail_tight_mult: 0.8
       trail_wide_mult: 1.5
       trail_tighten_atr: 0.8
-
   s8_bullish_outside_day:
-    module: "tradelab.strategies.s8_bullish_outside_day"
-    class_name: "S8BullishOutsideDay"
-    description: "Bullish outside day (engulfing candle) in uptrend with 1.5x volume"
-    status: "ported"
+    module: tradelab.strategies.s8_bullish_outside_day
+    class_name: S8BullishOutsideDay
+    description: Bullish outside day (engulfing candle) in uptrend with 1.5x volume
+    status: ported
     params:
       atr_pct_max: 8.0
       rs_threshold: 2.0
@@ -151,12 +138,27 @@ strategies:
       trail_tight_mult: 1.0
       trail_wide_mult: 1.5
       trail_tighten_atr: 1.5
-
+  qullamaggie_ep:
+    module: tradelab.strategies.qullamaggie_ep
+    class_name: QullamaggieEP
+    description: Qullamaggie Episodic Pivot - 7.5%+ up-day on ADR4+ stocks breaking
+      prior high near 52W highs
+    status: ported
+    params:
+      pct_chg_min: 7.5
+      dollar_vol_min: 30000000.0
+      adr_min: 4.0
+      high_52w_proximity: 0.7
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 2.0
+      trail_tighten_atr: 1.5
   viprasol_v83:
-    module: "tradelab.strategies.viprasol_v83"
-    class_name: "ViprasolV83"
-    description: "Viprasol v8.3 composite-score entry (10-component, Pine port, baseline fallback)"
-    status: "ported"
+    module: tradelab.strategies.viprasol_v83
+    class_name: ViprasolV83
+    description: Viprasol v8.3 composite-score entry (10-component, Pine port, baseline
+      fallback)
+    status: ported
     params:
       rs_lookback: 35
       atr_threshold: 0.5
@@ -166,12 +168,12 @@ strategies:
       trail_tight_mult: 1.0
       trail_wide_mult: 2.0
       trail_tighten_atr: 1.0
-
   cg_tfe_v15:
-    module: "tradelab.strategies.cg_tfe_v15"
-    class_name: "CgTfeV15"
-    description: "CG-TFE v1.5 Pine scaffold port — 3 modules still placeholders; NOT a real strategy"
-    status: "scaffold"
+    module: tradelab.strategies.cg_tfe_v15
+    class_name: CgTfeV15
+    description: "CG-TFE v1.5 Pine scaffold port \u2014 3 modules still placeholders;\
+      \ NOT a real strategy"
+    status: scaffold
     params:
       skip_friday: 1.0
       hold_bars: 10.0
@@ -180,25 +182,93 @@ strategies:
       trail_tight_mult: 1.0
       trail_wide_mult: 2.0
       trail_tighten_atr: 1.5
-
-# Named universes — pass via `tradelab run --universe NAME` instead of
-# typing each ticker. Edit freely. SPY is auto-included for strategies
-# that require a benchmark.
+  frog:
+    module: tradelab.strategies.frog
+    class_name: v2
+    description: User-added strategy (via ns)
+    status: registered
+    params: {}
 universes:
   magnificent_7:
-    [SPY, AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA]
+  - SPY
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - META
+  - TSLA
   big_tech_15:
-    [SPY, AAPL, MSFT, GOOGL, AMZN, NVDA, META, TSLA, AVGO, ORCL,
-     CRM, ADBE, AMD, NFLX, QCOM]
+  - SPY
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - META
+  - TSLA
+  - AVGO
+  - ORCL
+  - CRM
+  - ADBE
+  - AMD
+  - NFLX
+  - QCOM
   semis:
-    [SPY, NVDA, AVGO, AMD, QCOM, MU, MRVL, TXN, AMAT, KLAC, LRCX, ASML, ARM]
+  - SPY
+  - NVDA
+  - AVGO
+  - AMD
+  - QCOM
+  - MU
+  - MRVL
+  - TXN
+  - AMAT
+  - KLAC
+  - LRCX
+  - ASML
+  - ARM
   survivor_canary_universe:
-    [SPY, NVDA, MSFT, AVGO, AMD, LLY]
+  - SPY
+  - NVDA
+  - MSFT
+  - AVGO
+  - AMD
+  - LLY
   smoke_5:
-    [SPY, NVDA, MSFT, AAPL, META]
+  - SPY
+  - NVDA
+  - MSFT
+  - AAPL
+  - META
   viprasol_v83_screened:
-    [SPY, IMO, MPC, KGS, NGVT, ARW, GRMN, CVSA, AGRO, PARR, TNK,
-     LINC, CNK, LQDA, ASIX, JAZZ, UNFI, THR, VAL, PVH, GILT, BKR, CASH]
+  - SPY
+  - IMO
+  - MPC
+  - KGS
+  - NGVT
+  - ARW
+  - GRMN
+  - CVSA
+  - AGRO
+  - PARR
+  - TNK
+  - LINC
+  - CNK
+  - LQDA
+  - ASIX
+  - JAZZ
+  - UNFI
+  - THR
+  - VAL
+  - PVH
+  - GILT
+  - BKR
+  - CASH
   s2_top_10_big_tech:
-    [SPY, META, AMD, ADBE, NVDA, AMZN]
-
+  - SPY
+  - META
+  - AMD
+  - ADBE
+  - NVDA
+  - AMZN
