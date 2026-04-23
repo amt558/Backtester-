@@ -10,9 +10,13 @@ import plotly.graph_objects as go
 from plotly.io import to_html
 
 from ..results import BacktestResult, OptunaResult, WalkForwardResult
+from ._theme import apply_plotly_theme
 
 
 def _div(fig: go.Figure) -> str:
+    # Apply the tradelab dark template before rendering so every chart
+    # in every tab ships with consistent dark colors baked in.
+    apply_plotly_theme(fig)
     return to_html(fig, include_plotlyjs=False, full_html=False, config={"displayModeBar": False})
 
 
@@ -20,7 +24,13 @@ def _kpi(label: str, value: str) -> str:
     return f'<div class="kpi"><div class="label">{label}</div><div class="value">{value}</div></div>'
 
 
-def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> str:
+def performance_tab(
+    bt: BacktestResult,
+    wf: Optional[WalkForwardResult] = None,
+    benchmark_close: Optional[pd.Series] = None,
+    benchmark_label: str = "SPY",
+    robustness=None,
+) -> str:
     parts = []
     m = bt.metrics
 
@@ -36,6 +46,26 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
     parts.append(_kpi("Max drawdown", f"{m.max_drawdown_pct}%"))
     parts.append('</div></div>')
 
+    # Expected-return distribution from MC (if robustness was run)
+    rd = None
+    if robustness is not None and getattr(robustness, "monte_carlo", None):
+        rd = getattr(robustness.monte_carlo, "return_distribution", None) or None
+    if rd and "annual_p50" in rd:
+        parts.append(
+            '<div class="section"><h2>Expected annual return (from MC)</h2>'
+            '<p style="color:#999;font-size:13px;margin-top:-4px;">'
+            f'Annualized over {rd.get("years", 0):.2f}y window · '
+            f'{rd.get("n_samples", 0)} bootstrap simulations. '
+            'Use the 5th percentile for conservative sizing.'
+            '</p><div class="kpi-grid">'
+            + _kpi("Median ann", f"{rd['annual_p50']:+.1f}%")
+            + _kpi("5th pct ann", f"{rd['annual_p5']:+.1f}%")
+            + _kpi("25th pct ann", f"{rd['annual_p25']:+.1f}%")
+            + _kpi("75th pct ann", f"{rd['annual_p75']:+.1f}%")
+            + _kpi("95th pct ann", f"{rd['annual_p95']:+.1f}%")
+            + '</div></div>'
+        )
+
     # Equity curve + drawdown (paired)
     equity_source = wf.oos_equity_curve if wf and wf.oos_equity_curve else bt.equity_curve
     if equity_source:
@@ -44,11 +74,30 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
 
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df["date"], y=df["equity"], mode="lines",
-                                  name="Equity", line=dict(color="#2a7ae2", width=2),
-                                  fill="tozeroy", fillcolor="rgba(42,122,226,0.08)"))
+                                  name="Strategy equity",
+                                  line=dict(color="#3b82f6", width=2),
+                                  fill="tozeroy", fillcolor="rgba(59,130,246,0.10)"))
+        # Benchmark overlay — normalized to same starting equity so the
+        # chart answers "did I beat buy-and-hold of the benchmark?" at a glance.
+        if benchmark_close is not None and not benchmark_close.empty and len(df) > 1:
+            bench = pd.Series(benchmark_close).copy()
+            bench.index = pd.to_datetime(bench.index)
+            start_date = df["date"].iloc[0]
+            end_date = df["date"].iloc[-1]
+            bench = bench.loc[(bench.index >= start_date) & (bench.index <= end_date)]
+            if len(bench) >= 2 and bench.iloc[0] > 0:
+                initial = float(df["equity"].iloc[0])
+                bench_dollars = bench / float(bench.iloc[0]) * initial
+                fig.add_trace(go.Scatter(
+                    x=bench.index, y=bench_dollars.values, mode="lines",
+                    name=f"{benchmark_label} buy-and-hold",
+                    line=dict(color="#888", width=1.2, dash="dot"),
+                    opacity=0.75,
+                ))
         fig.update_layout(title="Equity curve", height=340,
                           margin=dict(l=40, r=20, t=50, b=40),
-                          yaxis_title="$")
+                          yaxis_title="$",
+                          legend=dict(orientation="h", y=-0.18))
         parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
 
         equity = df["equity"].values
@@ -56,10 +105,103 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
         dd = (equity - peak) / peak * 100
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=df["date"], y=dd, fill="tozeroy",
-                                   line=dict(color="#d0443e"), name="Drawdown"))
+                                   line=dict(color="#ef4444"), name="Drawdown"))
         fig2.update_layout(title="Drawdown (%)", height=220,
                            margin=dict(l=40, r=20, t=40, b=40))
         parts.append(f'<div class="section"><div class="chart">{_div(fig2)}</div></div>')
+
+        # Rolling annualized Sharpe — stability-over-time indicator that
+        # complements the single aggregate Sharpe KPI. A strategy with good
+        # overall Sharpe but volatile rolling Sharpe is hiding regime risk.
+        daily_ret = pd.Series(equity, index=df["date"].values).pct_change().dropna()
+        if len(daily_ret) >= 126:   # ~2 * rolling window
+            window = 63
+            rolling_mean = daily_ret.rolling(window).mean()
+            rolling_std = daily_ret.rolling(window).std()
+            rolling_sharpe = (rolling_mean / rolling_std * np.sqrt(252)).dropna()
+            if len(rolling_sharpe) > 0:
+                fig_rs = go.Figure()
+                fig_rs.add_trace(go.Scatter(
+                    x=rolling_sharpe.index, y=rolling_sharpe.values, mode="lines",
+                    line=dict(color="#a78bfa", width=1.5),
+                    name=f"Rolling {window}d Sharpe",
+                ))
+                fig_rs.add_hline(y=0, line_dash="dot", line_color="#999", opacity=0.6)
+                fig_rs.add_hline(y=1, line_dash="dash", line_color="#22c55e",
+                                  opacity=0.6, annotation_text="Sharpe=1",
+                                  annotation_position="top right")
+                fig_rs.update_layout(
+                    title=f"Rolling {window}-day annualized Sharpe — stability over time",
+                    height=240, margin=dict(l=40, r=20, t=50, b=40),
+                    yaxis_title="Sharpe",
+                )
+                parts.append(f'<div class="section"><div class="chart">{_div(fig_rs)}</div></div>')
+
+    # Regime breakdown — answers "does this strategy depend on a specific
+    # market regime (bull / chop / bear)?" If PF is concentrated in one
+    # regime, the aggregate edge is regime-conditional, not durable.
+    if getattr(bt, "regime_breakdown", None):
+        rb = bt.regime_breakdown
+        regimes = [r for r in ("bull", "chop", "bear") if r in rb]
+        if regimes and any(rb[r].get("n_trades", 0) > 0 for r in regimes):
+            pf_vals = [rb[r].get("pf", 0.0) for r in regimes]
+            trades_vals = [rb[r].get("n_trades", 0) for r in regimes]
+            ret_vals = [rb[r].get("avg_ret_pct", 0.0) for r in regimes]
+            wr_vals = [rb[r].get("win_rate", 0.0) for r in regimes]
+            regime_labels = [r.upper() for r in regimes]
+
+            # 2-column: PF bars + trade-count bars
+            parts.append('<div class="section dual-grid">')
+            fig_pf = go.Figure()
+            bar_colors = ["#22c55e" if v >= 1.0 else "#ef4444" for v in pf_vals]
+            fig_pf.add_trace(go.Bar(
+                x=regime_labels, y=pf_vals, marker_color=bar_colors,
+                text=[f"{v:.2f}" for v in pf_vals], textposition="outside",
+            ))
+            fig_pf.add_hline(y=1.0, line_dash="dot", line_color="gray",
+                              annotation_text="break-even", annotation_position="right")
+            fig_pf.update_layout(
+                title="Profit Factor by benchmark regime (entry date)",
+                height=260, margin=dict(l=40, r=20, t=50, b=40),
+                yaxis_title="PF (capped 10)", showlegend=False,
+            )
+            parts.append(f'<div class="chart">{_div(fig_pf)}</div>')
+
+            fig_tr = go.Figure()
+            fig_tr.add_trace(go.Bar(
+                x=regime_labels, y=trades_vals, marker_color="#3b82f6",
+                text=trades_vals, textposition="outside",
+            ))
+            fig_tr.update_layout(
+                title="Trade count by regime",
+                height=260, margin=dict(l=40, r=20, t=50, b=40),
+                yaxis_title="Trades", showlegend=False,
+            )
+            parts.append(f'<div class="chart">{_div(fig_tr)}</div>')
+            parts.append('</div>')
+
+            # Supporting metrics table
+            rows_html = ['<table class="sortable"><thead><tr>'
+                         '<th>Regime</th><th>Trades</th><th>Win %</th>'
+                         '<th>PF</th><th>Avg Ret %</th><th>Net P&L</th>'
+                         '</tr></thead><tbody>']
+            for r in regimes:
+                row = rb[r]
+                rows_html.append(
+                    f"<tr><td><b>{r.upper()}</b></td>"
+                    f"<td>{row.get('n_trades', 0)}</td>"
+                    f"<td>{row.get('win_rate', 0):.1f}</td>"
+                    f"<td>{row.get('pf', 0):.2f}</td>"
+                    f"<td>{row.get('avg_ret_pct', 0):+.2f}</td>"
+                    f"<td>${row.get('net_pnl', 0):,.0f}</td></tr>"
+                )
+            rows_html.append("</tbody></table>")
+            parts.append(
+                '<div class="section"><div class="chart" style="padding:0;">'
+                '<div style="padding:10px 14px;font-size:14px;font-weight:600;color:var(--fg);">'
+                "Regime breakdown — concentrated PF in one regime is fragility"
+                '</div>' + "".join(rows_html) + '</div></div>'
+            )
 
         # Monthly returns heatmap (year × month)
         df_idx = df.set_index("date").sort_index()
@@ -94,13 +236,13 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
     if trades:
         exit_dates = [t.exit_date for t in trades]
         pnl_pcts = [t.pnl_pct for t in trades]
-        colors = ["#2d9c3a" if p > 0 else "#d0443e" for p in pnl_pcts]
+        colors = ["#22c55e" if p > 0 else "#ef4444" for p in pnl_pcts]
         sizes = [6 + min(20, abs(p)) for p in pnl_pcts]   # bigger marker = bigger trade
         fig3 = go.Figure()
         fig3.add_trace(go.Scatter(
             x=exit_dates, y=pnl_pcts, mode="markers",
             marker=dict(color=colors, size=sizes, opacity=0.6,
-                         line=dict(width=0.5, color="rgba(0,0,0,0.3)")),
+                         line=dict(width=0.5, color="rgba(255,255,255,0.3)")),
             text=[f"{t.ticker}: {t.pnl_pct:.2f}% over {t.bars_held} bars" for t in trades],
             hovertemplate="%{text}<extra></extra>",
             name="Trade P&L%",
@@ -114,13 +256,13 @@ def performance_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) 
         fig_dist = go.Figure()
         fig_dist.add_trace(go.Histogram(
             x=pnl_pcts, nbinsx=30,
-            marker_color="#2a7ae2",
+            marker_color="#3b82f6",
             opacity=0.75,
             name="Trade returns",
         ))
         fig_dist.add_vline(x=0, line_dash="dot", line_color="gray")
         fig_dist.add_vline(x=float(np.mean(pnl_pcts)), line_dash="dash",
-                            line_color="#2d9c3a",
+                            line_color="#22c55e",
                             annotation_text=f"Mean {np.mean(pnl_pcts):.2f}%")
         fig_dist.update_layout(title="Distribution of per-trade returns (%)",
                                 height=260, margin=dict(l=40, r=20, t=50, b=40),
@@ -141,6 +283,46 @@ def trades_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> st
 
     parts = []
 
+    # Monthly P&L attribution — answers "when did this strategy make/lose money?"
+    # Pulls from bt.monthly_pnl (computed post-backtest in _diagnostics.py).
+    monthly = getattr(bt, "monthly_pnl", None) or []
+    if monthly:
+        months = [m["month"] for m in monthly]
+        net = [m["net_pnl"] for m in monthly]
+        counts = [m["n_trades"] for m in monthly]
+        colors = ["#22c55e" if v > 0 else "#ef4444" for v in net]
+
+        fig_mpnl = go.Figure()
+        fig_mpnl.add_trace(go.Bar(
+            x=months, y=net, marker_color=colors,
+            text=[f"${v:,.0f}<br>{c} tr" for v, c in zip(net, counts)],
+            textposition="outside",
+            hovertemplate="%{x}<br>net: $%{y:,.0f}<extra></extra>",
+        ))
+        fig_mpnl.add_hline(y=0, line_dash="dot", line_color="gray")
+        fig_mpnl.update_layout(
+            title="Monthly P&L (grouped by trade exit date)",
+            height=320, margin=dict(l=40, r=20, t=50, b=60),
+            yaxis_title="$ P&L",
+        )
+        parts.append(f'<div class="section"><div class="chart">{_div(fig_mpnl)}</div></div>')
+
+        # Best / worst month KPIs
+        best = max(monthly, key=lambda r: r["net_pnl"])
+        worst = min(monthly, key=lambda r: r["net_pnl"])
+        best_label = f"{best['month']} · ${best['net_pnl']:+,.0f}"
+        worst_label = f"{worst['month']} · ${worst['net_pnl']:+,.0f}"
+        pos_months = sum(1 for m in monthly if m["net_pnl"] > 0)
+        kpi_bits = (
+            '<div class="section"><div class="kpi-grid">'
+            + _kpi("Best month", best_label)
+            + _kpi("Worst month", worst_label)
+            + _kpi("Months traded", str(len(monthly)))
+            + _kpi("Positive months", str(pos_months))
+            + '</div></div>'
+        )
+        parts.append(kpi_bits)
+
     # Per-symbol P&L (sum across trades)
     by_sym: dict[str, float] = {}
     by_sym_count: dict[str, int] = {}
@@ -150,7 +332,7 @@ def trades_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> st
     sorted_syms = sorted(by_sym.items(), key=lambda kv: kv[1], reverse=True)
     syms = [s for s, _ in sorted_syms]
     pnls = [p for _, p in sorted_syms]
-    colors = ["#2d9c3a" if p > 0 else "#d0443e" for p in pnls]
+    colors = ["#22c55e" if p > 0 else "#ef4444" for p in pnls]
     fig_sym = go.Figure()
     fig_sym.add_trace(go.Bar(
         x=syms, y=pnls, marker_color=colors,
@@ -172,7 +354,7 @@ def trades_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> st
         labels=list(reason_counts.keys()),
         values=list(reason_counts.values()),
         hole=0.4,
-        marker=dict(colors=["#2a7ae2", "#d0443e", "#d6a02a", "#6a5acd", "#2d9c3a"]),
+        marker=dict(colors=["#3b82f6", "#ef4444", "#eab308", "#a78bfa", "#22c55e"]),
     )])
     fig_pie.update_layout(title="Exit reasons", height=320,
                           margin=dict(l=20, r=20, t=50, b=40))
@@ -181,10 +363,10 @@ def trades_tab(bt: BacktestResult, wf: Optional[WalkForwardResult] = None) -> st
     bars_held = [t.bars_held for t in trades]
     fig_dur = go.Figure()
     fig_dur.add_trace(go.Histogram(
-        x=bars_held, nbinsx=20, marker_color="#6a5acd", opacity=0.8,
+        x=bars_held, nbinsx=20, marker_color="#a78bfa", opacity=0.8,
     ))
     fig_dur.add_vline(x=float(np.mean(bars_held)), line_dash="dash",
-                       line_color="#2d9c3a",
+                       line_color="#22c55e",
                        annotation_text=f"Mean {np.mean(bars_held):.1f} bars")
     fig_dur.update_layout(title="Trade duration (bars held)",
                            height=320, margin=dict(l=40, r=20, t=50, b=40),
@@ -265,8 +447,8 @@ def robustness_tab(
         dsr = deflated_sharpe_ratio(returns.values, n_trials=n_trials)
         if not math.isnan(dsr):
             verdict = classify_dsr(dsr)
-            colour = {"robust": "#2d9c3a", "inconclusive": "#d6a02a",
-                      "fragile": "#d0443e", "undefined": "#888"}.get(verdict, "#888")
+            colour = {"robust": "#22c55e", "inconclusive": "#eab308",
+                      "fragile": "#ef4444", "undefined": "#888"}.get(verdict, "#888")
             dsr_html = (
                 f'<div class="section"><div class="chart">'
                 f'<h2>Deflated Sharpe Ratio</h2>'
@@ -284,8 +466,8 @@ def robustness_tab(
     # --- Full robustness section if suite was run ---
     if robustness is not None:
         v = robustness.verdict
-        v_colour = {"ROBUST": "#2d9c3a", "INCONCLUSIVE": "#d6a02a",
-                    "FRAGILE": "#d0443e"}.get(v.verdict, "#888")
+        v_colour = {"ROBUST": "#22c55e", "INCONCLUSIVE": "#eab308",
+                    "FRAGILE": "#ef4444"}.get(v.verdict, "#888")
         parts.append(
             f'<div class="section"><div class="chart">'
             f'<h2>Aggregate verdict</h2>'
@@ -293,8 +475,8 @@ def robustness_tab(
             f'<table><thead><tr><th>Test</th><th>Outcome</th><th>Reason</th></tr></thead><tbody>'
         )
         for s in v.signals:
-            s_col = {"robust": "#2d9c3a", "inconclusive": "#d6a02a",
-                     "fragile": "#d0443e"}.get(s.outcome, "#888")
+            s_col = {"robust": "#22c55e", "inconclusive": "#eab308",
+                     "fragile": "#ef4444"}.get(s.outcome, "#888")
             parts.append(
                 f'<tr><td><code>{s.name}</code></td>'
                 f'<td><b style="color:{s_col};">{s.outcome}</b></td>'
@@ -331,8 +513,8 @@ def robustness_tab(
             parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
 
             # Per-metric distribution histograms (overlay 3 methods + observed line)
-            method_colors = {"shuffle": "#2a7ae2", "bootstrap": "#6a5acd",
-                             "block_bootstrap": "#d6a02a"}
+            method_colors = {"shuffle": "#3b82f6", "bootstrap": "#a78bfa",
+                             "block_bootstrap": "#eab308"}
             metric_titles = {
                 "max_dd": "Max drawdown %",
                 "max_loss_streak": "Max consecutive losses",
@@ -357,7 +539,7 @@ def robustness_tab(
                     ))
                     obs_val = d.observed
                 if obs_val is not None:
-                    fig_m.add_vline(x=obs_val, line_dash="dash", line_color="#d0443e",
+                    fig_m.add_vline(x=obs_val, line_dash="dash", line_color="#ef4444",
                                      line_width=2,
                                      annotation_text=f"observed {obs_val:.2f}")
                 fig_m.update_layout(
@@ -394,7 +576,7 @@ def robustness_tab(
     
             delays = [str(p.delay) for p in ed.points]
             pfs = [p.metrics.profit_factor for p in ed.points]
-            fig = go.Figure(data=go.Bar(x=delays, y=pfs, marker_color="#2a7ae2"))
+            fig = go.Figure(data=go.Bar(x=delays, y=pfs, marker_color="#3b82f6"))
             fig.update_layout(title="Profit factor vs entry delay (bars)",
                               xaxis_title="Delay (bars)", yaxis_title="PF",
                               height=260, margin=dict(l=50, r=20, t=50, b=40))
@@ -405,9 +587,9 @@ def robustness_tab(
         if ni and ni.points:
             pfs = [p.metrics.profit_factor for p in ni.points]
             fig = go.Figure()
-            fig.add_trace(go.Histogram(x=pfs, nbinsx=20, marker_color="#6a5acd",
+            fig.add_trace(go.Histogram(x=pfs, nbinsx=20, marker_color="#a78bfa",
                                         name=f"{ni.n_seeds} seeds"))
-            fig.add_vline(x=ni.baseline_pf, line_dash="dash", line_color="#2d9c3a",
+            fig.add_vline(x=ni.baseline_pf, line_dash="dash", line_color="#22c55e",
                           annotation_text=f"Baseline PF {ni.baseline_pf:.2f}")
             fig.update_layout(
                 title=f"Noise injection: PF across {ni.n_seeds} noisy runs "
@@ -423,7 +605,7 @@ def robustness_tab(
     
             syms = [f.held_out_symbol for f in lo.folds]
             pfs = [f.metrics.profit_factor for f in lo.folds]
-            fig = go.Figure(data=go.Bar(x=syms, y=pfs, marker_color="#d0443e"))
+            fig = go.Figure(data=go.Bar(x=syms, y=pfs, marker_color="#ef4444"))
             fig.update_layout(title="LOSO: OOS PF with each symbol removed",
                               xaxis_title="Held-out symbol", yaxis_title="PF",
                               height=260, margin=dict(l=50, r=20, t=50, b=40))
@@ -446,8 +628,8 @@ def robustness_tab(
 
         if indices:
             fig = go.Figure()
-            fig.add_trace(go.Bar(x=indices, y=is_pfs, name="IS PF", marker_color="#2a7ae2"))
-            fig.add_trace(go.Bar(x=indices, y=oos_pfs, name="OOS PF", marker_color="#d0443e"))
+            fig.add_trace(go.Bar(x=indices, y=is_pfs, name="IS PF", marker_color="#3b82f6"))
+            fig.add_trace(go.Bar(x=indices, y=oos_pfs, name="OOS PF", marker_color="#ef4444"))
             fig.update_layout(title="IS vs OOS Profit Factor per window", barmode="group",
                               height=320, margin=dict(l=40, r=20, t=50, b=40))
             parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
@@ -477,7 +659,7 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
         trial_dd = m.get("max_dd", "-")
         parts.append(
             '<div class="section">'
-            f'<h2>Best trial #{bt.number} — fitness <b style="color:#2d9c3a;">{bt.fitness:.3f}</b> '
+            f'<h2>Best trial #{bt.number} — fitness <b style="color:#22c55e;">{bt.fitness:.3f}</b> '
             f'(PF {trial_pf} · {trial_tr} trades · DD {trial_dd}%)</h2>'
             f'<div class="kpi-grid">{param_cells}</div>'
             '</div>'
@@ -491,7 +673,7 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
         names, vals = zip(*pairs)
         fig = go.Figure()
         fig.add_trace(go.Bar(x=list(vals), y=list(names), orientation="h",
-                              marker_color="#2a7ae2"))
+                              marker_color="#3b82f6"))
         fig.update_layout(title="Optuna parameter importance", height=320,
                           margin=dict(l=140, r=20, t=50, b=40))
         parts.append(f'<div class="section"><div class="chart">{_div(fig)}</div></div>')
@@ -531,9 +713,9 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
             running_max.append(peak)
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(x=x, y=y, mode="markers", name="trial fitness",
-                                    marker=dict(size=6, color="#2a7ae2", opacity=0.5)))
+                                    marker=dict(size=6, color="#3b82f6", opacity=0.5)))
         fig2.add_trace(go.Scatter(x=x, y=running_max, mode="lines", name="running best",
-                                    line=dict(color="#d0443e", width=2)))
+                                    line=dict(color="#ef4444", width=2)))
         fig2.update_layout(title="Fitness per trial · running best in red",
                             height=320, margin=dict(l=40, r=20, t=50, b=40),
                             legend=dict(orientation="h", y=-0.18))
@@ -556,7 +738,7 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
         rows.append("</tbody></table>")
         parts.append(
             '<div class="chart" style="padding:0;">'
-            '<div style="padding:10px 14px;font-size:14px;font-weight:600;">'
+            '<div style="padding:10px 14px;font-size:14px;font-weight:600;color:var(--fg);">'
             'Top 20 trials</div>'
             + "".join(rows) + '</div>'
         )
@@ -566,7 +748,7 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
     if sensitivity:
         parts.append(
             '<div class="section"><h2>Sensitivity around the best trial</h2>'
-            '<p style="color:#666;font-size:13px;">'
+            '<p style="color:#999;font-size:13px;">'
             'Each chart varies one param around its optimum (others held at best). '
             'Flat = robust; spike at best = cliff.'
             '</p></div><div class="section dual-grid">'
@@ -577,10 +759,10 @@ def parameters_tab(opt: Optional[OptunaResult] = None,
             best_x = xs[len(xs) // 2] if xs else None
             fig_s = go.Figure()
             fig_s.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers",
-                                        line=dict(color="#2a7ae2"),
-                                        marker=dict(size=8, color="#2a7ae2")))
+                                        line=dict(color="#3b82f6"),
+                                        marker=dict(size=8, color="#3b82f6")))
             if best_x is not None:
-                fig_s.add_vline(x=best_x, line_dash="dash", line_color="#2d9c3a",
+                fig_s.add_vline(x=best_x, line_dash="dash", line_color="#22c55e",
                                   annotation_text="best")
             fig_s.update_layout(title=f"Sensitivity: {pname}",
                                  height=240, margin=dict(l=40, r=20, t=50, b=40),

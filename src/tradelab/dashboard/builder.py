@@ -8,7 +8,7 @@ from typing import Optional
 from ..determinism import hash_config, hash_universe, render_footer
 from ..results import BacktestResult, OptunaResult, WalkForwardResult
 from . import tabs
-from .templates import HTML_SKELETON
+from .templates import render_dashboard
 
 
 def build_dashboard(
@@ -57,7 +57,26 @@ def build_dashboard(
         f"Universe: {universe_str} · Run: {ts.strftime('%Y-%m-%d %H:%M:%S')}"
     )
 
-    performance_html = tabs.performance_tab(backtest_result, wf_result)
+    # Extract benchmark close series (SPY by default) for equity overlay.
+    benchmark_close = None
+    try:
+        from ..config import get_config as _gc
+        bench_sym = _gc().benchmarks.primary
+    except Exception:
+        bench_sym = "SPY"
+    if universe and bench_sym in universe:
+        bdf = universe[bench_sym]
+        if hasattr(bdf, "columns") and "Date" in bdf.columns and "Close" in bdf.columns:
+            try:
+                benchmark_close = bdf.set_index("Date")["Close"]
+            except Exception:
+                benchmark_close = None
+
+    performance_html = tabs.performance_tab(
+        backtest_result, wf_result,
+        benchmark_close=benchmark_close, benchmark_label=bench_sym,
+        robustness=robustness_result,
+    )
     trades_html = tabs.trades_tab(backtest_result, wf_result)
     robustness_html = tabs.robustness_tab(
         backtest_result, wf_result, optuna_result, robustness=robustness_result
@@ -68,7 +87,7 @@ def build_dashboard(
     config_hash = hash_config(backtest_result.params)
     footer_text = render_footer(data_hash=data_hash, config_hash=config_hash).replace("\n", "<br>")
 
-    html = HTML_SKELETON.format(
+    html = render_dashboard(
         title=title, meta=meta,
         performance_html=performance_html,
         trades_html=trades_html,

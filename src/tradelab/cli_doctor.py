@@ -44,7 +44,7 @@ REQUIRED = [
     "pandas", "numpy", "scipy", "pydantic", "optuna", "typer",
     "rich", "yaml", "plotly", "pyarrow", "requests",
 ]
-OPTIONAL = ["yfinance", "vectorbt", "quantstats"]
+OPTIONAL = ["yfinance", "quantstats"]
 
 
 def _check_required_imports() -> tuple[bool, str]:

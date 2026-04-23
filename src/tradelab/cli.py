@@ -6,12 +6,21 @@ Session 3 will add: robustness, full-test, compare.
 """
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
+
+# Make Rich + plotext output survive piped / redirected stdout on Windows
+# (default cp1252 can't encode U+2713, box-drawing chars, etc.).
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 from . import __version__
 from .config import get_config
@@ -73,7 +82,6 @@ def config_cmd(
     def _check(path_str: str) -> str:
         return "[green]✓ exists[/green]" if Path(path_str).exists() else "[red]✗ missing[/red]"
 
-    table.add_row("Data dir", cfg.paths.data_dir, _check(cfg.paths.data_dir))
     table.add_row("Reports dir", cfg.paths.reports_dir, _check(cfg.paths.reports_dir))
     table.add_row("Cache dir", cfg.paths.cache_dir, _check(cfg.paths.cache_dir))
     table.add_row("", "", "")
@@ -147,18 +155,37 @@ def _check_strategy_exists(name: str):
 
 
 def _load_data_for(strategy_name: str):
-    """Load universe and instantiate strategy. Returns (strat, ticker_data, spy_close)."""
-    from .data import load_universe, list_available_symbols
+    """Load universe (parquet cache via Twelve Data) and instantiate strategy.
+
+    Returns (strat, ticker_data, spy_close). Uses whatever symbols are already
+    in the parquet cache (.cache/ohlcv/1D/). To expand the cache, run
+    ``tradelab run --universe <name>`` first, which populates symbols on-demand.
+    """
+    from .marketdata import download_symbols, enrich_universe, list_cached_symbols
 
     cfg = get_config()
     bench = cfg.benchmarks.primary
 
-    console.print(f"[dim]Loading universe...[/dim]")
+    console.print(f"[dim]Loading universe from parquet cache...[/dim]")
     t0 = time.time()
-    symbols = [s for s in list_available_symbols() if s != bench]
-    ticker_data = load_universe(symbols, benchmark=bench)
+    cached = list_cached_symbols()
+    if not cached:
+        console.print(
+            "[yellow]Parquet cache is empty. Run [bold]tradelab run --universe <name>[/bold] "
+            "first to populate symbols, or press 'rf' in the launcher.[/yellow]"
+        )
+        raise typer.Exit(code=1)
+    symbols = sorted(set([bench] + cached))  # ensure benchmark included
+    raw = download_symbols(
+        symbols,
+        start=cfg.defaults.data_start,
+        end=cfg.defaults.data_end,
+    )
+    ticker_data = enrich_universe(raw, benchmark=bench)
     spy_close = ticker_data[bench].set_index("Date")["Close"]
-    console.print(f"[dim]  loaded {len(ticker_data)} symbols in {time.time() - t0:.1f}s[/dim]")
+    console.print(
+        f"[dim]  loaded {len(ticker_data)} symbols in {time.time() - t0:.1f}s[/dim]"
+    )
 
     strat = instantiate_strategy(strategy_name)
     return strat, ticker_data, spy_close
@@ -426,6 +453,107 @@ from .cli_doctor import doctor as _doctor_cmd; app.command(name="doctor")(_docto
 from .cli_init import init_strategy as _init_cmd; app.command(name="init-strategy")(_init_cmd)
 from .cli_leak import leak_check as _leak_cmd; app.command(name="leak-check")(_leak_cmd)
 from .cli_screen import screen as _screen_cmd; app.command(name="screen")(_screen_cmd)
+from .cli_gate_check import gate_check as _gc_cmd; app.command(name="gate-check")(_gc_cmd)
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  COMPARE
+# ─────────────────────────────────────────────────────────────────────
+
+@app.command("compare")
+def compare_cmd(
+    runs: list[str] = typer.Argument(
+        ...,
+        help="Two or more run folder paths (under reports/). Each must contain "
+             "backtest_result.json (written by `tradelab run` on new runs).",
+    ),
+    output: str = typer.Option(
+        "", "--output",
+        help="Output HTML path. Default: reports/compare_{timestamp}.html",
+    ),
+    benchmark: str = typer.Option(
+        "SPY", "--benchmark",
+        help="Benchmark symbol to load and overlay (from data cache). "
+             "Use '' to disable.",
+    ),
+    open_report: bool = typer.Option(
+        True, "--open/--no-open", help="Auto-open the comparison report when done",
+    ),
+):
+    """Render a cross-run strategy comparison (QuantStats multi-strategy tearsheet + metrics grid)."""
+    from .dashboard.compare import build_compare_report, CompareError
+
+    if len(runs) < 2:
+        console.print("[red]compare requires at least two run folders[/red]")
+        raise typer.Exit(2)
+
+    run_paths = [Path(r) for r in runs]
+    for rp in run_paths:
+        if not rp.exists():
+            console.print(f"[red]Run folder not found:[/red] {rp}")
+            raise typer.Exit(2)
+
+    out = Path(output) if output else None
+    try:
+        result_path = build_compare_report(
+            run_paths, out_path=out,
+            benchmark_symbol=benchmark or "SPY",
+            auto_benchmark=bool(benchmark),
+        )
+    except CompareError as e:
+        console.print(f"[red]compare failed:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Done:[/green] Comparison report: [cyan]{result_path}[/cyan]")
+    if open_report:
+        try:
+            typer.launch(str(result_path))
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  REBUILD-INDEX
+# ─────────────────────────────────────────────────────────────────────
+
+@app.command("rebuild-index")
+def rebuild_index_cmd(
+    open_index: bool = typer.Option(
+        True, "--open/--no-open", help="Auto-open the index when done",
+    ),
+):
+    """Regenerate reports/index.html from the audit DB. (Auto-runs at end of `tradelab run`.)"""
+    from .dashboard.index import build_index
+
+    out = build_index()
+    console.print(f"[green]Done:[/green] Index rebuilt: [cyan]{out}[/cyan]")
+    if open_index:
+        try:
+            typer.launch(str(out))
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  OVERVIEW
+# ─────────────────────────────────────────────────────────────────────
+
+@app.command("overview")
+def overview_cmd(
+    open_overview: bool = typer.Option(
+        True, "--open/--no-open", help="Auto-open the overview when done",
+    ),
+):
+    """Generate reports/overview.html - one row per registered strategy with its latest run."""
+    from .dashboard.overview import build_overview
+
+    out = build_overview()
+    console.print(f"[green]Done:[/green] Overview built: [cyan]{out}[/cyan]")
+    if open_overview:
+        try:
+            typer.launch(str(out))
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

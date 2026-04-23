@@ -281,6 +281,38 @@ def run(
         typer.echo(f"Report:    {report_path}")
         typer.echo(f"Dashboard: {dashboard_path}")
 
+        # --- Persist raw result objects for `tradelab compare` ---
+        (out_dir / "backtest_result.json").write_text(
+            bt.model_dump_json(indent=2), encoding="utf-8",
+        )
+        if opt_result is not None:
+            (out_dir / "optuna_result.json").write_text(
+                opt_result.model_dump_json(indent=2), encoding="utf-8",
+            )
+        if wf_result is not None:
+            (out_dir / "walkforward_result.json").write_text(
+                wf_result.model_dump_json(indent=2), encoding="utf-8",
+            )
+        if robustness_result is not None:
+            (out_dir / "robustness_result.json").write_text(
+                robustness_result.model_dump_json(indent=2), encoding="utf-8",
+            )
+
+        # --- Regenerate reports/index.html + reports/overview.html ---
+        # Failures here are non-fatal; they only affect the cross-run views.
+        try:
+            from .dashboard.index import build_index
+            idx_path = build_index()
+            typer.echo(f"Index:     {idx_path}")
+        except Exception as e:
+            typer.echo(f"(Index rebuild skipped: {type(e).__name__}: {e})", err=True)
+        try:
+            from .dashboard.overview import build_overview
+            ov_path = build_overview()
+            typer.echo(f"Overview:  {ov_path}")
+        except Exception as e:
+            typer.echo(f"(Overview rebuild skipped: {type(e).__name__}: {e})", err=True)
+
         # --- QuantStats tearsheet (optional, default on) ---
         tearsheet_path = None
         if tearsheet:
