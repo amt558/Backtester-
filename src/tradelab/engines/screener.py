@@ -163,24 +163,35 @@ def render_screen_html(result: ScreenResult, out_path) -> None:
             f'</tr>'
         )
 
+    from ..dashboard._theme import THEME_CSS
+    # Escape THEME_CSS braces for the f-string host below
+    theme_css_esc = THEME_CSS.replace("{", "{{").replace("}", "}}")
+
     html = f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8">
+<html lang="en"><head><meta charset="utf-8">
 <title>{result.strategy} — screener</title>
 <style>
-body {{ font-family: system-ui, sans-serif; margin: 0; background: #fafafa; color: #222; }}
-.header {{ padding: 20px 30px; background: #1a1a1a; color: #fafafa; }}
+{theme_css_esc}
+.header {{
+  padding: 20px 30px; background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+}}
+.header h1 {{ margin: 0; font-size: 22px; color: var(--fg); }}
+.header .sub {{ font-size: 13px; color: var(--fg-muted); margin-top: 4px; }}
 .body {{ padding: 24px; max-width: 1200px; margin: 0 auto; }}
-table {{ border-collapse: collapse; width: 100%; font-size: 13px;
-         background: white; border: 1px solid #e0e0e0; border-radius: 6px; }}
-th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }}
-th {{ background: #f5f5f5; font-weight: 600; cursor: pointer; user-select: none; }}
-th:hover {{ background: #ebebeb; }}
-.win {{ color: #2d9c3a; font-weight: 600; }}
-.loss {{ color: #d0443e; font-weight: 600; }}
+table {{
+  border-collapse: collapse; width: 100%; font-size: 13px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}}
+th {{ cursor: pointer; user-select: none; }}
+th:hover {{ background: var(--bg-hover); }}
+.win  {{ color: var(--win);  font-weight: 600; }}
+.loss {{ color: var(--loss); font-weight: 600; }}
 </style></head><body>
 <div class="header">
 <h1>{result.strategy} — per-symbol screener</h1>
-<div style="font-size:13px;opacity:0.85;margin-top:4px;">
+<div class="sub">
 Composite score = PF * sqrt(trades) * (1 - |DD|/100). Click any column header to sort.
 </div>
 </div>

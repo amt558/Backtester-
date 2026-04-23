@@ -17,6 +17,8 @@ import optuna
 
 from ..config import get_config
 from ..results import OptunaResult, OptunaTrial, BacktestResult
+from ._live import LiveOptunaProgress, print_trials_chart
+from ._optuna_store import make_study_name, optuna_storage_url
 from .backtest import run_backtest
 
 
@@ -177,16 +179,22 @@ def run_optimization(
         direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=seed),
         pruner=pruner_obj,
-        study_name=strategy.name,
+        study_name=make_study_name(strategy.name, "opt"),
+        storage=optuna_storage_url(),
+        load_if_exists=False,
     )
 
-    study.optimize(
-        lambda trial: _objective(
-            trial, strategy, ticker_data, spy_close, start, end, fitness
-        ),
-        n_trials=n_trials,
-        show_progress_bar=verbose,
+    objective = lambda trial: _objective(
+        trial, strategy, ticker_data, spy_close, start, end, fitness
     )
+    if verbose:
+        with LiveOptunaProgress(total=n_trials,
+                                description=f"[{strategy.name}] optimize") as prog:
+            study.optimize(objective, n_trials=n_trials,
+                           show_progress_bar=False, callbacks=[prog])
+        print_trials_chart(study, title=f"Optuna fitness - {strategy.name}")
+    else:
+        study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     # Convert all trials to Pydantic
     all_trials = []

@@ -22,6 +22,7 @@ import pandas as pd
 from ..config import get_config
 from ..results import BacktestResult, BacktestMetrics, Trade
 from ..strategies.base import Strategy
+from ._diagnostics import compute_monthly_pnl, compute_regime_breakdown
 
 
 def _exit_check(r, pos, params):
@@ -259,6 +260,9 @@ def run_backtest(
         for t in trades
     ]
 
+    regime_breakdown = compute_regime_breakdown(trade_objs, spy_close)
+    monthly_pnl = compute_monthly_pnl(trade_objs)
+
     return BacktestResult(
         strategy=strategy.name,
         start_date=start,
@@ -267,4 +271,6 @@ def run_backtest(
         metrics=metrics,
         trades=trade_objs,
         equity_curve=equity_curve,
+        regime_breakdown=regime_breakdown,
+        monthly_pnl=monthly_pnl,
     )
