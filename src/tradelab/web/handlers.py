@@ -47,15 +47,23 @@ def _resolve_active_universe() -> str:
             active = state.get("activeUniverse")
             if active:
                 return str(active)
-    except Exception:
-        pass
+    except Exception as e:
+        print(
+            f"[resolver] launcher-state.json read failed "
+            f"({type(e).__name__}: {e}); falling back to tradelab.yaml",
+            file=sys.stderr,
+        )
     try:
         from tradelab.config import get_config
         cfg = get_config()
         if cfg.universes:
             return sorted(cfg.universes.keys())[0]
-    except Exception:
-        pass
+    except Exception as e:
+        print(
+            f"[resolver] tradelab.yaml universe load failed "
+            f"({type(e).__name__}: {e}); no universe will be passed to CLI",
+            file=sys.stderr,
+        )
     return ""
 
 
