@@ -87,18 +87,23 @@ def run_whatif(
 
 def _extract_metrics(result) -> dict:
     """Pull a stable subset of metrics from BacktestResult for the UI."""
-    m = result.metrics if hasattr(result, "metrics") else {}
-    if isinstance(m, dict):
-        return {
-            "profit_factor": m.get("profit_factor"),
-            "win_rate": m.get("win_rate"),
-            "max_drawdown_pct": m.get("max_drawdown_pct"),
-            "total_trades": m.get("total_trades"),
-            "net_pnl": m.get("net_pnl"),
-            "sharpe_ratio": m.get("sharpe_ratio"),
-            "annual_return": m.get("annual_return"),
-        }
-    return {}
+    m = getattr(result, "metrics", None)
+    if m is None:
+        return {}
+    # BacktestMetrics is a pydantic BaseModel — convert to dict.
+    if hasattr(m, "model_dump"):
+        m = m.model_dump()
+    if not isinstance(m, dict):
+        return {}
+    return {
+        "profit_factor": m.get("profit_factor"),
+        "win_rate": m.get("win_rate"),
+        "max_drawdown_pct": m.get("max_drawdown_pct"),
+        "total_trades": m.get("total_trades"),
+        "net_pnl": m.get("net_pnl"),
+        "sharpe_ratio": m.get("sharpe_ratio"),
+        "annual_return": m.get("annual_return"),
+    }
 
 
 def _extract_equity_curve(result) -> list[dict]:
