@@ -94,10 +94,21 @@ def check_strategies() -> dict:
                 "detail": "no strategies registered in tradelab.yaml"}
     failed = []
     for name in names:
-        try:
-            importlib.import_module(f"tradelab.strategies.{name}")
-        except Exception as e:
-            failed.append(f"{name} ({type(e).__name__})")
+        last_err = None
+        for module_root in ("tradelab.strategies", "tradelab.canaries"):
+            try:
+                importlib.import_module(f"{module_root}.{name}")
+                last_err = None
+                break
+            except ModuleNotFoundError:
+                continue
+            except Exception as e:
+                last_err = e
+                break
+        else:
+            last_err = last_err or ModuleNotFoundError(name)
+        if last_err is not None:
+            failed.append(f"{name} ({type(last_err).__name__})")
     if failed:
         return {"status": "red", "label": f"{len(failed)} broken",
                 "detail": "import failed: " + ", ".join(failed)}
