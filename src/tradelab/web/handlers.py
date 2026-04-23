@@ -189,6 +189,10 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             return _err(f"registry error: {e}"), 200
         return _ok({"strategies": strategies}), 200
 
+    if path == "/tradelab/preflight":
+        from tradelab.web.preflight import compute_preflight
+        return _ok(compute_preflight()), 200
+
     return _err("not found"), 404
 
 

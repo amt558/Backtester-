@@ -135,3 +135,14 @@ class BaseStrat(Strategy):
     variant = fake_tradelab_root / "src" / "tradelab" / "strategies" / "base_strat_v2.py"
     assert variant.exists()
     assert "'x': 5" in variant.read_text() or '"x": 5' in variant.read_text()
+
+
+def test_get_preflight_returns_all_four_statuses(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TWELVEDATA_API_KEY", raising=False)
+    from tradelab.web.handlers import handle_get_with_status
+    body_str, status = handle_get_with_status("/tradelab/preflight")
+    assert status == 200
+    body = json.loads(body_str)
+    assert body["error"] is None
+    assert set(body["data"].keys()) == {"universe", "cache", "strategy", "tdapi"}
