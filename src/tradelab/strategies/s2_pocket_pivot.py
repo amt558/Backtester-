@@ -62,7 +62,7 @@ class S2PocketPivot(Strategy):
 
             # Fresh Pocket Pivot: today True, previous bar False
             pp = df["Pocket_Pivot"].fillna(False).astype(bool)
-            pp_prev = pp.shift(1).fillna(False).astype(bool)
+            pp_prev = pp.shift(1, fill_value=False).astype(bool)
             fresh_pp = pp & (~pp_prev)
 
             # Universal gates
