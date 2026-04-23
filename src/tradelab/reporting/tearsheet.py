@@ -81,7 +81,38 @@ def render_backtest_tearsheet(
             download_filename=output_path.name,
         )
 
+    # Post-write: inject the tradelab dark theme CSS + toggle into the
+    # QuantStats HTML so the tearsheet matches the rest of the suite.
+    try:
+        from ..dashboard._theme import THEME_CSS
+        _inject_theme(output_path, THEME_CSS)
+    except Exception:
+        # Never let theming break a generated report
+        pass
+
     return output_path
+
+
+def _inject_theme(path: Path, theme_css: str) -> None:
+    """Rewrite an HTML file to embed the tradelab CC-matched dark theme.
+    Used for QuantStats and other third-party HTML where we don't control
+    the template directly."""
+    html = path.read_text(encoding="utf-8", errors="replace")
+    head_close = html.lower().find("</head>")
+    theme_style = (
+        f"<style>{theme_css}"
+        # Force QuantStats's default-colored elements into our dark theme
+        "body{background:var(--bg)!important;color:var(--fg)!important;}"
+        "h1,h2,h3,h4,h5,h6,p,li,label,span,div{color:inherit;}"
+        "table,th,td{color:var(--fg);}"
+        "th{background:var(--bg-header)!important;color:var(--fg-muted)!important;}"
+        "td{border-color:var(--border-soft)!important;}"
+        "hr{border-color:var(--border);}"
+        "</style>"
+    )
+    if head_close >= 0:
+        html = html[:head_close] + theme_style + html[head_close:]
+    path.write_text(html, encoding="utf-8")
 
 
 def compute_quantstats_metrics(result: BacktestResult,

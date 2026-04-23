@@ -45,7 +45,7 @@ class SurvivorCanary(Strategy):
             df["EMA_fast"] = ema(df["Close"], fast_n)
             df["EMA_slow"] = ema(df["Close"], slow_n)
             above = df["EMA_fast"] > df["EMA_slow"]
-            above_prev = above.shift(1).fillna(False)
+            above_prev = above.shift(1, fill_value=False)
             cross_up = above & (~above_prev)
             atr_valid = df["ATR"].notna() & (df["ATR"] > 0)
             df["buy_signal"] = cross_up & atr_valid

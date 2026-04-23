@@ -68,6 +68,20 @@ _FALLBACK_THRESHOLDS = {
     "wfe_fragile": 0.50,
     "noise_pf_drop_p5_fragile": 0.40,
     "noise_pf_drop_p5_robust": 0.10,
+    # Regime dependence: worst-regime PF / best-regime PF below this ratio
+    # flags fragile (strategy's edge is regime-conditional).
+    "regime_spread_fragile": 0.40,
+    "regime_spread_robust": 0.70,
+    # Hard-fragile override: extreme regime concentration forces FRAGILE
+    # regardless of other signals. Closes the loophole where a bull-only
+    # strategy could score ROBUST under normal aggregation.
+    "regime_spread_hard_fragile": 0.20,
+    # Minimum trades per regime bucket to count toward spread computation.
+    # Proportional to total trades, with an absolute floor for degenerate
+    # cases. A regime must contribute >= max(abs_floor, total * pct/100)
+    # trades to count as valid evidence.
+    "regime_min_trades_pct": 10.0,
+    "regime_min_trades_abs": 5,
 }
 
 
@@ -209,6 +223,76 @@ def compute_verdict(
             signals.append(VerdictSignal(name="wfe", outcome="inconclusive",
                                           reason=f"WFE {wfe:.2f}"))
 
+    # --- Regime spread (worst-regime PF / best-regime PF) ---
+    # Three-tier: hard-fragile override / soft-fragile contribution /
+    # robust, with a proportional sample-size guard so we never flag based
+    # on noisy tiny-sample regimes.
+    rb = getattr(bt, "regime_breakdown", None) or {}
+    if rb:
+        total_trades = sum(int(r.get("n_trades", 0)) for r in rb.values())
+        pct = float(THRESHOLDS.get("regime_min_trades_pct", 10.0))
+        abs_floor = int(THRESHOLDS.get("regime_min_trades_abs", 5))
+        min_trades = max(abs_floor, int(round(total_trades * pct / 100.0)))
+
+        valid = [(name, r) for name, r in rb.items()
+                 if r.get("n_trades", 0) >= min_trades and r.get("pf", 0) > 0]
+        pfs = [r["pf"] for _, r in valid]
+
+        # Dominant regime — always reported in reasons for transparency
+        dominant = ""
+        if total_trades > 0:
+            top_name, top_row = max(
+                rb.items(), key=lambda kv: kv[1].get("n_trades", 0),
+            )
+            share_pct = (top_row.get("n_trades", 0) / total_trades) * 100
+            dominant = f" | {top_name}={share_pct:.0f}% of trades"
+
+        if len(valid) < 2:
+            # Can't compute a meaningful spread - treat as inconclusive
+            signals.append(VerdictSignal(
+                name="regime_spread", outcome="inconclusive",
+                reason=(f"Insufficient data: only {len(valid)} regime(s) "
+                        f"with >= {min_trades} trades ({pct:.0f}% of "
+                        f"{total_trades} total, floor {abs_floor}){dominant}"),
+            ))
+        else:
+            lo, hi = min(pfs), max(pfs)
+            ratio = lo / hi if hi > 0 else 0.0
+            soft_t = THRESHOLDS["regime_spread_fragile"]
+            hard_t = THRESHOLDS.get("regime_spread_hard_fragile", 0.0)
+            robust_t = THRESHOLDS["regime_spread_robust"]
+
+            if ratio < soft_t:
+                # Soft-fragile signal always fires when below soft threshold
+                signals.append(VerdictSignal(
+                    name="regime_spread", outcome="fragile",
+                    reason=(f"Worst-regime PF {lo:.2f} is {ratio*100:.0f}% of "
+                            f"best-regime PF {hi:.2f} "
+                            f"(< {int(soft_t*100)}%){dominant}"),
+                ))
+                # Hard-fragile signal fires ADDITIONALLY at stricter threshold.
+                # Aggregation below will force FRAGILE if this signal is present.
+                if hard_t > 0 and ratio < hard_t:
+                    signals.append(VerdictSignal(
+                        name="regime_spread_hard", outcome="fragile",
+                        reason=(f"HARD OVERRIDE: Worst-regime PF {lo:.2f} is "
+                                f"only {ratio*100:.0f}% of best-regime PF {hi:.2f} "
+                                f"(< {int(hard_t*100)}%). Strategy's edge is "
+                                f"regime-specific; structural fragility{dominant}"),
+                    ))
+            elif ratio >= robust_t:
+                signals.append(VerdictSignal(
+                    name="regime_spread", outcome="robust",
+                    reason=(f"Regime PFs consistent ({lo:.2f}/{hi:.2f}, "
+                            f"ratio {ratio:.2f}){dominant}"),
+                ))
+            else:
+                signals.append(VerdictSignal(
+                    name="regime_spread", outcome="inconclusive",
+                    reason=(f"Regime PF ratio {ratio:.2f} "
+                            f"(lo {lo:.2f} / hi {hi:.2f}){dominant}"),
+                ))
+
     # --- Aggregate ---
     # Anti-drift rule: asymmetric error costs. Any fragile signal -> at best INCONCLUSIVE.
     # All-robust -> ROBUST. Mix of robust + inconclusive -> INCONCLUSIVE.
@@ -222,5 +306,12 @@ def compute_verdict(
         verdict = "ROBUST"
     else:
         verdict = "INCONCLUSIVE"
+
+    # Hard-gate override: extreme regime concentration forces FRAGILE
+    # regardless of the normal aggregation. This exists because a
+    # bull-only strategy with otherwise-clean signals shouldn't be
+    # allowed to score ROBUST — the edge isn't an edge, it's a regime bet.
+    if any(s.name == "regime_spread_hard" and s.outcome == "fragile" for s in signals):
+        verdict = "FRAGILE"
 
     return VerdictResult(verdict=verdict, signals=signals)

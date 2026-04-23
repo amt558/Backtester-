@@ -63,6 +63,13 @@ class BacktestResult(BaseModel):
     trades: list[Trade] = Field(default_factory=list)
     # equity_curve held as list of {"date": str, "equity": float}
     equity_curve: list[dict] = Field(default_factory=list)
+    # Regime breakdown (phase: bull / chop / bear, keyed on benchmark SMA200
+    # state at each trade's entry date). Empty dict when benchmark unavailable.
+    # Shape: {regime: {n_trades, win_rate, pf, net_pnl, avg_ret_pct}}
+    regime_breakdown: dict = Field(default_factory=dict)
+    # Per-month P&L aggregation (entry month of each trade). Shape:
+    #   [{"month": "YYYY-MM", "n_trades", "wins", "losses", "net_pnl", "avg_ret_pct"}, ...]
+    monthly_pnl: list[dict] = Field(default_factory=list)
     generated_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
     def daily_returns(self) -> Optional[pd.Series]:

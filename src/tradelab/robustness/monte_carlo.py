@@ -58,6 +58,13 @@ class MonteCarloResult(BaseModel):
     methods: list[str]
     metrics: list[str]
     distributions: list[MCMetricDistribution] = Field(default_factory=list)
+    # Expected-return distribution: percentiles of total % return across
+    # shuffle simulations. Lets downstream sizing use the 5th/median/95th
+    # as a quantitative basis rather than just a pass/fail verdict.
+    # Shape: {"p5": -3.2, "p25": 2.1, "p50": 9.4, "p75": 17.8, "p95": 29.1,
+    #         "annual_p5": ..., "annual_median": ..., "annual_p95": ...}
+    return_distribution: dict = Field(default_factory=dict)
+    return_samples: list[float] = Field(default_factory=list)
 
     def get(self, method: str, metric: str) -> MCMetricDistribution:
         for d in self.distributions:
@@ -204,6 +211,11 @@ def run_monte_carlo(
         except Exception:
             pbar_ctx = None
 
+    # Also capture total-return distribution, but ONLY from the shuffle
+    # method — shuffle preserves the trade marginals so its total is fixed;
+    # bootstrap / block-bootstrap give us the noise around that total.
+    return_samples: list[float] = []
+
     for method in methods:
         sims: dict[str, list[float]] = {m: [] for m in metrics}
         for _ in range(n_simulations):
@@ -211,6 +223,10 @@ def run_monte_carlo(
             eq = _cumulative_equity(resampled, starting_equity)
             for m in metrics:
                 sims[m].append(METRIC_FUNCS[m](resampled, eq))
+            # Bootstrap / block_bootstrap vary the total — collect % return
+            if method in ("bootstrap", "block_bootstrap"):
+                total_ret_pct = float((eq[-1] - starting_equity) / starting_equity * 100.0)
+                return_samples.append(total_ret_pct)
             if pbar_ctx is not None:
                 pbar_ctx.update(task_ids[method], advance=1)
 
@@ -232,8 +248,41 @@ def run_monte_carlo(
     if pbar_ctx is not None:
         pbar_ctx.stop()
 
+    # Compute return-distribution percentiles + annualized versions from
+    # the backtest's start/end-date window.
+    return_distribution: dict = {}
+    if return_samples:
+        arr = np.asarray(return_samples, dtype=float)
+        rd = {
+            "p5":  float(np.percentile(arr, 5)),
+            "p25": float(np.percentile(arr, 25)),
+            "p50": float(np.percentile(arr, 50)),
+            "p75": float(np.percentile(arr, 75)),
+            "p95": float(np.percentile(arr, 95)),
+            "mean": float(arr.mean()),
+            "std":  float(arr.std()),
+            "n_samples": int(len(arr)),
+        }
+        try:
+            import pandas as _pd
+            s, e = _pd.Timestamp(bt.start_date), _pd.Timestamp(bt.end_date)
+            years = max((e - s).days / 365.25, 0.25)
+            # Annualize total-window return: (1 + total/100) ** (1/years) - 1
+            for k in ("p5", "p25", "p50", "p75", "p95", "mean"):
+                total = rd[k] / 100.0
+                if total <= -1.0:
+                    rd[f"annual_{k}"] = -100.0
+                else:
+                    rd[f"annual_{k}"] = float(((1.0 + total) ** (1.0 / years) - 1.0) * 100.0)
+            rd["years"] = float(years)
+        except Exception:
+            pass
+        return_distribution = rd
+
     return MonteCarloResult(
         n_simulations=n_simulations, n_trades=n_trades,
         methods=methods, metrics=metrics,
         distributions=distributions,
+        return_distribution=return_distribution,
+        return_samples=return_samples[:1000],  # cap to keep JSON size reasonable
     )
