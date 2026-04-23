@@ -167,3 +167,33 @@ def test_post_jobs_returns_503_if_progress_log_unsupported(fresh_job_manager, mo
     body = json.dumps({"strategy": "momo", "command": "run"}).encode()
     _, status = handlers.handle_post_with_status("/tradelab/jobs", body)
     assert status == 503
+
+
+def test_failed_job_to_dict_includes_failure_hint():
+    from tradelab.web.jobs import Job, JobStatus
+    job = Job(
+        id="test-abc123",
+        strategy="momo",
+        command="run --full",
+        argv=["run", "momo", "--full"],
+        status=JobStatus.FAILED,
+        exit_code=1,
+    )
+    d = job.to_dict()
+    assert "failure_hint" in d
+    # failure_hint should be the exit-code fallback string (no progress log present)
+    assert d["failure_hint"] is not None
+    assert "Python exception" in d["failure_hint"]
+
+
+def test_running_job_to_dict_omits_failure_hint():
+    from tradelab.web.jobs import Job, JobStatus
+    job = Job(
+        id="test-def456",
+        strategy="momo",
+        command="run --full",
+        argv=["run", "momo", "--full"],
+        status=JobStatus.RUNNING,
+    )
+    d = job.to_dict()
+    assert "failure_hint" not in d
