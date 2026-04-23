@@ -189,6 +189,10 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             return _err(f"registry error: {e}"), 200
         return _ok({"strategies": strategies}), 200
 
+    if path == "/tradelab/preflight":
+        from tradelab.web.preflight import compute_preflight
+        return _ok(compute_preflight()), 200
+
     return _err("not found"), 404
 
 
@@ -350,6 +354,14 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     if path.startswith("/tradelab/jobs/") and path.endswith("/cancel"):
         job_id = path[len("/tradelab/jobs/"):-len("/cancel")]
         return _cancel_job(job_id)
+
+    if path == "/tradelab/compare":
+        from tradelab.web.compare import run_compare
+        body_dict, status = run_compare(
+            run_ids=payload.get("run_ids") or [],
+            benchmark=payload.get("benchmark") or "SPY",
+        )
+        return json.dumps(body_dict), status
 
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200

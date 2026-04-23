@@ -53,6 +53,9 @@ class Job:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["status"] = self.status.value
+        if self.status == JobStatus.FAILED:
+            from tradelab.web.failure_hint import extract_failure_hint
+            d["failure_hint"] = extract_failure_hint(self.id, exit_code=self.exit_code)
         return d
 
     @classmethod
