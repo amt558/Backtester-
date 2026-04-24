@@ -77,7 +77,7 @@ def test_write_report_folder_creates_executive_dashboard_and_json(parsed_amzn, t
     from tradelab.csv_scoring import score_trades, write_report_folder
 
     out = score_trades(parsed_amzn, strategy_name="x", symbol="AMZN")
-    folder = write_report_folder(
+    folder, _ = write_report_folder(
         out,
         base_name="viprasol-amzn-v1",
         out_root=tmp_path,
@@ -128,3 +128,44 @@ def test_write_report_folder_records_audit_row_when_enabled(parsed_amzn, tmp_pat
     assert rows[0].config_hash != empty_hash, \
         "config_hash must encode CSV import params, not be the constant empty-dict hash"
     assert rows[0].dsr_probability is None or 0.0 <= rows[0].dsr_probability <= 1.0
+
+
+def test_write_report_folder_returns_audit_run_id(tmp_path: Path):
+    """With record_audit=True, write_report_folder returns (folder, run_id).
+    run_id must be a non-empty str (uuid4 from audit.record_run)."""
+    from tradelab.csv_scoring import score_trades, write_report_folder
+    from tradelab.io.tv_csv import parse_tv_trades_csv
+    fixture = Path("tests/io/fixtures/tv_export_amzn_smoke.csv")
+    csv_text = fixture.read_text(encoding="utf-8-sig")
+    parsed = parse_tv_trades_csv(csv_text, symbol="AMZN")
+    out = score_trades(parsed, strategy_name="t1", symbol="AMZN")
+
+    # Temporary audit DB; schema seeded by record_run on first insert via _connect.
+    db_path = tmp_path / "audit.db"
+    result = write_report_folder(
+        out, base_name="t1", out_root=tmp_path / "reports",
+        csv_text=csv_text, record_audit=True, db_path=db_path,
+    )
+
+    # Must be a 2-tuple now, not a bare Path.
+    assert isinstance(result, tuple) and len(result) == 2
+    folder, run_id = result
+    assert folder.exists() and folder.is_dir()
+    assert isinstance(run_id, str) and len(run_id) > 0
+
+
+def test_write_report_folder_no_audit_returns_none_run_id(tmp_path: Path):
+    """With record_audit=False, run_id must be None."""
+    from tradelab.csv_scoring import score_trades, write_report_folder
+    from tradelab.io.tv_csv import parse_tv_trades_csv
+    fixture = Path("tests/io/fixtures/tv_export_amzn_smoke.csv")
+    csv_text = fixture.read_text(encoding="utf-8-sig")
+    parsed = parse_tv_trades_csv(csv_text, symbol="AMZN")
+    out = score_trades(parsed, strategy_name="t2", symbol="AMZN")
+
+    folder, run_id = write_report_folder(
+        out, base_name="t2", out_root=tmp_path / "reports",
+        csv_text=csv_text, record_audit=False,
+    )
+    assert folder.exists()
+    assert run_id is None

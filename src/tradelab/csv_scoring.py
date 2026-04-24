@@ -155,8 +155,11 @@ def write_report_folder(
     csv_text: Optional[str] = None,
     record_audit: bool = True,
     db_path: Path = _DEFAULT_DB_PATH,
-) -> Path:
+) -> tuple[Path, Optional[str]]:
     """Persist a full report folder under <out_root>/<base_name>_<timestamp>/.
+
+    Returns (folder_path, audit_run_id). audit_run_id is the audit DB row id
+    when record_audit=True, else None.
 
     Files written:
       executive_report.md       — same renderer as `tradelab run`
@@ -199,8 +202,9 @@ def write_report_folder(
     if pine_source is not None:
         (folder / "strategy.pine").write_text(pine_source, encoding="utf-8")
 
+    audit_run_id: Optional[str] = None
     if record_audit:
-        _audit_record_run(
+        audit_run_id = _audit_record_run(
             strategy_name=base_name,
             verdict=out.verdict.verdict,
             dsr_probability=out.dsr_probability,
@@ -217,4 +221,4 @@ def write_report_folder(
             db_path=db_path,
         )
 
-    return folder
+    return folder, audit_run_id

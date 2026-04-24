@@ -65,7 +65,7 @@ def score_from_trades(
             except (PermissionError, UnicodeDecodeError) as e:
                 console.print(f"[yellow]Pine source unreadable ({type(e).__name__}), continuing without:[/yellow] {p}")
 
-    folder = write_report_folder(
+    folder, _run_id = write_report_folder(
         out, base_name=name, pine_source=pine_source,
         csv_text=csv_text, record_audit=audit,
     )
