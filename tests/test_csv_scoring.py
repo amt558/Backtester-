@@ -1,10 +1,12 @@
 """csv_scoring orchestrator tests."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from tradelab.audit import list_runs
 from tradelab.csv_scoring import build_backtest_result_from_trades, score_trades
 from tradelab.io.tv_csv import parse_tv_trades_csv
 
@@ -69,3 +71,52 @@ def test_score_trades_returns_verdict_and_dsr(parsed_amzn):
     assert out.backtest_result.metrics.total_trades == 6
     assert out.monte_carlo is not None
     assert out.monte_carlo.n_trades == 6
+
+
+def test_write_report_folder_creates_executive_dashboard_and_json(parsed_amzn, tmp_path):
+    from tradelab.csv_scoring import score_trades, write_report_folder
+
+    out = score_trades(parsed_amzn, strategy_name="x", symbol="AMZN")
+    folder = write_report_folder(
+        out,
+        base_name="viprasol-amzn-v1",
+        out_root=tmp_path,
+        pine_source="// dummy pine\nstrategy('x')",
+        csv_text="dummy,csv\n",
+        record_audit=False,
+    )
+
+    assert folder.exists() and folder.is_dir()
+    assert folder.name.startswith("viprasol-amzn-v1_")
+    assert (folder / "executive_report.md").exists()
+    assert (folder / "dashboard.html").exists()
+    assert (folder / "backtest_result.json").exists()
+    assert (folder / "tv_trades.csv").exists()
+    assert (folder / "strategy.pine").exists()
+
+    # Round-trip the JSON to confirm BacktestResult survives pydantic dump+load.
+    data = json.loads((folder / "backtest_result.json").read_text(encoding="utf-8"))
+    assert data["strategy"] == "viprasol-amzn-v1"
+    assert data["symbol"] == "AMZN"
+    assert len(data["trades"]) == 6
+
+
+def test_write_report_folder_records_audit_row_when_enabled(parsed_amzn, tmp_path):
+    from tradelab.csv_scoring import score_trades, write_report_folder
+
+    db_path = tmp_path / "history.db"
+    out = score_trades(parsed_amzn, strategy_name="x", symbol="AMZN")
+    write_report_folder(
+        out,
+        base_name="viprasol-amzn-v1",
+        out_root=tmp_path,
+        pine_source=None,
+        csv_text="x\n",
+        record_audit=True,
+        db_path=db_path,
+    )
+
+    rows = list_runs(strategy="viprasol-amzn-v1", db_path=db_path)
+    assert len(rows) == 1
+    assert rows[0].verdict in {"ROBUST", "INCONCLUSIVE", "FRAGILE"}
+    assert rows[0].report_card_html_path is not None

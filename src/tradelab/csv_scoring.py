@@ -21,9 +21,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from .audit import record_run as _audit_record_run
+from .audit.history import DEFAULT_DB_PATH as _DEFAULT_DB_PATH
+from .dashboard import build_dashboard
+from .determinism import hash_config
 from .engines._diagnostics import compute_monthly_pnl, metrics_from_trades
 from .engines.dsr import classify_dsr, deflated_sharpe_ratio
 from .io.tv_csv import ParsedTradesCSV
+from .reporting import generate_executive_report
 from .results import BacktestResult
 from .robustness.monte_carlo import MonteCarloResult, run_monte_carlo
 from .robustness.verdict import VerdictResult, compute_verdict
@@ -123,3 +128,85 @@ def score_trades(
         monte_carlo=mc,
         verdict=verdict,
     )
+
+
+def _safe_dashboard(out: CSVScoringOutput, out_dir: Path) -> Optional[Path]:
+    """Build dashboard.html. Tolerate failures so the rest of the report survives."""
+    try:
+        return build_dashboard(
+            out.backtest_result,
+            optuna_result=None, wf_result=None,
+            universe=None,
+            out_dir=out_dir,
+            robustness_result=None,
+        )
+    except Exception:
+        return None
+
+
+def write_report_folder(
+    out: CSVScoringOutput,
+    *,
+    base_name: str,
+    out_root: Path = Path("reports"),
+    pine_source: Optional[str] = None,
+    csv_text: Optional[str] = None,
+    record_audit: bool = True,
+    db_path: Path = _DEFAULT_DB_PATH,
+) -> Path:
+    """Persist a full report folder under <out_root>/<base_name>_<timestamp>/.
+
+    Files written:
+      executive_report.md       — same renderer as `tradelab run`
+      dashboard.html            — best-effort; missing tabs render as 'no data'
+      backtest_result.json      — pydantic dump for `tradelab compare` parity
+      tv_trades.csv             — verbatim copy of the imported CSV
+      strategy.pine             — Pine source if caller provided one
+
+    Audit row is written when record_audit=True (default).
+    """
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    folder = Path(out_root) / f"{base_name}_{ts}"
+    folder.mkdir(parents=True, exist_ok=True)
+
+    # Override strategy name in the BacktestResult so the report header uses
+    # the user-supplied base name rather than whatever was passed to score_trades.
+    bt = out.backtest_result.model_copy(update={"strategy": base_name})
+
+    report_path = generate_executive_report(
+        bt, optuna_result=None, wf_result=None,
+        universe=None, out_dir=folder, robustness_result=None,
+    )
+
+    dashboard_path = _safe_dashboard(
+        CSVScoringOutput(
+            backtest_result=bt,
+            dsr_probability=out.dsr_probability,
+            monte_carlo=out.monte_carlo,
+            verdict=out.verdict,
+        ),
+        folder,
+    )
+
+    (folder / "backtest_result.json").write_text(
+        bt.model_dump_json(indent=2), encoding="utf-8",
+    )
+
+    if csv_text is not None:
+        (folder / "tv_trades.csv").write_text(csv_text, encoding="utf-8")
+    if pine_source is not None:
+        (folder / "strategy.pine").write_text(pine_source, encoding="utf-8")
+
+    if record_audit:
+        _audit_record_run(
+            strategy_name=base_name,
+            verdict=out.verdict.verdict,
+            dsr_probability=out.dsr_probability,
+            input_data_hash=None,            # no OHLCV; CSV is the source
+            config_hash=hash_config({}),
+            report_card_markdown=report_path.read_text(encoding="utf-8"),
+            report_card_html_path=str(dashboard_path) if dashboard_path else None,
+            db_path=db_path,
+        )
+
+    return folder
