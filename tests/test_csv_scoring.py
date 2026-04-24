@@ -120,3 +120,11 @@ def test_write_report_folder_records_audit_row_when_enabled(parsed_amzn, tmp_pat
     assert len(rows) == 1
     assert rows[0].verdict in {"ROBUST", "INCONCLUSIVE", "FRAGILE"}
     assert rows[0].report_card_html_path is not None
+
+    from tradelab.determinism import hash_config
+
+    empty_hash = hash_config({})
+    assert rows[0].config_hash is not None
+    assert rows[0].config_hash != empty_hash, \
+        "config_hash must encode CSV import params, not be the constant empty-dict hash"
+    assert rows[0].dsr_probability is None or 0.0 <= rows[0].dsr_probability <= 1.0

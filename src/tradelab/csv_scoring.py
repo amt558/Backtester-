@@ -16,6 +16,7 @@ Degraded relative to `tradelab run`:
 from __future__ import annotations
 
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -140,7 +141,8 @@ def _safe_dashboard(out: CSVScoringOutput, out_dir: Path) -> Optional[Path]:
             out_dir=out_dir,
             robustness_result=None,
         )
-    except Exception:
+    except Exception as exc:
+        print(f"[csv_scoring] dashboard build skipped: {exc}", file=sys.stderr)
         return None
 
 
@@ -203,7 +205,13 @@ def write_report_folder(
             verdict=out.verdict.verdict,
             dsr_probability=out.dsr_probability,
             input_data_hash=None,            # no OHLCV; CSV is the source
-            config_hash=hash_config({}),
+            config_hash=hash_config({
+                "csv_source": "tv_strategy_tester",
+                "symbol": bt.symbol,
+                "timeframe": bt.timeframe,
+                "starting_equity": round(bt.metrics.final_equity - bt.metrics.net_pnl, 2),
+                "n_trades": bt.metrics.total_trades,
+            }),
             report_card_markdown=report_path.read_text(encoding="utf-8"),
             report_card_html_path=str(dashboard_path) if dashboard_path else None,
             db_path=db_path,
