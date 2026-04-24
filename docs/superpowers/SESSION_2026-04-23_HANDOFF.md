@@ -365,6 +365,61 @@ All UI-layer changes to `command_center.html` + `launch_dashboard.py`. Summary i
 
 ---
 
-**Session ended:** 2026-04-23. All v2.0 features verified working end-to-end. Amit tasked with manually running the Full pipeline on `s4_inside_day_breakout` once the modal preflight chips go green (which they should after refreshing the browser).
+**Session ended:** 2026-04-23 — Part 1. All v2.0 features verified working end-to-end. Amit tasked with manually running the Full pipeline on `s4_inside_day_breakout` once the modal preflight chips go green (which they should after refreshing the browser).
 
-**Next session:** start by reading this doc + the v2 summary. Ask Amit what's on his mind — whether the Full pipeline run completed / produced a meaningful result, whether he wants to work on the v2.1 backlog, or whether he wants to finally commit the in-flight refactor.
+---
+
+## Part 2 — Post-review work (same day, 2026-04-23)
+
+After Part 1 handoff, Amit brought an external code review scoring v2.0 B+ / 7.5. Five weaknesses flagged. This section captures what was done in response.
+
+### Part 2 commits landed
+
+| Repo | SHA | What |
+|---|---|---|
+| `C:/TradingScripts` | `61aa659` | `fix(command-center): drop lying FRAGILE tooltip + post-review cleanup` — removed `fragileReasons()`, defined `.btn-ghost` CSS, extracted `PREFLIGHT_KEYS` constant, removed dead `#pipelineSelectAll` checkbox, rewrote tooltip to honest "open Dashboard report for full diagnostics" |
+| `C:/TradingScripts/tradelab` | `e997124` | `docs: correct renderLiveCard bug description in v2 summary` — earlier narrative about the callback-overwrites-target bug was semantically incorrect (microtask ordering prevents that); corrected to "orphaned-references-on-re-render" and noted race doesn't fire in current code |
+
+### Part 2 uncommitted work (autonomous A-F pass, 2026-04-23 afternoon)
+
+| Item | File | What |
+|---|---|---|
+| A. Static HTML smoke test | `tests/web/test_command_center_html.py` (new, untracked) | 32 assertions over `command_center.html` — required JS functions exist once, required DOM IDs/classes present, forbidden identifiers absent, XSS smell check. Caught 1 real XSS on first run |
+| XSS fix (A surfaced) | `C:/TradingScripts/command_center.html` (uncommitted) | `${r.strategy_name}` at line 2584 was unescaped in innerHTML template — wrapped in `escapeHtml`. Also defensively escaped `r.verdict` nearby |
+| B. Audit of Research tab JS | `docs/superpowers/RESEARCH_TAB_V2_AUDIT.md` (new, untracked) | 9 findings: 1 HIGH fixed inline (data-strategy XSS at 2569), 1 MEDIUM open (renderPipelineRows orphan-fetch race on filter change), 4 LOW, 1 NONE, 1 out-of-scope, 1 MEDIUM test-regex gap |
+| XSS fix (B3) | `C:/TradingScripts/command_center.html` (uncommitted) | `data-strategy="${r.strategy_name}"` at line 2569 was unescaped via template composition — wrapped in `escapeHtml` |
+| C. v2.1 spec | `docs/superpowers/specs/2026-04-24-research-tab-v2.1-engine-truth-tooltip.md` (new, untracked) | Engine-truth verdict tooltip. Key insight: `VerdictResult.signals` already persist to `robustness_result.json` per run, so NO schema change needed. Just extend metrics endpoint handler to merge signals. Est. 3h / one session. Awaits user approval |
+| E. cli_doctor.py state | (no changes) | Confirmed the WIP refactor was committed as `946c7b7` in tradelab. cli_doctor.py covers python/deps/config/strategies/cache/audit-db/canaries but does NOT cover the editable-install-pointing-at-worktree gotcha. Remains on backlog as handoff §A2 |
+| F. Frontend test decision | `docs/superpowers/FRONTEND_TEST_STRATEGY_DECISION.md` (new, untracked) | Recommendation: ship A (done) + a future Option D (dashboard e2e via requests/regex, ~1.5h), defer Playwright until a bug surfaces that static tests can't catch. Awaits user decision |
+
+### Part 2 environment changes
+
+| What | Before | After |
+|---|---|---|
+| Alpaca API key in `C:/TradingScripts/alpaca_config.json` | `PKWSZYOGPBP67Y4WTMFJYYO6X5` (exposed) | `PKKOHFVXTZ5VQ7G3ZLKDNYRJ7U` (new, live-verified via `/api/v2/account`) |
+| Alpaca secret key in same file | old | new (live-verified) |
+| TWELVEDATA_API_KEY env | `02d795…` | unchanged (user re-sent same value) |
+| Dashboard process | not running | running on :8877, PID 62348 |
+
+### Memory files added
+
+- `C:\Users\AAASH\.claude\projects\C--Users-AAASH\memory\feedback_plan_grep_verification.md` — always grep plan selectors against code before pasting
+- `C:\Users\AAASH\.claude\projects\C--Users-AAASH\memory\reference_alpaca_config_location.md` — Alpaca creds live in JSON, not env vars; rotate by editing the file
+
+### Still open at Part 2 end
+
+**User judgment required:**
+- Revoke old Alpaca key at alpaca.markets (rotation not upstream yet — old key still valid)
+- Rotate TWELVE DATA key at twelvedata.com (same value re-provided was already exposed in prior transcripts)
+- Approve v2.1 spec (engine-truth tooltip) → implementation is a clean one-session job
+- Decide on Option D (dashboard e2e test) per frontend test strategy doc
+- Manual browser smoke of v2 visuals (heat, tooltips, sparklines, compressed cards, feature flag)
+
+**Calendar:**
+- 2026-04-25: remove `v2-layout` feature flag (48h post-merge)
+- 2026-04-25: delete `.bak-2026-04-23-v2` sidecars (48h stability window)
+
+**Not yet committed in `C:/TradingScripts`:** `command_center.html` (two XSS fixes from this session)
+**Not yet committed in `C:/TradingScripts/tradelab`:** three new docs + the new test file
+
+**Next session:** read `PART_2_SESSION_SUMMARY.md` for the quick-entry, then whichever of the above user-judgment items are top of mind.
