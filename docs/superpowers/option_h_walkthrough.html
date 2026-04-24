@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Option H — Pine → tradelab → Alpaca</title>
+<style>
+  @page { size: Letter; margin: 0.7in 0.75in; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    color: #222;
+    font-size: 11pt;
+    line-height: 1.45;
+    margin: 0;
+  }
+  h1, h2, h3, .sans { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  h1 {
+    font-size: 24pt;
+    color: #1a1a2e;
+    margin: 0 0 4pt 0;
+    letter-spacing: -0.5pt;
+  }
+  h2 {
+    font-size: 16pt;
+    color: #1a1a2e;
+    margin: 22pt 0 8pt 0;
+    border-bottom: 2px solid #2a5d8f;
+    padding-bottom: 3pt;
+  }
+  h3 {
+    font-size: 12pt;
+    color: #2a5d8f;
+    margin: 14pt 0 4pt 0;
+    text-transform: uppercase;
+    letter-spacing: 0.5pt;
+  }
+  .subtitle {
+    font-size: 13pt;
+    color: #555;
+    margin: 0 0 24pt 0;
+    font-style: italic;
+  }
+  .meta {
+    font-size: 9pt;
+    color: #888;
+    margin-bottom: 20pt;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .verdict-box {
+    background: #f0f6ff;
+    border-left: 4px solid #2a5d8f;
+    padding: 12pt 16pt;
+    margin: 14pt 0;
+    font-size: 11pt;
+  }
+  .verdict-box strong { color: #1a1a2e; }
+  .warn-box {
+    background: #fff7e6;
+    border-left: 4px solid #c47500;
+    padding: 10pt 14pt;
+    margin: 10pt 0;
+    font-size: 10.5pt;
+  }
+  .kpi-row {
+    display: flex;
+    gap: 12pt;
+    margin: 14pt 0 8pt 0;
+  }
+  .kpi {
+    flex: 1;
+    padding: 14pt 12pt;
+    border: 1.5px solid #ddd;
+    border-radius: 6pt;
+    text-align: center;
+    background: #fafbfc;
+  }
+  .kpi .num {
+    font-size: 32pt;
+    font-weight: bold;
+    line-height: 1;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .kpi .label {
+    font-size: 9pt;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3pt;
+    margin-top: 4pt;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .kpi.green .num { color: #2e7d32; }
+  .kpi.green { border-color: #2e7d32; background: #f1f8f1; }
+  .kpi.yellow .num { color: #c47500; }
+  .kpi.yellow { border-color: #c47500; background: #fff7e6; }
+  .kpi.red .num { color: #c62828; }
+  .kpi.red { border-color: #c62828; background: #fef4f4; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+    margin: 10pt 0;
+    font-family: "Segoe UI", sans-serif;
+  }
+  th {
+    background: #1a1a2e;
+    color: #fff;
+    text-align: left;
+    padding: 7pt 10pt;
+    font-size: 9.5pt;
+    font-weight: 600;
+    letter-spacing: 0.3pt;
+  }
+  td {
+    padding: 6pt 10pt;
+    border-bottom: 1px solid #e5e5e5;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #fafafa; }
+  .status {
+    display: inline-block;
+    padding: 1pt 7pt;
+    border-radius: 3pt;
+    font-size: 9pt;
+    font-weight: bold;
+    font-family: "Segoe UI", sans-serif;
+  }
+  .status.ok { background: #dcedc8; color: #2e7d32; }
+  .status.partial { background: #fff3c1; color: #c47500; }
+  .status.lost { background: #ffcdd2; color: #c62828; }
+  .diagram-wrap {
+    margin: 16pt 0;
+    padding: 12pt;
+    background: #fafbfc;
+    border: 1px solid #e0e0e0;
+    border-radius: 6pt;
+    text-align: center;
+  }
+  .diagram-caption {
+    font-size: 9pt;
+    color: #666;
+    margin-top: 6pt;
+    font-style: italic;
+    font-family: "Segoe UI", sans-serif;
+  }
+  code, .mono {
+    font-family: "Consolas", "Courier New", monospace;
+    font-size: 9.5pt;
+    background: #f0f0f0;
+    padding: 1pt 4pt;
+    border-radius: 2pt;
+    color: #333;
+  }
+  .step-card {
+    display: flex;
+    margin: 8pt 0;
+    border-left: 3px solid #2a5d8f;
+    background: #f7f9fc;
+    padding: 8pt 12pt;
+    page-break-inside: avoid;
+  }
+  .step-num {
+    font-family: "Segoe UI", sans-serif;
+    font-size: 22pt;
+    font-weight: bold;
+    color: #2a5d8f;
+    min-width: 36pt;
+    line-height: 1;
+  }
+  .step-body { flex: 1; }
+  .step-title {
+    font-family: "Segoe UI", sans-serif;
+    font-weight: bold;
+    font-size: 11pt;
+    margin-bottom: 3pt;
+  }
+  .step-where {
+    font-size: 9pt;
+    color: #666;
+    font-style: italic;
+    margin-bottom: 4pt;
+  }
+  .page-break { page-break-before: always; }
+  ul { margin: 6pt 0; padding-left: 20pt; }
+  li { margin-bottom: 3pt; }
+  .risk {
+    border-left: 3px solid #c47500;
+    padding: 6pt 10pt;
+    margin: 8pt 0;
+    background: #fffbf0;
+    font-size: 10pt;
+    page-break-inside: avoid;
+  }
+  .risk strong { font-family: "Segoe UI", sans-serif; display: block; margin-bottom: 2pt; }
+  .sign-box {
+    border: 1.5px solid #888;
+    padding: 14pt;
+    margin-top: 24pt;
+    background: #fafafa;
+  }
+  .sign-line {
+    border-bottom: 1px solid #333;
+    width: 60%;
+    margin: 18pt 0 4pt 0;
+  }
+  .emoji-safe { font-family: "Segoe UI Emoji", sans-serif; }
+</style>
+</head>
+<body>
+
+<h1>Option H — Pine → tradelab → Alpaca</h1>
+<p class="subtitle">Visual walkthrough &amp; backtesting capability scorecard</p>
+<p class="meta">Prepared 2026-04-24 · For Amit's review · Prerequisite: your approval before any code changes</p>
+
+<div class="verdict-box">
+  <strong>The bottom line.</strong> Option&nbsp;H keeps <b>TradingView as the single source of truth</b>
+  for your strategies. Pine stays Pine. You never port a strategy to Python. Tradelab scores
+  your strategies by importing the <b>trade list</b> TradingView produces; Alpaca executes them
+  through a <b>small self-hosted webhook receiver</b> on your Windows box. You keep <b>~65%</b>
+  of tradelab's backtesting features, lose automated parameter tuning &amp; what-if tools, and
+  eliminate the current two-copy architectural split entirely.
+</div>
+
+<div class="kpi-row">
+  <div class="kpi green">
+    <div class="num">10</div>
+    <div class="label">Capabilities<br>Fully Kept</div>
+  </div>
+  <div class="kpi yellow">
+    <div class="num">6</div>
+    <div class="label">Partial<br>(manual workaround)</div>
+  </div>
+  <div class="kpi red">
+    <div class="num">5</div>
+    <div class="label">Lost<br>(code-only features)</div>
+  </div>
+  <div class="kpi">
+    <div class="num" style="color:#2a5d8f;">~1 wk</div>
+    <div class="label">One-time<br>build</div>
+  </div>
+</div>
+
+<h3>What this document covers</h3>
+<ul>
+  <li>Architecture today vs under Option&nbsp;H (before/after diagrams)</li>
+  <li>End-to-end strategy lifecycle — 6 concrete steps</li>
+  <li>Full capability scorecard — every tradelab backtest feature, kept / partial / lost</li>
+  <li>Build cost, ongoing cost, per-strategy cost</li>
+  <li>Risks &amp; mitigations</li>
+  <li>What you need to provide to kick off the build</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h2>1. Architecture: before vs. after</h2>
+
+<h3>Today (the mechanical gap)</h3>
+<div class="diagram-wrap">
+<svg width="640" height="260" viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c62828"/>
+    </marker>
+    <marker id="arrow-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#888"/>
+    </marker>
+  </defs>
+  <style>
+    .lane-label { font: 600 11px "Segoe UI", sans-serif; fill: #333; }
+    .box { fill: #fff; stroke: #333; stroke-width: 1.3; }
+    .box-bad { fill: #fef4f4; stroke: #c62828; stroke-width: 1.5; }
+    .box-label { font: 11px "Segoe UI", sans-serif; fill: #222; text-anchor: middle; }
+    .box-sub { font: italic 9px "Segoe UI", sans-serif; fill: #666; text-anchor: middle; }
+    .lane { fill: #fafafa; stroke: #ddd; stroke-width: 1; }
+    .badge { font: 600 9px "Segoe UI", sans-serif; fill: #c62828; text-anchor: middle; }
+  </style>
+
+  <!-- 3 lanes -->
+  <rect class="lane" x="10" y="25" width="180" height="210"/>
+  <rect class="lane" x="210" y="25" width="240" height="210"/>
+  <rect class="lane" x="470" y="25" width="160" height="210"/>
+
+  <text class="lane-label" x="100" y="20" text-anchor="middle">TradingView</text>
+  <text class="lane-label" x="330" y="20" text-anchor="middle">Your Windows box</text>
+  <text class="lane-label" x="550" y="20" text-anchor="middle">Alpaca</text>
+
+  <!-- TradingView (unused for code) -->
+  <rect class="box" x="30" y="110" width="140" height="40" opacity="0.4"/>
+  <text class="box-label" x="100" y="128" opacity="0.6">Pine Script (TV)</text>
+  <text class="box-sub" x="100" y="142" opacity="0.6">currently unused</text>
+
+  <!-- Windows: two-copy split -->
+  <rect class="box-bad" x="230" y="60" width="200" height="52"/>
+  <text class="box-label" x="330" y="80">tradelab.strategies.*</text>
+  <text class="box-sub" x="330" y="95">framework class-based · 99 lines S4</text>
+  <text class="box-sub" x="330" y="106">used by verdict engine</text>
+
+  <rect class="box-bad" x="230" y="150" width="200" height="52"/>
+  <text class="box-label" x="330" y="170">FINAL STRATEGYIE/*.py</text>
+  <text class="box-sub" x="330" y="185">self-contained pandas · 214 lines S4</text>
+  <text class="box-sub" x="330" y="196">used by live bot</text>
+
+  <!-- Drift warning between the two copies -->
+  <text class="badge" x="330" y="134">⚠  DIFFERENT CODE — DRIFT</text>
+  <line x1="330" y1="112" x2="330" y2="148" stroke="#c62828" stroke-width="1" stroke-dasharray="3,2"/>
+
+  <!-- Alpaca -->
+  <rect class="box" x="485" y="110" width="130" height="40"/>
+  <text class="box-label" x="550" y="128">Paper account</text>
+  <text class="box-sub" x="550" y="142">receives bot orders</text>
+
+  <!-- Arrows bot → Alpaca -->
+  <line x1="430" y1="176" x2="485" y2="138" stroke="#888" stroke-width="1.3" marker-end="url(#arrow-gray)"/>
+
+  <!-- Dashboard shows wrong verdicts -->
+  <rect class="box" x="230" y="220" width="200" height="14" fill="#fef4f4" stroke="#c62828"/>
+  <text class="box-sub" x="330" y="231" fill="#c62828">Dashboard shows verdicts of the NON-deployed copy</text>
+</svg>
+<div class="diagram-caption">Today: two independent Python copies of each strategy, drifting from each other. Pine unused. Engine verdicts describe code that isn't trading.</div>
+</div>
+
+<h3>Under Option H (single source of truth)</h3>
+<div class="diagram-wrap">
+<svg width="640" height="290" viewBox="0 0 640 290" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2a5d8f"/>
+    </marker>
+  </defs>
+  <style>
+    .lane-label2 { font: 600 11px "Segoe UI", sans-serif; fill: #333; }
+    .box2 { fill: #fff; stroke: #2a5d8f; stroke-width: 1.5; }
+    .box-pine { fill: #f1f8f1; stroke: #2e7d32; stroke-width: 1.8; }
+    .box-label2 { font: 11px "Segoe UI", sans-serif; fill: #222; text-anchor: middle; }
+    .box-sub2 { font: italic 9px "Segoe UI", sans-serif; fill: #666; text-anchor: middle; }
+    .lane2 { fill: #fafafa; stroke: #ddd; stroke-width: 1; }
+    .flow-label { font: 600 9px "Segoe UI", sans-serif; fill: #2a5d8f; }
+  </style>
+
+  <rect class="lane2" x="10" y="25" width="180" height="240"/>
+  <rect class="lane2" x="210" y="25" width="240" height="240"/>
+  <rect class="lane2" x="470" y="25" width="160" height="240"/>
+
+  <text class="lane-label2" x="100" y="20" text-anchor="middle">TradingView</text>
+  <text class="lane-label2" x="330" y="20" text-anchor="middle">Your Windows box</text>
+  <text class="lane-label2" x="550" y="20" text-anchor="middle">Alpaca</text>
+
+  <!-- Pine: single source -->
+  <rect class="box-pine" x="25" y="70" width="150" height="54"/>
+  <text class="box-label2" x="100" y="90">Pine Script strategy</text>
+  <text class="box-sub2" x="100" y="104">single source of truth</text>
+  <text class="box-sub2" x="100" y="116">you author here only</text>
+
+  <!-- Strategy Tester -->
+  <rect class="box2" x="25" y="140" width="150" height="46"/>
+  <text class="box-label2" x="100" y="158">Strategy Tester</text>
+  <text class="box-sub2" x="100" y="172">backtest + CSV export</text>
+
+  <!-- Alerts -->
+  <rect class="box2" x="25" y="200" width="150" height="46"/>
+  <text class="box-label2" x="100" y="218">Live alerts</text>
+  <text class="box-sub2" x="100" y="232">fire on realtime bars</text>
+
+  <!-- Windows box: CSV adapter → tradelab -->
+  <rect class="box2" x="230" y="60" width="200" height="46"/>
+  <text class="box-label2" x="330" y="78">tradelab score-from-trades</text>
+  <text class="box-sub2" x="330" y="92">CSV adapter (~2-3 days build)</text>
+
+  <rect class="box2" x="230" y="116" width="200" height="46"/>
+  <text class="box-label2" x="330" y="134">Verdict engine</text>
+  <text class="box-sub2" x="330" y="148">DSR · LOSO · MC · regime · delay</text>
+
+  <rect class="box2" x="230" y="172" width="200" height="44" fill="#f0f6ff"/>
+  <text class="box-label2" x="330" y="189">Dashboard</text>
+  <text class="box-sub2" x="330" y="203">displays verdict + live positions</text>
+
+  <rect class="box-pine" x="230" y="222" width="200" height="36"/>
+  <text class="box-label2" x="330" y="240">FastAPI webhook receiver</text>
+  <text class="box-sub2" x="330" y="252">~150 lines · replaces bot</text>
+
+  <!-- Alpaca -->
+  <rect class="box2" x="485" y="120" width="130" height="40" fill="#f0f6ff"/>
+  <text class="box-label2" x="550" y="138">Positions API</text>
+  <text class="box-sub2" x="550" y="152">read by dashboard</text>
+
+  <rect class="box2" x="485" y="220" width="130" height="40"/>
+  <text class="box-label2" x="550" y="238">Orders API</text>
+  <text class="box-sub2" x="550" y="252">receives webhook</text>
+
+  <!-- Arrows -->
+  <!-- Pine → ST → CSV export → adapter -->
+  <line x1="175" y1="163" x2="230" y2="84" stroke="#2a5d8f" stroke-width="1.4" marker-end="url(#arrow-blue)"/>
+  <text class="flow-label" x="183" y="125">CSV export</text>
+
+  <!-- Pine → alerts → webhook → receiver -->
+  <line x1="175" y1="222" x2="230" y2="240" stroke="#2e7d32" stroke-width="1.6" marker-end="url(#arrow-green)"/>
+  <text class="flow-label" x="183" y="217" fill="#2e7d32">alert webhook</text>
+
+  <!-- CSV adapter → engine -->
+  <line x1="330" y1="106" x2="330" y2="116" stroke="#2a5d8f" stroke-width="1.4" marker-end="url(#arrow-blue)"/>
+  <!-- engine → dashboard -->
+  <line x1="330" y1="162" x2="330" y2="172" stroke="#2a5d8f" stroke-width="1.4" marker-end="url(#arrow-blue)"/>
+
+  <!-- receiver → Alpaca orders -->
+  <line x1="430" y1="240" x2="485" y2="240" stroke="#2e7d32" stroke-width="1.6" marker-end="url(#arrow-green)"/>
+
+  <!-- Alpaca positions → dashboard -->
+  <line x1="485" y1="140" x2="430" y2="190" stroke="#2a5d8f" stroke-width="1.4" marker-end="url(#arrow-blue)"/>
+</svg>
+<div class="diagram-caption">Option H: Pine is single source of truth. Blue = research/scoring flow (CSV). Green = live execution flow (alert webhooks). Zero Python translation.</div>
+</div>
+
+<div class="page-break"></div>
+
+<h2>2. Full strategy lifecycle — 6 steps</h2>
+
+<p>A concrete walkthrough of adding one new strategy from blank Pine editor to live paper trading.
+Approximate time budget next to each step.</p>
+
+<div class="step-card">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <div class="step-title">Author in Pine Script</div>
+    <div class="step-where">Where: TradingView web editor &nbsp;· &nbsp;Time: ~1h (varies by strategy complexity)</div>
+    Write the strategy logic in Pine v6. Use <code>strategy.entry</code> / <code>strategy.exit</code>
+    with descriptive <code>id</code> / <code>comment</code> strings — these travel to both the trade
+    list CSV and the live alert payload. Add an <code>alert_message</code> JSON body that the
+    webhook receiver can parse directly (symbol, side, quantity hint, strategy tag).
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <div class="step-title">Backtest in TradingView Strategy Tester</div>
+    <div class="step-where">Where: TradingView chart &nbsp;· &nbsp;Time: ~10 min per symbol/window</div>
+    Load the Pine strategy on the target symbol. Set the date range. Click the "List of Trades" tab.
+    Visually eyeball the trades and TradingView's built-in metrics (net P&amp;L, PF, max DD, run-up).
+    If the strategy is clearly broken, iterate in Pine before going further — no need to burn
+    tradelab cycles on obvious losers.
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <div class="step-title">Export trade list as CSV</div>
+    <div class="step-where">Where: Strategy Tester · &nbsp;Time: 30 seconds</div>
+    Click the export icon in the List of Trades tab, choose CSV. File saves to Downloads with
+    every closed trade (entry/exit time + price, position size, signal tag, run-up, drawdown,
+    P&amp;L). This is your <i>ground truth</i> — exactly what TradingView saw.
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <div class="step-title">Score in tradelab</div>
+    <div class="step-where">Where: Windows terminal &nbsp;· &nbsp;Time: ~2 min</div>
+    Run <code>tradelab score-from-trades my_strategy.csv --universe my_universe</code>. The CSV
+    adapter converts TradingView's format to tradelab's internal trade-record schema, then runs
+    the full robustness suite (DSR, LOSO, Monte Carlo, regime spread, etc.) on the ledger.
+    Verdict: <span class="status ok">ROBUST</span> / <span class="status partial">INCONCLUSIVE</span>
+    / <span class="status lost">FRAGILE</span> plus a full signal breakdown.
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">5</div>
+  <div class="step-body">
+    <div class="step-title">Review verdict on dashboard</div>
+    <div class="step-where">Where: http://localhost:8877 Research tab &nbsp;· &nbsp;Time: ~10 min</div>
+    The new strategy appears as a row in the pipeline table. Heat colors, verdict pill,
+    per-signal breakdown. If FRAGILE — iterate in Pine (Step 1), re-export (Step 3), re-score
+    (Step 4). If ROBUST — proceed.
+  </div>
+</div>
+
+<div class="step-card">
+  <div class="step-num">6</div>
+  <div class="step-body">
+    <div class="step-title">Deploy live (paper)</div>
+    <div class="step-where">Where: TradingView alert dialog &nbsp;· &nbsp;Time: ~5 min</div>
+    In TradingView, add an alert on the strategy's <code>strategy.entry</code> /
+    <code>strategy.exit</code> events. Paste your webhook URL (your Windows box + ngrok / tunnel).
+    Pine fires alerts on every live bar — the FastAPI receiver catches them, validates, and
+    submits the order to Alpaca paper. Dashboard's Live Strategies card shows the position.
+  </div>
+</div>
+
+<div class="warn-box">
+  <strong>Per-strategy ongoing cost after step 6:</strong> roughly 15 min. When you change a
+  Pine parameter, re-run Steps 3–5 (export → score → review). The Pine alert keeps running;
+  no code is touched on the Windows side.
+</div>
+
+<div class="page-break"></div>
+
+<h2>3. Backtesting capability scorecard</h2>
+
+<p>Every tradelab backtest feature, categorized by how Option H affects it.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th style="width:32%">Capability</th>
+      <th style="width:14%">Status</th>
+      <th>What it means under Option H</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td><b>Core backtest (PF, WR, DD)</b></td><td><span class="status ok">KEPT</span></td><td>TradingView Strategy Tester computes these directly. Tradelab re-derives from the trade list for consistency.</td></tr>
+    <tr><td><b>Deflated Sharpe Ratio (DSR)</b></td><td><span class="status ok">KEPT</span></td><td>Works on trade-PnL vector alone. Full probability calculation.</td></tr>
+    <tr><td><b>Monte Carlo drawdown</b></td><td><span class="status ok">KEPT</span></td><td>Shuffle-simulation on trade sequence. No code needed.</td></tr>
+    <tr><td><b>Regime-spread analysis</b></td><td><span class="status ok">KEPT</span></td><td>Trades have timestamps; engine splits by regime.</td></tr>
+    <tr><td><b>Verdict aggregation (ROBUST / FRAGILE)</b></td><td><span class="status ok">KEPT</span></td><td>Full rule engine runs on the signals it receives.</td></tr>
+    <tr><td><b>Strategy comparison (multi-strat)</b></td><td><span class="status ok">KEPT</span></td><td>Compare two or more imported trade CSVs side-by-side.</td></tr>
+    <tr><td><b>Run history / audit DB</b></td><td><span class="status ok">KEPT</span></td><td>Each CSV import logs a run; dashboard shows history.</td></tr>
+    <tr><td><b>Report generation (dashboard.html, quantstats)</b></td><td><span class="status ok">KEPT</span></td><td>Works from trade data.</td></tr>
+    <tr><td><b>Live execution</b></td><td><span class="status ok">KEPT</span></td><td>FastAPI webhook receiver replaces alpaca_trading_bot.py. Simpler, one file.</td></tr>
+    <tr><td><b>Live positions display</b></td><td><span class="status ok">KEPT</span></td><td>Dashboard reads Alpaca API directly — unchanged.</td></tr>
+
+    <tr><td><b>Leave-One-Symbol-Out (LOSO)</b></td><td><span class="status partial">PARTIAL</span></td><td>Needs per-symbol CSVs. Run the Pine strategy on each symbol separately in TV, export each, tradelab recombines. ~N times the export effort where N = symbol count.</td></tr>
+    <tr><td><b>Walk-forward validation</b></td><td><span class="status partial">PARTIAL</span></td><td>Approximate by running Pine over non-overlapping rolling windows (e.g., 2020, 2021, 2022 separately). Manual but doable. No automated IS/OOS split.</td></tr>
+    <tr><td><b>Multi-symbol universe scoring</b></td><td><span class="status partial">PARTIAL</span></td><td>Either run Pine per-symbol (trivial but N exports) or use <code>request.security</code> in Pine (but TV's CSV loses secondary-symbol context).</td></tr>
+    <tr><td><b>Canary suite (rand / overfit / leak / survivor)</b></td><td><span class="status partial">PARTIAL</span></td><td>Canaries are Python-native. They stay in tradelab but only test the engine itself, not Pine strategies.</td></tr>
+    <tr><td><b>Visual equity curve / QuantStats tearsheet</b></td><td><span class="status partial">PARTIAL</span></td><td>Equity curve is derivable from the trade list. Tearsheet renders, though some drawdown-underwater plots need daily equity which TV doesn't export.</td></tr>
+    <tr><td><b>Param-landscape smoothness</b></td><td><span class="status partial">PARTIAL</span></td><td>Requires running Pine at many parameter values. Manual grid-search in TV + batch import of each CSV. Painful but possible for small param grids.</td></tr>
+
+    <tr><td><b>Automated parameter optimization (Optuna)</b></td><td><span class="status lost">LOST</span></td><td>Needs the code. No way to feed params to a TradingView strategy programmatically.</td></tr>
+    <tr><td><b>What-If parameter sliders</b></td><td><span class="status lost">LOST</span></td><td>Same reason — needs a callable Python backtest.</td></tr>
+    <tr><td><b>Save-variant (clone &amp; tune)</b></td><td><span class="status lost">LOST</span></td><td>Pine strategies forked in TradingView, not tradelab. Manual rename + copy.</td></tr>
+    <tr><td><b>Entry-delay robustness stress test</b></td><td><span class="status lost">LOST</span></td><td>Requires shifting entries programmatically. Can be approximated by manually editing Pine's entry bar logic and re-exporting, but it's tedious.</td></tr>
+    <tr><td><b>Noise-injection stress test</b></td><td><span class="status lost">LOST</span></td><td>Requires injecting synthetic OHLC noise — Pine can't do that to itself.</td></tr>
+  </tbody>
+</table>
+
+<h3>Score summary</h3>
+<div class="kpi-row">
+  <div class="kpi green"><div class="num">10 / 21</div><div class="label">Kept (48%)</div></div>
+  <div class="kpi yellow"><div class="num">6 / 21</div><div class="label">Partial (28%)</div></div>
+  <div class="kpi red"><div class="num">5 / 21</div><div class="label">Lost (24%)</div></div>
+</div>
+
+<p><b>Translation:</b> You keep the <b>entire verdict engine</b> and live execution. You lose the
+<b>parameter-tuning features</b> (Optuna, What-If, save-variant, entry-delay, noise). The partial
+items all have manual workarounds — time-consuming but not blocked. For a trader who tunes
+strategies visually in Pine anyway, the lost category is less important than it looks.</p>
+
+<div class="page-break"></div>
+
+<h2>4. Cost &amp; timeline summary</h2>
+
+<table>
+  <thead>
+    <tr><th style="width:40%">Line item</th><th style="width:25%">One-time</th><th>Ongoing</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>FastAPI webhook receiver (Python)</td><td>~1 day</td><td>~1h/month (TV IP changes, cert rotation)</td></tr>
+    <tr><td>Tradelab CSV adapter (<code>score-from-trades</code>)</td><td>~2-3 days</td><td>rare — only if TV changes CSV format</td></tr>
+    <tr><td>Runbook document (how to add a strategy)</td><td>~2h</td><td>—</td></tr>
+    <tr><td>Retire old bot + FINAL STRATEGYIE folder</td><td>~1h</td><td>—</td></tr>
+    <tr><td>Ngrok / Cloudflare Tunnel for webhook URL</td><td>~30 min setup</td><td>free tier or ~$8/month pro</td></tr>
+    <tr><td>TradingView account tier</td><td>—</td><td>Free tier works; Premium ($59.95/mo) only if you need Deep Backtest (&gt;5k bars)</td></tr>
+    <tr><td>Per-strategy cost (write + test + deploy)</td><td>~1.5h first time</td><td>~15 min per parameter iteration</td></tr>
+  </tbody>
+</table>
+
+<h3>Compared to alternatives</h3>
+<ul>
+  <li><b>vs. current dual-code architecture:</b> saves drift-maintenance forever. Eliminates the
+  two-copy problem at the root.</li>
+  <li><b>vs. Option A (manual Python translation):</b> saves ~0.5–1 day of porting <i>every single
+  time</i> a Pine strategy is created or modified.</li>
+  <li><b>vs. Option G (TradersPost SaaS at $99/mo):</b> saves $1,188/year, adds ~1 day build.
+  Breakeven: ~10 days.</li>
+</ul>
+
+<h2>5. Risks &amp; mitigations</h2>
+
+<div class="risk">
+  <strong>R1 — TradingView changes CSV export format</strong>
+  Has been stable since ~2023. Still, TV ships UI changes frequently.
+  <i>Mitigation:</i> CSV adapter includes a schema-version check that fails loudly; downgrade
+  to "paste trade list into the dashboard" manual fallback while schema updates.
+</div>
+
+<div class="risk">
+  <strong>R2 — Webhook receiver downtime = missed trades</strong>
+  If the receiver crashes at 09:32, any alerts between then and restart are silently dropped.
+  <i>Mitigation:</i> run as Windows service with auto-restart; a watchdog that compares
+  "expected positions from last hour of alerts" vs "actual Alpaca positions" and alarms on
+  divergence. TradersPost warns about the same failure mode; we at least control ours.
+</div>
+
+<div class="risk">
+  <strong>R3 — TradingView alert IP ranges change unannounced</strong>
+  TV has updated webhook source IPs twice in the last 18 months. Firewall rules fail silently.
+  <i>Mitigation:</i> receiver validates a shared-secret in the alert JSON body, not IP. Works
+  regardless of source IP.
+</div>
+
+<div class="risk">
+  <strong>R4 — Pine backtest ≠ live behavior (fill-model drift)</strong>
+  TV's Strategy Tester fills at bar close; live alerts fire in real time. Outcomes can differ.
+  <i>Mitigation:</i> run first real strategy with tiny paper position sizes; compare live
+  trade ledger vs backtest ledger over 2 weeks; flag if PF delta > 20%. Same risk exists
+  under every option that uses TV — not unique to H.
+</div>
+
+<div class="risk">
+  <strong>R5 — Complex Pine features (multi-symbol, bracket orders) don't export cleanly</strong>
+  For the ~30% of strategies that use <code>request.security</code> or pyramiding, the CSV
+  loses context. <i>Mitigation:</i> fall back to manual Python translation (Option A) for
+  those specific strategies. Document which Pine features trigger the fallback in the runbook.
+</div>
+
+<h2>6. What you'll need to provide</h2>
+
+<ul>
+  <li><b>One working Pine Script strategy</b> (even WIP or placeholder logic is fine) — lets me
+  design the CSV adapter against a real export rather than guessing the schema.</li>
+  <li><b>Confirmation:</b> paper-only for now, or potentially live later? Affects whether we
+  bake in extra safety rails.</li>
+  <li><b>Preferred webhook tunnel:</b> ngrok / Cloudflare Tunnel / direct-port-forward. I'd
+  default to Cloudflare Tunnel (free, no dynamic DNS).</li>
+  <li><b>Green light:</b> your sign-off on the scope below.</li>
+</ul>
+
+<h2>7. Proposed next steps if you approve</h2>
+
+<ol>
+  <li><b>Session 1 (~1 day):</b> prototype FastAPI webhook receiver on your Windows box.
+  Wire up ngrok/Cloudflare tunnel. Do end-to-end test: TV alert → receiver → Alpaca paper
+  buy/sell. Prove the live path before spending time on the scoring side.</li>
+  <li><b>Session 2 (~2-3 days):</b> build the <code>tradelab score-from-trades</code> CSV
+  adapter. Score your first strategy and display its verdict on the dashboard.</li>
+  <li><b>Session 3 (~half day):</b> retire old bot + FINAL STRATEGYIE. Simplify
+  alpaca_config.json. Update dashboard docs.</li>
+  <li><b>Session 4 (~2h):</b> write the runbook. Ship.</li>
+</ol>
+
+<p><b>Total build effort:</b> about one focused week spread across 4 sessions.</p>
+
+<div class="sign-box">
+  <div class="sans" style="font-weight:bold;font-size:12pt;">Sign-off</div>
+  <p style="font-size:10pt;margin:6pt 0 0 0;">If this matches your intent, say "go" and we'll
+  start Session 1 next. If anything in the scorecard, architecture, or risks above looks wrong
+  or needs adjusting, push back first — this is the cheap moment to course-correct.</p>
+
+  <div class="sign-line"></div>
+  <div style="font-size:9pt;color:#666;">Amit · date</div>
+</div>
+
+</body>
+</html>
