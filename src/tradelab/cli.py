@@ -454,6 +454,7 @@ from .cli_init import init_strategy as _init_cmd; app.command(name="init-strateg
 from .cli_leak import leak_check as _leak_cmd; app.command(name="leak-check")(_leak_cmd)
 from .cli_screen import screen as _screen_cmd; app.command(name="screen")(_screen_cmd)
 from .cli_gate_check import gate_check as _gc_cmd; app.command(name="gate-check")(_gc_cmd)
+from .cli_score import score_from_trades as _score_cmd; app.command(name="score-from-trades")(_score_cmd)
 
 
 # ─────────────────────────────────────────────────────────────────────
