@@ -4,8 +4,8 @@ The single entry point that callers (CLI, dashboard backend) use:
 
     parsed = parse_tv_trades_csv(csv_text, symbol="AMZN")
     out = score_trades(parsed, strategy_name="viprasol-amzn-v1", symbol="AMZN")
-    folder = write_report_folder(out, base_name="viprasol-amzn-v1",
-                                 pine_source=None, csv_text=csv_text)
+    folder, run_id = write_report_folder(out, base_name="viprasol-amzn-v1",
+                                         pine_source=None, csv_text=csv_text)
 
 Degraded relative to `tradelab run`:
   - no Optuna / WF / param landscape / entry delay / noise / LOSO
