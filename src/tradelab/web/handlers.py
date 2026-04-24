@@ -113,6 +113,14 @@ def _reports_root() -> Path:
     return Path("reports")
 
 
+def _pine_archive_root() -> Path:
+    return Path("pine_archive")
+
+
+def _cards_path() -> Path:
+    return Path("tradelab/live/cards.json")
+
+
 def _yaml_path() -> Path:
     return Path("tradelab.yaml")
 
@@ -363,6 +371,66 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         )
         return json.dumps(body_dict), status
 
+    if path == "/tradelab/score":
+        from tradelab.io.tv_csv import TVCSVParseError
+        from tradelab.web import approve_strategy
+
+        err = _validate_score_payload(payload)
+        if err:
+            return _err(err), 400
+        try:
+            data = approve_strategy.score_csv(
+                csv_text=payload["csv_text"],
+                pine_source=payload.get("pine_source") or None,
+                symbol=payload["symbol"],
+                base_name=payload["base_name"],
+                timeframe=payload["timeframe"],
+                reports_root=_reports_root(),
+                db_path=_db_path(),
+            )
+            return _ok(data), 200
+        except TVCSVParseError as e:
+            return _err(str(e)), 400
+        except ValueError as e:
+            return _err(str(e)), 400
+        except Exception as e:
+            print(f"[handlers] /tradelab/score unexpected: {type(e).__name__}: {e}", file=sys.stderr)
+            return _err(f"scoring failed: {type(e).__name__}: {e}"), 500
+
+    if path == "/tradelab/accept":
+        from tradelab.live.cards import CardExistsError, CardRegistry
+        from tradelab.web import approve_strategy
+
+        err = _validate_accept_payload(payload)
+        if err:
+            return _err(err), 400
+        try:
+            registry = CardRegistry(_cards_path())
+            data = approve_strategy.accept_scored(
+                base_name=payload["base_name"],
+                symbol=payload["symbol"],
+                timeframe=payload["timeframe"],
+                report_folder=payload["report_folder"],
+                verdict=payload.get("verdict", "INCONCLUSIVE"),
+                dsr_probability=payload.get("dsr_probability"),
+                scoring_run_id=payload.get("scoring_run_id", ""),
+                registry=registry,
+                pine_archive_root=_pine_archive_root(),
+                reports_root=_reports_root(),
+            )
+            return _ok(data), 200
+        except FileNotFoundError as e:
+            return _err(str(e) or "report folder not found"), 404
+        except FileExistsError as e:
+            return _err(f"pine archive already exists: {e}"), 409
+        except CardExistsError as e:
+            return _err(f"card_id {e} already registered"), 409
+        except ValueError as e:
+            return _err(str(e)), 400
+        except Exception as e:
+            print(f"[handlers] /tradelab/accept unexpected: {type(e).__name__}: {e}", file=sys.stderr)
+            return _err(f"accept failed: {type(e).__name__}: {e}"), 500
+
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
 
@@ -489,3 +557,44 @@ def _inject_default_params(code: str, new_defaults: dict) -> str:
         insertion = m.group(0) + f"    default_params = {literal}\n"
         return cls.sub(insertion, code, count=1)
     return code
+
+
+# ─── Validation for /tradelab/score + /tradelab/accept (Option H 3a) ──
+
+import re as _re_mod
+
+_BASE_NAME_RE = _re_mod.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
+# Symbol: 1-5 uppercase letters (typical US ticker). Plan text says 1-10 but
+# the Step-1 test explicitly rejects the 10-char "TOOLONGSYM", so the tighter
+# bound is what the tests (ground truth) require.
+_SYMBOL_RE = _re_mod.compile(r"^[A-Z]{1,5}$")
+_ALLOWED_TIMEFRAMES = {"1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W"}
+
+
+def _validate_score_payload(payload: dict) -> Optional[str]:
+    """Returns error message string or None if valid."""
+    for key in ("csv_text", "symbol", "base_name", "timeframe"):
+        if not payload.get(key):
+            return f"missing field: {key}"
+    if not _BASE_NAME_RE.match(payload["base_name"]):
+        return "base_name must be lowercase alphanumeric with hyphens, 2–48 chars"
+    if not _SYMBOL_RE.match(payload["symbol"]):
+        return "symbol must be 1–5 uppercase letters"
+    if payload["timeframe"] not in _ALLOWED_TIMEFRAMES:
+        return f"unknown timeframe: {payload['timeframe']!r}"
+    return None
+
+
+def _validate_accept_payload(payload: dict) -> Optional[str]:
+    """Presence-only validation for accept.
+
+    Format validation is intentionally relaxed compared to _validate_score_payload
+    because Step-1 test_accept_404_when_report_folder_missing passes base_name="x"
+    (which fails _BASE_NAME_RE) and expects the handler to reach the report-folder
+    existence check, returning 404. Format errors that survive (e.g. a garbled
+    base_name) will surface from accept_scored as ValueError → 400.
+    """
+    for key in ("base_name", "symbol", "timeframe", "report_folder"):
+        if not payload.get(key):
+            return f"missing field: {key}"
+    return None
