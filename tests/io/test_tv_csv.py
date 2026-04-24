@@ -124,3 +124,35 @@ def test_malformed_price_includes_trade_number_in_error():
     with pytest.raises(TVCSVParseError) as exc:
         parse_tv_trades_csv(csv, symbol="MU")
     assert "trade #1" in str(exc.value).lower()
+
+
+def test_modern_tv_schema_with_renamed_columns_parses():
+    # As of TV 2025+ the Strategy Tester export renamed several columns:
+    #   Date/Time          -> "Date and time"
+    #   Contracts          -> "Size (qty)"
+    #   Profit USD/%       -> "Net P&L USD" / "Net P&L %"
+    #   Run-up %           -> "Favorable excursion %"
+    #   Drawdown %         -> "Adverse excursion %"
+    # Also the row order is Exit-then-Entry per trade. Parser must accept both.
+    csv = (
+        "Trade #,Type,Date and time,Signal,Price USD,Size (qty),Size (value),"
+        "Net P&L USD,Net P&L %,Favorable excursion USD,Favorable excursion %,"
+        "Adverse excursion USD,Adverse excursion %,Cumulative P&L USD,Cumulative P&L %\n"
+        "1,Exit long,2024-01-13 13:30,Time Exit,19.7,4740,94989.6,"
+        "-1611.6,-1.70,711,0.75,-1753.8,-1.85,-1611.6,-1.61\n"
+        "1,Entry long,2024-01-09 09:30,Long,20.04,4740,94989.6,"
+        "-1611.6,-1.70,711,0.75,-1753.8,-1.85,-1611.6,-1.61\n"
+    )
+    parsed = parse_tv_trades_csv(csv, symbol="AMZN")
+    assert len(parsed.trades) == 1
+    t = parsed.trades[0]
+    assert t.entry_date == "2024-01-09"
+    assert t.exit_date == "2024-01-13"
+    assert t.entry_price == 20.04
+    assert t.exit_price == 19.7
+    assert t.shares == 4740
+    assert t.pnl == -1611.6
+    assert t.pnl_pct == -1.70
+    assert t.exit_reason == "Time Exit"
+    assert t.mfe_pct == 0.75
+    assert t.mae_pct == -1.85
