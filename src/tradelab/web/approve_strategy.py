@@ -31,12 +31,11 @@ def score_csv(
 ) -> dict:
     """Parse TV CSV, score it, write report folder, record audit row.
 
-    Raises TVCSVParseError on bad CSV, ValueError on 0 closed trades.
+    Raises TVCSVParseError on bad CSV (including when the CSV has no
+    closed trades — the parser guards this).
     Other exceptions propagate.
     """
     parsed = parse_tv_trades_csv(csv_text, symbol=symbol)
-    if not parsed.trades:
-        raise ValueError("csv contained no closed trades")
 
     out = score_trades(parsed, strategy_name=base_name, symbol=symbol,
                        timeframe=timeframe)

@@ -52,7 +52,7 @@ def test_score_csv_bad_csv_raises_tv_parse_error(tmp_path: Path):
         )
 
 
-def test_score_csv_zero_closed_trades_raises(tmp_path: Path):
+def test_score_csv_zero_closed_trades_surfaces_tv_parse_error(tmp_path: Path):
     """CSV with only entry rows (no exits) -> zero closed trades."""
     # One entry-only trade (no matching exit row)
     csv = (
@@ -60,7 +60,7 @@ def test_score_csv_zero_closed_trades_raises(tmp_path: Path):
         "Cumulative profit USD,Cumulative profit %,Run-up USD,Run-up %,Drawdown USD,Drawdown %\n"
         "1,Entry long,Long,2024-01-08 09:30,150.00,10,,,,,,,,\n"
     )
-    with pytest.raises(ValueError, match="no closed trades"):
+    with pytest.raises(TVCSVParseError, match="no closed trades"):
         approve_strategy.score_csv(
             csv_text=csv,
             pine_source=None, symbol="AMZN", base_name="x", timeframe="1D",
