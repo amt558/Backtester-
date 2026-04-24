@@ -22,6 +22,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from ..results import BacktestMetrics
+
 
 _REGIME_KEYS = ("bull", "chop", "bear")
 
@@ -186,7 +188,8 @@ def metrics_from_trades(trades: list, starting_equity: float = 100_000.0):
     separately and writes to BacktestResult.equity_curve. Downstream DSR
     consumes that curve, not this helper.
     """
-    from ..results import BacktestMetrics
+    if starting_equity <= 0:
+        raise ValueError(f"starting_equity must be positive, got {starting_equity}")
 
     if not trades:
         return BacktestMetrics(final_equity=starting_equity)
@@ -231,7 +234,7 @@ def metrics_from_trades(trades: list, starting_equity: float = 100_000.0):
         gross_profit=round(gp, 2),
         gross_loss=round(gl, 2),
         net_pnl=round(net, 2),
-        pct_return=round(net / starting_equity * 100, 4),
+        pct_return=round(net / starting_equity * 100, 2),
         annual_return=0.0,           # filled by orchestrator using window dates
         final_equity=round(final_equity, 2),
         avg_win_pct=round(avg_win_pct, 3),

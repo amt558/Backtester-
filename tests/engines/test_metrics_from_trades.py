@@ -53,3 +53,18 @@ def test_avg_bars_held_is_mean_of_bar_counts():
     trades = [_t(10, 0.1, bars=2), _t(10, 0.1, bars=4), _t(10, 0.1, bars=6)]
     m = metrics_from_trades(trades, starting_equity=100_000.0)
     assert m.avg_bars_held == 4.0
+
+
+import pytest
+
+
+def test_zero_starting_equity_raises_value_error():
+    with pytest.raises(ValueError) as exc:
+        metrics_from_trades([_t(100.0, 1.0)], starting_equity=0.0)
+    assert "starting_equity" in str(exc.value).lower()
+
+
+def test_negative_starting_equity_raises_value_error():
+    with pytest.raises(ValueError) as exc:
+        metrics_from_trades([_t(100.0, 1.0)], starting_equity=-1000.0)
+    assert "starting_equity" in str(exc.value).lower()
