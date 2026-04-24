@@ -67,6 +67,11 @@ tradelab.local.yaml
 .env
 *.key
 
+# Live webhook runtime data (card registry + alert log)
+# NOTE: code lives at src/tradelab/live/ (tracked); runtime state at /live/ (not tracked)
+/live/*.json
+/live/*.jsonl
+
 # scratch/temp files at REPO ROOT only — the leading slash prevents the
 # rule from shadowing nested __init__.py / _theme.py / _live.py etc.
 /_*.py
