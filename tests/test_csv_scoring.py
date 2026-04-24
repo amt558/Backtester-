@@ -48,9 +48,9 @@ def test_build_backtest_result_fills_annual_return_from_window(parsed_amzn):
     bt = build_backtest_result_from_trades(
         parsed_amzn, strategy_name="x", symbol="AMZN", starting_equity=100_000.0,
     )
-    # 73-day window, +0.24% net → annualized roughly 1.2% (cross-check arithmetic only).
-    assert bt.metrics.annual_return > 0
-    assert bt.metrics.annual_return < 5.0  # sanity bound
+    # 73-day window, +0.24% net (240 / 100k) → annualized ≈ 1.2%.
+    # Tight bounds catch annualization-formula regressions.
+    assert 0.8 < bt.metrics.annual_return < 1.8
 
 
 def test_build_backtest_result_includes_monthly_pnl(parsed_amzn):

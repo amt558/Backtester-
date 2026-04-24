@@ -64,7 +64,7 @@ def build_backtest_result_from_trades(
             growth = metrics.final_equity / starting_equity
             ann = (growth ** (365.0 / days) - 1.0) * 100.0
             metrics = metrics.model_copy(update={"annual_return": round(ann, 3)})
-    except Exception:
+    except (ValueError, OverflowError):
         pass
 
     monthly = compute_monthly_pnl(parsed.trades)
