@@ -173,3 +173,70 @@ def compute_monthly_pnl(trades: list) -> list[dict]:
             "avg_ret_pct": round(float(np.mean([t.pnl_pct for t in bkt])), 3),
         })
     return rows
+
+
+def metrics_from_trades(trades: list, starting_equity: float = 100_000.0):
+    """Derive BacktestMetrics from a list of Trade objects.
+
+    Used by csv_scoring.py to score externally-computed trade lists (e.g.,
+    TradingView Pine Strategy Tester exports). Equity is built by sequencing
+    trade pnls in their list order; max_drawdown is computed against running
+    peak equity. Sharpe is intentionally left at 0.0 here — daily-bar Sharpe
+    requires the bar-level equity curve, which the orchestrator constructs
+    separately and writes to BacktestResult.equity_curve. Downstream DSR
+    consumes that curve, not this helper.
+    """
+    from ..results import BacktestMetrics
+
+    if not trades:
+        return BacktestMetrics(final_equity=starting_equity)
+
+    wins = [t for t in trades if t.pnl > 0]
+    losses = [t for t in trades if t.pnl <= 0]
+    gp = float(sum(t.pnl for t in wins))
+    gl = float(abs(sum(t.pnl for t in losses)))
+    if gl > 0:
+        pf = gp / gl
+    elif gp > 0:
+        pf = 10.0  # cap matches engines/backtest.py convention
+    else:
+        pf = 0.0
+
+    net = float(sum(t.pnl for t in trades))
+    final_equity = starting_equity + net
+
+    # Peak-to-trough drawdown on running equity.
+    eq = starting_equity
+    peak = starting_equity
+    max_dd_pct = 0.0
+    for t in trades:
+        eq += t.pnl
+        if eq > peak:
+            peak = eq
+        if peak > 0:
+            dd_pct = (eq - peak) / peak * 100.0
+            if dd_pct < max_dd_pct:
+                max_dd_pct = dd_pct
+
+    avg_win_pct = float(sum(t.pnl_pct for t in wins) / len(wins)) if wins else 0.0
+    avg_loss_pct = float(sum(t.pnl_pct for t in losses) / len(losses)) if losses else 0.0
+    avg_bars = float(sum(t.bars_held for t in trades) / len(trades))
+
+    return BacktestMetrics(
+        total_trades=len(trades),
+        wins=len(wins),
+        losses=len(losses),
+        win_rate=round(len(wins) / len(trades) * 100, 2),
+        profit_factor=round(min(pf, 10.0), 3),
+        gross_profit=round(gp, 2),
+        gross_loss=round(gl, 2),
+        net_pnl=round(net, 2),
+        pct_return=round(net / starting_equity * 100, 4),
+        annual_return=0.0,           # filled by orchestrator using window dates
+        final_equity=round(final_equity, 2),
+        avg_win_pct=round(avg_win_pct, 3),
+        avg_loss_pct=round(avg_loss_pct, 3),
+        avg_bars_held=round(avg_bars, 2),
+        max_drawdown_pct=round(max_dd_pct, 3),
+        sharpe_ratio=0.0,             # filled by orchestrator from equity_curve
+    )
