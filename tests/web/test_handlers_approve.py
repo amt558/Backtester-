@@ -123,7 +123,7 @@ def test_accept_happy(handlers_with_tmp_roots, smoke_csv_text):
 
 def test_accept_404_when_report_folder_missing(handlers_with_tmp_roots):
     body, status = _post("/tradelab/accept", {
-        "base_name": "x", "symbol": "AMZN",
+        "base_name": "nonexistent-base", "symbol": "AMZN",
         "timeframe": "1H",
         "report_folder": str(handlers_with_tmp_roots / "reports" / "nonexistent_123"),
     })

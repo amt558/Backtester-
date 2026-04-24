@@ -586,15 +586,14 @@ def _validate_score_payload(payload: dict) -> Optional[str]:
 
 
 def _validate_accept_payload(payload: dict) -> Optional[str]:
-    """Presence-only validation for accept.
-
-    Format validation is intentionally relaxed compared to _validate_score_payload
-    because Step-1 test_accept_404_when_report_folder_missing passes base_name="x"
-    (which fails _BASE_NAME_RE) and expects the handler to reach the report-folder
-    existence check, returning 404. Format errors that survive (e.g. a garbled
-    base_name) will surface from accept_scored as ValueError → 400.
-    """
+    """Returns error message string or None if valid."""
     for key in ("base_name", "symbol", "timeframe", "report_folder"):
         if not payload.get(key):
             return f"missing field: {key}"
+    if not _BASE_NAME_RE.match(payload["base_name"]):
+        return "base_name must be lowercase alphanumeric with hyphens, 2–48 chars"
+    if not _SYMBOL_RE.match(payload["symbol"]):
+        return "symbol must be 1–5 uppercase letters"
+    if payload["timeframe"] not in _ALLOWED_TIMEFRAMES:
+        return f"unknown timeframe: {payload['timeframe']!r}"
     return None
