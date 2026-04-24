@@ -24,7 +24,7 @@ def test_score_from_trades_produces_report_folder(tmp_path, monkeypatch):
         "score-from-trades", str(csv_dst),
         "--symbol", "AMZN",
         "--name", "viprasol-amzn-v1",
-        "--no-open",
+        "--no-open-dashboard",
         "--no-audit",
     ])
     assert result.exit_code == 0, result.output
@@ -45,7 +45,7 @@ def test_score_from_trades_missing_csv_exits_nonzero(tmp_path, monkeypatch):
     result = runner.invoke(app, [
         "score-from-trades", "no-such-file.csv",
         "--symbol", "AMZN", "--name", "x",
-        "--no-open", "--no-audit",
+        "--no-open-dashboard", "--no-audit",
     ])
     assert result.exit_code != 0
     assert "not found" in result.output.lower() or "no such" in result.output.lower()
@@ -59,7 +59,7 @@ def test_score_from_trades_bad_csv_reports_parse_error(tmp_path, monkeypatch):
     result = runner.invoke(app, [
         "score-from-trades", str(bad),
         "--symbol", "AMZN", "--name", "x",
-        "--no-open", "--no-audit",
+        "--no-open-dashboard", "--no-audit",
     ])
     assert result.exit_code != 0
     assert "missing column" in result.output.lower()

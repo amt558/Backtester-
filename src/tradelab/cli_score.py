@@ -26,12 +26,12 @@ def score_from_trades(
                                     help="Optional path to the Pine source to archive next to the report."),
     audit: bool = typer.Option(True, "--audit/--no-audit",
                                 help="Write a row to the audit DB."),
-    open_dashboard: bool = typer.Option(True, "--open/--no-open",
+    open_dashboard: bool = typer.Option(True, "--open-dashboard/--no-open-dashboard",
                                          help="Auto-open dashboard.html when finished."),
 ):
     """Score a TradingView Strategy Tester CSV and emit a report folder."""
     csv_file = Path(csv_path)
-    if not csv_file.exists():
+    if not csv_file.exists() or not csv_file.is_file():
         console.print(f"[red]CSV not found:[/red] {csv_file}")
         raise typer.Exit(2)
 
@@ -54,10 +54,13 @@ def score_from_trades(
     pine_source = None
     if pine_path:
         p = Path(pine_path)
-        if p.exists():
-            pine_source = p.read_text(encoding="utf-8")
-        else:
+        if not p.exists():
             console.print(f"[yellow]Pine source not found, continuing without:[/yellow] {p}")
+        else:
+            try:
+                pine_source = p.read_text(encoding="utf-8")
+            except (PermissionError, UnicodeDecodeError) as e:
+                console.print(f"[yellow]Pine source unreadable ({type(e).__name__}), continuing without:[/yellow] {p}")
 
     folder = write_report_folder(
         out, base_name=name, pine_source=pine_source,
