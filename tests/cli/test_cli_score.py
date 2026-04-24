@@ -63,3 +63,18 @@ def test_score_from_trades_bad_csv_reports_parse_error(tmp_path, monkeypatch):
     ])
     assert result.exit_code != 0
     assert "missing column" in result.output.lower()
+
+
+def test_score_from_trades_accepts_mc_simulations_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    csv_dst = tmp_path / "amzn.csv"
+    shutil.copy(FIXTURE, csv_dst)
+
+    runner = CliRunner()
+    result = runner.invoke(app, [
+        "score-from-trades", str(csv_dst),
+        "--symbol", "AMZN", "--name", "test-mc",
+        "--mc-simulations", "50",
+        "--no-open-dashboard", "--no-audit",
+    ])
+    assert result.exit_code == 0, result.output

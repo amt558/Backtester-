@@ -1,6 +1,8 @@
 """metrics_from_trades — derive BacktestMetrics from an arbitrary trade list."""
 from __future__ import annotations
 
+import pytest
+
 from tradelab.engines._diagnostics import metrics_from_trades
 from tradelab.results import Trade
 
@@ -53,9 +55,6 @@ def test_avg_bars_held_is_mean_of_bar_counts():
     trades = [_t(10, 0.1, bars=2), _t(10, 0.1, bars=4), _t(10, 0.1, bars=6)]
     m = metrics_from_trades(trades, starting_equity=100_000.0)
     assert m.avg_bars_held == 4.0
-
-
-import pytest
 
 
 def test_zero_starting_equity_raises_value_error():

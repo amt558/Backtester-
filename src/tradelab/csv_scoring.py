@@ -27,7 +27,7 @@ from .audit.history import DEFAULT_DB_PATH as _DEFAULT_DB_PATH
 from .dashboard import build_dashboard
 from .determinism import hash_config
 from .engines._diagnostics import compute_monthly_pnl, metrics_from_trades
-from .engines.dsr import classify_dsr, deflated_sharpe_ratio
+from .engines.dsr import deflated_sharpe_ratio
 from .io.tv_csv import ParsedTradesCSV
 from .reporting import generate_executive_report
 from .results import BacktestResult

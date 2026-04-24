@@ -22,6 +22,8 @@ def score_from_trades(
                                    help="Bar timeframe of the source Pine strategy (cosmetic)."),
     starting_equity: float = typer.Option(100_000.0, "--starting-equity",
                                            help="Equity baseline for percent / DD calculations."),
+    mc_simulations: int = typer.Option(500, "--mc-simulations",
+                                        help="Monte Carlo simulations on trade pnl shuffles."),
     pine_path: str = typer.Option("", "--pine-path",
                                     help="Optional path to the Pine source to archive next to the report."),
     audit: bool = typer.Option(True, "--audit/--no-audit",
@@ -49,6 +51,7 @@ def score_from_trades(
     out = score_trades(
         parsed, strategy_name=name, symbol=symbol,
         timeframe=timeframe, starting_equity=starting_equity,
+        mc_simulations=mc_simulations,
     )
 
     pine_source = None
