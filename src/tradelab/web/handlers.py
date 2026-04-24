@@ -12,6 +12,7 @@ import json
 import re
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
@@ -395,7 +396,8 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err(str(e)), 400
         except Exception as e:
             print(f"[handlers] /tradelab/score unexpected: {type(e).__name__}: {e}", file=sys.stderr)
-            return _err(f"scoring failed: {type(e).__name__}: {e}"), 500
+            traceback.print_exc(file=sys.stderr)
+            return _err("scoring failed: internal error"), 500
 
     if path == "/tradelab/accept":
         from tradelab.live.cards import CardExistsError, CardRegistry
@@ -420,7 +422,8 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             )
             return _ok(data), 200
         except FileNotFoundError as e:
-            return _err(str(e) or "report folder not found"), 404
+            print(f"[handlers] /tradelab/accept report folder missing: {e}", file=sys.stderr)
+            return _err("report folder not found"), 404
         except FileExistsError as e:
             return _err(f"pine archive already exists: {e}"), 409
         except CardExistsError as e:
@@ -429,7 +432,8 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err(str(e)), 400
         except Exception as e:
             print(f"[handlers] /tradelab/accept unexpected: {type(e).__name__}: {e}", file=sys.stderr)
-            return _err(f"accept failed: {type(e).__name__}: {e}"), 500
+            traceback.print_exc(file=sys.stderr)
+            return _err("accept failed: internal error"), 500
 
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
