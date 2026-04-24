@@ -69,3 +69,110 @@ def score_csv(
             "sharpe_ratio":     m.sharpe_ratio,
         },
     }
+
+
+import json as _json
+import secrets as _secrets
+import shutil as _shutil
+from datetime import datetime as _datetime, timezone as _timezone
+
+from tradelab.live.cards import CardRegistry as _CardRegistry
+
+
+def accept_scored(
+    *,
+    base_name: str,
+    symbol: str,
+    timeframe: str,
+    report_folder: str,
+    verdict: str,
+    dsr_probability: Optional[float],
+    scoring_run_id: str,
+    registry: _CardRegistry,
+    pine_archive_root: Path = Path("pine_archive"),
+    reports_root: Path = Path("reports"),
+) -> dict:
+    """Promote a scored report folder to an immutable card + pine_archive record.
+
+    Raises:
+      FileNotFoundError: report_folder doesn't exist or is outside reports_root.
+      ValueError: report_folder has no strategy.pine.
+      FileExistsError: target pine_archive dir already exists.
+      CardExistsError: registry refuses duplicate (caller re-computes version).
+    """
+    # Paranoid path check — report_folder must live under reports_root.
+    rf = Path(report_folder).resolve()
+    rr = Path(reports_root).resolve()
+    try:
+        rf.relative_to(rr)
+    except ValueError as exc:
+        raise FileNotFoundError(
+            f"report folder {rf} is not under reports_root {rr}"
+        ) from exc
+    if not rf.exists() or not rf.is_dir():
+        raise FileNotFoundError(f"report folder not found: {rf}")
+
+    pine_src = rf / "strategy.pine"
+    csv_src = rf / "tv_trades.csv"
+    if not pine_src.exists():
+        raise ValueError(
+            "report folder has no strategy.pine — re-score with Pine source"
+        )
+
+    version = registry.next_version_for(base_name)
+    card_id = f"{base_name}-v{version}"
+    secret = _secrets.token_urlsafe(24)  # 32-char url-safe
+
+    archive_dir = Path(pine_archive_root) / card_id
+    # exist_ok=False: caller sees FileExistsError on stale dir -> HTTP 409
+    archive_dir.mkdir(parents=True, exist_ok=False)
+
+    try:
+        _shutil.copy2(pine_src, archive_dir / "strategy.pine")
+        if csv_src.exists():
+            _shutil.copy2(csv_src, archive_dir / "tv_trades.csv")
+
+        created_at = _datetime.now(_timezone.utc).isoformat(timespec="seconds")
+        verdict_snapshot = {
+            "card_id":          card_id,
+            "base_name":        base_name,
+            "version":          version,
+            "symbol":           symbol,
+            "timeframe":        timeframe,
+            "verdict":          verdict,
+            "dsr_probability":  dsr_probability,
+            "scoring_run_id":   scoring_run_id,
+            "created_at":       created_at,
+            "report_folder":    str(rf).replace("\\", "/"),
+        }
+        (archive_dir / "verdict.json").write_text(
+            _json.dumps(verdict_snapshot, indent=2), encoding="utf-8",
+        )
+
+        card = {
+            "card_id":           card_id,
+            "secret":            secret,
+            "symbol":            symbol,
+            "status":            "disabled",
+            "quantity":          None,
+            "created_at":        created_at,
+            "base_name":         base_name,
+            "version":           version,
+            "timeframe":         timeframe,
+            "verdict":           verdict,
+            "dsr_probability":   dsr_probability,
+            "report_folder":     str(rf).replace("\\", "/"),
+            "pine_archive_path": str(archive_dir).replace("\\", "/"),
+            "scoring_run_id":    scoring_run_id,
+        }
+        registry.create(card_id, card)
+    except Exception:
+        # Rollback the pine archive dir so a retry can re-create it cleanly.
+        _shutil.rmtree(archive_dir, ignore_errors=True)
+        raise
+
+    return {
+        "card_id":           card_id,
+        "secret":            secret,
+        "pine_archive_path": str(archive_dir).replace("\\", "/"),
+    }

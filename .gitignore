@@ -72,6 +72,9 @@ tradelab.local.yaml
 /live/*.json
 /live/*.jsonl
 
+# Pine archive (immutable record of approved cards, Session 3a)
+/pine_archive/
+
 # scratch/temp files at REPO ROOT only — the leading slash prevents the
 # rule from shadowing nested __init__.py / _theme.py / _live.py etc.
 /_*.py
