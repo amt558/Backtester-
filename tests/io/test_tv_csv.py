@@ -81,3 +81,46 @@ def test_no_closed_trades_raises():
     with pytest.raises(TVCSVParseError) as exc:
         parse_tv_trades_csv(csv, symbol="AMZN")
     assert "no closed trades" in str(exc.value).lower()
+
+
+def test_timestamp_with_seconds_raises_parse_error():
+    csv = (
+        "Trade #,Type,Signal,Date/Time,Price USD,Contracts,Profit USD,Profit %,"
+        "Cumulative profit USD,Cumulative profit %,Run-up USD,Run-up %,"
+        "Drawdown USD,Drawdown %\n"
+        "1,Entry long,Long,2024-05-01 09:30:15,100.00,10,,,,,,,,\n"
+        "1,Exit long,Exit,2024-05-03 09:30:15,105.00,10,50.00,5.00,50.00,0.05,60.00,6.00,-2.00,-0.20\n"
+    )
+    with pytest.raises(TVCSVParseError) as exc:
+        parse_tv_trades_csv(csv, symbol="MU")
+    msg = str(exc.value).lower()
+    assert "trade #1" in msg
+    assert "date/time" in msg or "format" in msg
+
+
+def test_fractional_contracts_rounded_to_nearest_integer():
+    csv = (
+        "Trade #,Type,Signal,Date/Time,Price USD,Contracts,Profit USD,Profit %,"
+        "Cumulative profit USD,Cumulative profit %,Run-up USD,Run-up %,"
+        "Drawdown USD,Drawdown %\n"
+        "1,Entry long,Long,2024-05-01 09:30,100.00,6.7236,,,,,,,,\n"
+        "1,Exit long,Exit,2024-05-03 09:30,105.00,6.7236,33.62,5.00,33.62,0.03,40.00,6.00,-2.00,-0.20\n"
+        "2,Entry long,Long,2024-05-10 09:30,100.00,0.6,,,,,,,,\n"
+        "2,Exit long,Exit,2024-05-12 09:30,110.00,0.6,6.00,10.00,39.62,0.04,7.00,12.00,-1.00,-1.00\n"
+    )
+    parsed = parse_tv_trades_csv(csv, symbol="X")
+    assert parsed.trades[0].shares == 7   # 6.7236 rounds to 7
+    assert parsed.trades[1].shares == 1   # 0.6 rounds to 1
+
+
+def test_malformed_price_includes_trade_number_in_error():
+    csv = (
+        "Trade #,Type,Signal,Date/Time,Price USD,Contracts,Profit USD,Profit %,"
+        "Cumulative profit USD,Cumulative profit %,Run-up USD,Run-up %,"
+        "Drawdown USD,Drawdown %\n"
+        "1,Entry long,Long,2024-05-01 09:30,not-a-number,10,,,,,,,,\n"
+        "1,Exit long,Exit,2024-05-03 09:30,105.00,10,50.00,5.00,50.00,0.05,60.00,6.00,-2.00,-0.20\n"
+    )
+    with pytest.raises(TVCSVParseError) as exc:
+        parse_tv_trades_csv(csv, symbol="MU")
+    assert "trade #1" in str(exc.value).lower()

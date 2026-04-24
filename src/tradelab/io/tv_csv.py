@@ -36,8 +36,12 @@ def _date_only(stamp: str) -> str:
     try:
         return datetime.strptime(stamp.strip(), "%Y-%m-%d %H:%M").strftime("%Y-%m-%d")
     except ValueError:
+        pass
+    try:
         # Some TV exports drop the time when the bar is daily.
         return datetime.strptime(stamp.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError:
+        raise TVCSVParseError(f"unrecognised Date/Time format: {stamp!r}")
 
 
 def _bars_between(entry: str, exit_: str) -> int:
@@ -81,22 +85,25 @@ def parse_tv_trades_csv(csv_text: str, *, symbol: str) -> ParsedTradesCSV:
             # Open trade — drop silently.
             continue
 
-        entry_date = _date_only(entry["Date/Time"])
-        exit_date = _date_only(exit_["Date/Time"])
-        trades.append(Trade(
-            ticker=symbol,
-            entry_date=entry_date,
-            exit_date=exit_date,
-            entry_price=_f(entry, "Price USD"),
-            exit_price=_f(exit_, "Price USD"),
-            shares=int(_f(entry, "Contracts")),
-            pnl=_f(exit_, "Profit USD"),
-            pnl_pct=_f(exit_, "Profit %"),
-            bars_held=_bars_between(entry_date, exit_date),
-            exit_reason=(exit_.get("Signal") or "tv_csv").strip() or "tv_csv",
-            mae_pct=_f(exit_, "Drawdown %"),
-            mfe_pct=_f(exit_, "Run-up %"),
-        ))
+        try:
+            entry_date = _date_only(entry["Date/Time"])
+            exit_date = _date_only(exit_["Date/Time"])
+            trades.append(Trade(
+                ticker=symbol,
+                entry_date=entry_date,
+                exit_date=exit_date,
+                entry_price=_f(entry, "Price USD"),
+                exit_price=_f(exit_, "Price USD"),
+                shares=int(round(_f(entry, "Contracts"))),
+                pnl=_f(exit_, "Profit USD"),
+                pnl_pct=_f(exit_, "Profit %"),
+                bars_held=_bars_between(entry_date, exit_date),
+                exit_reason=(exit_.get("Signal") or "tv_csv").strip() or "tv_csv",
+                mae_pct=_f(exit_, "Drawdown %"),
+                mfe_pct=_f(exit_, "Run-up %"),
+            ))
+        except (ValueError, TVCSVParseError) as e:
+            raise TVCSVParseError(f"trade #{tnum}: {e}") from e
 
     if not trades:
         raise TVCSVParseError("no closed trades found in CSV")
