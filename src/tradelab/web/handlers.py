@@ -126,6 +126,12 @@ def _yaml_path() -> Path:
     return Path("tradelab.yaml")
 
 
+def _get_job_manager():
+    """Indirection to allow monkeypatching in tests."""
+    from tradelab.web import get_job_manager
+    return get_job_manager()
+
+
 # ─── Public entry points ─────────────────────────────────────────────
 
 
@@ -142,22 +148,46 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     q = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
     if path == "/tradelab/runs":
-        return _ok({
-            "runs": audit_reader.list_runs(
-                strategy=q.get("strategy") or None,
-                verdicts=[v for v in q.get("verdict", "").split(",") if v] or None,
-                since=q.get("since") or None,
-                limit=int(q.get("limit", 50)),
-                offset=int(q.get("offset", 0)),
-                db_path=_db_path(),
-            ),
-            "total": audit_reader.count_runs(
-                strategy=q.get("strategy") or None,
-                verdicts=[v for v in q.get("verdict", "").split(",") if v] or None,
-                since=q.get("since") or None,
-                db_path=_db_path(),
-            ),
-        }), 200
+        strategy_q = q.get("strategy") or None
+        verdicts_q = [v for v in q.get("verdict", "").split(",") if v] or None
+        since_q = q.get("since") or None
+        try:
+            limit = int(q.get("limit", "50"))
+        except (ValueError, TypeError):
+            limit = 50
+        include_archived = (q.get("include_archived", "false").lower() == "true")
+
+        # Audit DB rows
+        audit_rows = audit_reader.list_runs(
+            strategy=strategy_q,
+            verdicts=verdicts_q,
+            since=since_q,
+            limit=limit,
+            db_path=_db_path(),
+            exclude_archived=not include_archived,
+        )
+        for r in audit_rows:
+            r["source"] = "audit"
+            r["status"] = "done"  # all audit rows are completed by definition
+
+        # In-flight jobs
+        jm = _get_job_manager()
+        all_jobs = [j.to_dict() for j in jm.list_jobs()]
+        # Only include non-terminal job statuses; done/failed/cancelled live in audit DB
+        IN_FLIGHT = {"queued", "running"}
+        inflight = [j for j in all_jobs if j.get("status") in IN_FLIGHT]
+        # Apply strategy filter to jobs too
+        if strategy_q:
+            inflight = [j for j in inflight if j.get("strategy") == strategy_q]
+        for j in inflight:
+            j["source"] = "job"
+            j["run_id"] = j["id"]  # uniform key
+
+        # Order: running → queued → audit-by-date-desc
+        inflight.sort(key=lambda j: (0 if j["status"] == "running" else 1,
+                                     j.get("started_at") or ""))
+
+        return json.dumps({"runs": inflight + audit_rows}), 200
 
     m = re.match(r"^/tradelab/runs/([^/]+)/metrics$", path)
     if m:
@@ -182,8 +212,7 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         return _ok({"ranges": r}), 200
 
     if path == "/tradelab/jobs":
-        from tradelab.web import get_job_manager
-        jm = get_job_manager()
+        jm = _get_job_manager()
         return _ok({
             "jobs": [j.to_dict() for j in jm.list_jobs()],
             "running_id": jm._running_id,

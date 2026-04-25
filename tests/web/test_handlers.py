@@ -13,22 +13,30 @@ def test_handle_runs_list(fake_audit_db: Path, monkeypatch):
     monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
     monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
     monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+    # /tradelab/runs now merges JobManager in-flight jobs; stub to empty
+    from unittest.mock import MagicMock
+    fake_jm = MagicMock(); fake_jm.list_jobs.return_value = []
+    monkeypatch.setattr(handlers, "_get_job_manager", lambda: fake_jm)
 
     body = handlers.handle_get("/tradelab/runs")
     data = json.loads(body)
-    assert data["error"] is None
-    assert len(data["data"]["runs"]) == 3
-    assert data["data"]["total"] == 3
+    # New unenveloped shape: {"runs": [...]} with `source` discriminator
+    assert "runs" in data
+    assert len(data["runs"]) == 3
+    assert all(r["source"] == "audit" for r in data["runs"])
 
 
 def test_handle_runs_list_with_query(fake_audit_db: Path, monkeypatch):
     monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
     monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
     monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+    from unittest.mock import MagicMock
+    fake_jm = MagicMock(); fake_jm.list_jobs.return_value = []
+    monkeypatch.setattr(handlers, "_get_job_manager", lambda: fake_jm)
 
     body = handlers.handle_get("/tradelab/runs?strategy=s4_inside_day_breakout&limit=10")
     data = json.loads(body)
-    assert len(data["data"]["runs"]) == 2
+    assert len(data["runs"]) == 2
 
 
 def test_handle_data_freshness(fake_parquet_cache: Path, monkeypatch):

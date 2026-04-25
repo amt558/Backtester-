@@ -24,11 +24,17 @@ def list_runs(
     limit: int = 50,
     offset: int = 0,
     db_path: Optional[Path] = None,
+    exclude_archived: bool = True,
 ) -> list[dict]:
     """Return runs ordered by timestamp descending."""
     db = _resolve_db(db_path)
     if not db.exists():
         return []
+    archived_ids: set[str] = set()
+    if exclude_archived:
+        from tradelab.audit.archive import list_archived_run_ids
+        archived_ids = list_archived_run_ids(db_path=db)
+
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row
     try:
@@ -47,12 +53,15 @@ def list_runs(
             args.append(since)
         if where:
             sql += " WHERE " + " AND ".join(where)
+        # Over-fetch to allow post-filtering of archived ids
         sql += " ORDER BY timestamp_utc DESC LIMIT ? OFFSET ?"
-        args.extend([limit, offset])
+        args.extend([limit + len(archived_ids), offset])
         rows = conn.execute(sql, args).fetchall()
     finally:
         conn.close()
-    return [dict(r) for r in rows]
+
+    out = [dict(r) for r in rows if r["run_id"] not in archived_ids]
+    return out[:limit]
 
 
 def count_runs(
