@@ -230,3 +230,81 @@ def test_get_receiver_status_ngrok_no_https_tunnel(monkeypatch) -> None:
     payload = json.loads(body)["data"]
     assert payload["ngrok_up"] is False  # no HTTPS tunnel found
     assert payload["ngrok_url"] is None
+
+
+# ─── PATCH /tradelab/cards/<id> ──────────────────────────────────────────────
+
+
+def _seed_card(tmp_path: Path, monkeypatch, card_id: str, **fields) -> Path:
+    """Test helper: write one-card cards.json + monkeypatch path."""
+    cards_path = tmp_path / "cards.json"
+    base = {
+        "card_id": card_id, "secret": "x" * 32, "symbol": "AAPL",
+        "status": "disabled", "quantity": 1,
+    }
+    base.update(fields)
+    cards_path.write_text(json.dumps({card_id: base}), encoding="utf-8")
+    monkeypatch.setattr(handlers, "_cards_path", lambda: cards_path)
+    monkeypatch.setattr(handlers, "_alerts_log_path", lambda: tmp_path / "no_alerts.jsonl")
+    return cards_path
+
+
+def test_patch_card_updates_status(tmp_path: Path, monkeypatch):
+    cards_path = _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"status": "enabled"}).encode(),
+    )
+    assert status == 200
+    assert json.loads(body) == {"error": None, "data": {"updated": "foo-v1"}}
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert on_disk["foo-v1"]["status"] == "enabled"
+
+
+def test_patch_card_404_when_missing(tmp_path: Path, monkeypatch):
+    _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/no-such-card",
+        json.dumps({"status": "enabled"}).encode(),
+    )
+    assert status == 404
+    assert json.loads(body)["error"] == "card not found"
+
+
+def test_patch_card_rejects_unknown_field(tmp_path: Path, monkeypatch):
+    _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"secret": "new-secret", "status": "enabled"}).encode(),
+    )
+    assert status == 400
+    assert "unknown field" in json.loads(body)["error"]
+
+
+def test_patch_card_rejects_invalid_status(tmp_path: Path, monkeypatch):
+    _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"status": "garbage"}).encode(),
+    )
+    assert status == 400
+
+
+def test_patch_card_rejects_negative_quantity(tmp_path: Path, monkeypatch):
+    _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"quantity": -1}).encode(),
+    )
+    assert status == 400
+
+
+def test_patch_card_accepts_null_quantity(tmp_path: Path, monkeypatch):
+    cards_path = _seed_card(tmp_path, monkeypatch, "foo-v1", quantity=5)
+    body, status = handlers.handle_patch_with_status(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"quantity": None}).encode(),
+    )
+    assert status == 200
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert on_disk["foo-v1"]["quantity"] is None

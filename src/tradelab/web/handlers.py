@@ -631,6 +631,33 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     return handle_post(path, body), 200
 
 
+def handle_patch_with_status(path: str, body: bytes) -> Tuple[str, int]:
+    """PATCH dispatcher with explicit status."""
+    try:
+        payload = json.loads(body.decode()) if body else {}
+    except json.JSONDecodeError:
+        return _err("invalid JSON body"), 400
+
+    m = re.match(r"^/tradelab/cards/([^/]+)$", path)
+    if m:
+        card_id = m.group(1)
+        err = _validate_patch_card_payload(payload)
+        if err:
+            return _err(err), 400
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return _err("card not found"), 404
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        try:
+            reg.update(card_id, payload)
+        except KeyError:
+            return _err("card not found"), 404
+        return _ok({"updated": card_id}), 200
+
+    return _err("not found"), 404
+
+
 def _post_job(payload: dict) -> Tuple[str, int]:
     import tradelab.web as web_pkg
     from tradelab.web import get_job_manager
@@ -753,6 +780,45 @@ def _inject_default_params(code: str, new_defaults: dict) -> str:
         insertion = m.group(0) + f"    default_params = {literal}\n"
         return cls.sub(insertion, code, count=1)
     return code
+
+
+# ─── Validation for PATCH /tradelab/cards/<id> ───────────────────────
+
+_ALLOWED_PATCH_FIELDS = {
+    "status", "quantity", "cadence", "daily_limit",
+    "cooldown_seconds", "allow_collision", "allow_naked_short",
+}
+_ALLOWED_STATUSES = {"enabled", "disabled"}
+_ALLOWED_CADENCES = {"intraday", "daily", "weekly", "manual"}
+
+
+def _validate_patch_card_payload(payload: dict) -> Optional[str]:
+    """Returns error message string or None if valid."""
+    if not isinstance(payload, dict):
+        return "payload must be a JSON object"
+    if not payload:
+        return "no fields to update"
+    unknown = set(payload.keys()) - _ALLOWED_PATCH_FIELDS
+    if unknown:
+        return f"unknown field: {sorted(unknown)[0]}"
+
+    if "status" in payload and payload["status"] not in _ALLOWED_STATUSES:
+        return f"status must be one of {sorted(_ALLOWED_STATUSES)}"
+    if "quantity" in payload:
+        q = payload["quantity"]
+        if q is not None and (not isinstance(q, int) or isinstance(q, bool) or q < 1):
+            return "quantity must be a positive int or null"
+    if "cadence" in payload and payload["cadence"] not in _ALLOWED_CADENCES:
+        return f"cadence must be one of {sorted(_ALLOWED_CADENCES)}"
+    for k in ("daily_limit", "cooldown_seconds"):
+        if k in payload:
+            v = payload[k]
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0:
+                return f"{k} must be a non-negative int"
+    for k in ("allow_collision", "allow_naked_short"):
+        if k in payload and not isinstance(payload[k], bool):
+            return f"{k} must be a bool"
+    return None
 
 
 # ─── Validation for /tradelab/score + /tradelab/accept (Option H 3a) ──
