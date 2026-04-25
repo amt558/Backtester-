@@ -167,3 +167,26 @@ def test_accept_two_accepts_bumps_version(handlers_with_tmp_roots, smoke_csv_tex
         })
         assert status == 200
         assert accept_body["data"]["card_id"] == expected
+
+
+def test_path_helpers_are_repo_root_relative():
+    """All handler path helpers must be relative to the tradelab repo root.
+
+    Why: CWD when launch_dashboard.py runs is the tradelab/ repo root, so any
+    `Path("tradelab/...")` here would resolve to `tradelab/tradelab/...`. The
+    receiver reads cards.json at C:/TradingScripts/tradelab/live/cards.json,
+    so the handler must write to the same location.
+    """
+    from tradelab.web import handlers
+    paths = {
+        "_db_path": handlers._db_path(),
+        "_reports_root": handlers._reports_root(),
+        "_pine_archive_root": handlers._pine_archive_root(),
+        "_cards_path": handlers._cards_path(),
+        "_yaml_path": handlers._yaml_path(),
+    }
+    for name, p in paths.items():
+        assert p.parts and p.parts[0] != "tradelab", (
+            f"{name}() returned {p!r}; first segment 'tradelab' would resolve to "
+            "tradelab/tradelab/... when CWD is the tradelab repo root"
+        )

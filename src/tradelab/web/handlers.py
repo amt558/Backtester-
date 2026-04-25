@@ -119,7 +119,7 @@ def _pine_archive_root() -> Path:
 
 
 def _cards_path() -> Path:
-    return Path("tradelab/live/cards.json")
+    return Path("live/cards.json")
 
 
 def _yaml_path() -> Path:
