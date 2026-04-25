@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from tradelab.audit import archive
-from tradelab.web import audit_reader, freshness, new_strategy, ranges, whatif
+from tradelab.web import audit_reader, cards_view, freshness, new_strategy, ranges, whatif
 
 
 # Allowed (strategy-agnostic) commands the web tracker can launch.
@@ -123,6 +123,10 @@ def _pine_archive_root() -> Path:
 
 def _cards_path() -> Path:
     return Path("live/cards.json")
+
+
+def _alerts_log_path() -> Path:
+    return Path("live") / "alerts.jsonl"
 
 
 def _yaml_path() -> Path:
@@ -264,6 +268,18 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             strategy, limit=limit, db_path=_db_path()
         )
         return json.dumps({"runs": runs}), 200
+
+    if path == "/tradelab/cards":
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return _ok({"groups": [], "total_cards": 0, "total_enabled": 0}), 200
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        view = cards_view.list_cards_view(
+            reg.all_hydrated(),
+            _alerts_log_path(),
+        )
+        return _ok(view), 200
 
     return _err("not found"), 404
 
