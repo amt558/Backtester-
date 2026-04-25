@@ -191,3 +191,36 @@ def test_preflight_keys_constant_defined_and_used(html: str) -> None:
     usage = re.search(r"for\s*\(\s*const\s+\w+\s+of\s+PREFLIGHT_KEYS\s*\)", html)
     assert decl, "PREFLIGHT_KEYS constant declaration missing"
     assert usage, "PREFLIGHT_KEYS constant declared but not iterated over"
+
+
+def test_lt_delete_modal_uses_show_class_pattern(html: str) -> None:
+    """openDeleteModal/closeDeleteModal must toggle the .show class.
+
+    Regression: T12 originally used dialog.hidden = false/true which was
+    silently overridden by the existing .dialog{display:none} CSS rule.
+    The dialog stayed invisible even when "opened" — every trash click
+    ran the handler but produced no visible UI, and the user had no way
+    to confirm or cancel a delete. Other dialogs (flattenDialog,
+    emergencyDialog) use classList.add('show') / .remove('show'); the
+    delete modal must follow the same pattern.
+    """
+    open_idx = html.index("function openDeleteModal")
+    close_idx = html.index("function closeDeleteModal", open_idx)
+    open_body = html[open_idx:close_idx]
+
+    next_fn = re.search(r"function\s+\w+\s*\(", html[close_idx + 25:])
+    close_body = html[close_idx:close_idx + 25 + (next_fn.start() if next_fn else 200)]
+
+    assert "classList.add('show')" in open_body, (
+        "openDeleteModal must use classList.add('show') — bare .hidden=false "
+        "is overridden by .dialog{display:none} CSS"
+    )
+    assert "ltDeleteDialog').hidden = false" not in open_body, (
+        "openDeleteModal must not toggle the [hidden] attribute on the dialog"
+    )
+    assert "classList.remove('show')" in close_body, (
+        "closeDeleteModal must use classList.remove('show')"
+    )
+    assert "ltDeleteDialog').hidden = true" not in close_body, (
+        "closeDeleteModal must not toggle the [hidden] attribute on the dialog"
+    )
