@@ -115,3 +115,41 @@ def test_group_by_base_name_no_warning_when_one_enabled() -> None:
     }
     groups = cards_view.group_by_base_name(cards)
     assert groups[0]["multi_enabled_warning"] is False
+
+
+def test_list_cards_view_combines_grouping_and_derivations(tmp_path: Path) -> None:
+    cards = {
+        "foo-v1": {"card_id": "foo-v1", "secret": "x" * 32, "symbol": "AAPL",
+                   "status": "enabled", "quantity": 10, "cadence": "daily"},
+        "foo-v2": {"card_id": "foo-v2", "secret": "y" * 32, "symbol": "AAPL",
+                   "status": "disabled", "quantity": None},  # missing v1 fields
+    }
+    log = tmp_path / "alerts.jsonl"
+    now = datetime.now(timezone.utc)
+    _write_alerts(log, [
+        {"ts": (now - timedelta(hours=2)).isoformat(),
+         "card_id": "foo-v1", "status": "order_submitted"},
+        {"ts": (now - timedelta(hours=1)).isoformat(),
+         "card_id": "foo-v1", "status": "order_submitted"},
+    ])
+
+    view = cards_view.list_cards_view(cards, log)
+
+    assert "groups" in view
+    assert "total_cards" in view
+    assert "total_enabled" in view
+    assert view["total_cards"] == 2
+    assert view["total_enabled"] == 1
+
+    foo_group = view["groups"][0]
+    assert foo_group["base_name"] == "foo"
+    foo_v1 = foo_group["cards"][0]  # enabled first
+    assert foo_v1["card_id"] == "foo-v1"
+    assert foo_v1["last_status"] == "order_submitted"
+    assert foo_v1["fires_24h"] == 2
+    # foo-v2 was missing v1 fields — hydration should NOT happen here
+    # (caller is expected to pass already-hydrated cards). But the derived
+    # fields should still attach.
+    foo_v2 = foo_group["cards"][1]
+    assert foo_v2["last_status"] is None
+    assert foo_v2["fires_24h"] == 0

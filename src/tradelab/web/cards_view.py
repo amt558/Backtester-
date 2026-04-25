@@ -125,3 +125,31 @@ def group_by_base_name(cards: dict[str, dict]) -> list[dict]:
             "cards": ordered,
         })
     return groups
+
+
+def list_cards_view(cards: dict[str, dict], alerts_log: Path) -> dict:
+    """Top-level aggregator for GET /tradelab/cards.
+
+    Caller is responsible for passing hydrated cards (typically via
+    CardRegistry.all_hydrated()). This function only handles derivations
+    and grouping — it does NOT mutate cards or read cards.json itself.
+    """
+    card_ids = list(cards.keys())
+    last_status = derive_last_status(card_ids, alerts_log)
+    fires_24h = derive_fire_counts(card_ids, alerts_log, hours=24)
+
+    enriched: dict[str, dict] = {}
+    for cid, card in cards.items():
+        enriched[cid] = {
+            **card,
+            "last_status": last_status.get(cid),
+            "fires_24h": fires_24h.get(cid, 0),
+        }
+
+    groups = group_by_base_name(enriched)
+    total_enabled = sum(g["enabled_count"] for g in groups)
+    return {
+        "groups": groups,
+        "total_cards": len(cards),
+        "total_enabled": total_enabled,
+    }
