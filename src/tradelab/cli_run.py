@@ -260,6 +260,9 @@ def run(
         # --- reports ---
         ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         out_dir = Path("reports") / f"{strategy}_{ts}"
+        # Don't rely on generate_executive_report to mkdir as a side effect —
+        # tests mock it, and the JSON dumps below need the dir to already exist.
+        out_dir.mkdir(parents=True, exist_ok=True)
         report_path = generate_executive_report(
             bt, optuna_result=opt_result, wf_result=wf_result,
             universe=data, out_dir=out_dir,

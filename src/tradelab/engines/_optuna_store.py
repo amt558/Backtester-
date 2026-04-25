@@ -5,16 +5,34 @@ under the configured cache dir. This enables post-hoc inspection via
 ``optuna-dashboard sqlite:///<cache>/optuna_studies.db``.
 
 Study naming convention (chronologically sortable in the dashboard UI):
-    {strategy}_opt_{YYYYMMDD_HHMMSS}             # single optimize call
-    {strategy}_wf_{YYYYMMDD_HHMMSS}_w{NN}         # walkforward per-window
+    {strategy}_opt_{YYYYMMDD_HHMMSS_ffffff}            # single optimize call
+    {strategy}_wf_{YYYYMMDD_HHMMSS_ffffff}_w{NN}       # walkforward per-window
+
+Microsecond resolution is needed because LOSO and other batch flows create
+studies in tight succession; second-resolution timestamps collide and
+optuna.create_study(load_if_exists=False) raises DuplicatedStudyError.
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from ..config import get_config
+
+
+# Process-wide monotonically increasing counter, used as a tiebreaker when
+# two calls land in the same microsecond (rare but possible on fast hardware).
+_counter_lock = threading.Lock()
+_counter = 0
+
+
+def _next_counter() -> int:
+    global _counter
+    with _counter_lock:
+        _counter += 1
+        return _counter
 
 
 def optuna_storage_url() -> str:
@@ -34,8 +52,8 @@ def make_study_name(
 ) -> str:
     """Build a unique, sortable study name. `timestamp` lets callers share a
     prefix across related studies (e.g., all WF windows of one run)."""
-    ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = f"{strategy_name}_{kind}_{ts}"
+    ts = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    name = f"{strategy_name}_{kind}_{ts}_n{_next_counter():06d}"
     if window_idx is not None:
         name = f"{name}_w{window_idx:02d}"
     return name
