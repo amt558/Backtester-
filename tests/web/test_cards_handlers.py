@@ -114,3 +114,43 @@ def test_get_card_archive_404_when_missing(tmp_path: Path, monkeypatch) -> None:
         "/tradelab/cards/never-existed-v1/archive"
     )
     assert status == 404
+
+
+def test_get_card_archive_empty_directory_returns_empty_payload(tmp_path: Path, monkeypatch) -> None:
+    """Archive dir exists but contains no files → 200 with empty payload (lenient).
+
+    Documents the intentional soft behavior: partial archives serve what's there.
+    A missing archive_dir returns 404; an empty archive_dir returns 200 with {}.
+    """
+    archive_root = tmp_path / "pine_archive"
+    (archive_root / "foo-v1").mkdir(parents=True)
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: archive_root)
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/foo-v1/archive"
+    )
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload == {}
+
+
+def test_get_card_archive_malformed_verdict_returns_error_in_payload(tmp_path: Path, monkeypatch) -> None:
+    """Malformed verdict.json is wrapped as {"verdict": {"error": "..."}} at HTTP 200.
+
+    Soft-error design: pine_source still flows through, frontend can show what
+    succeeded and what failed without losing the whole archive.
+    """
+    archive_root = tmp_path / "pine_archive"
+    card_dir = archive_root / "foo-v1"
+    card_dir.mkdir(parents=True)
+    (card_dir / "strategy.pine").write_text("// pine source", encoding="utf-8")
+    (card_dir / "verdict.json").write_text("{ not valid json", encoding="utf-8")
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: archive_root)
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/foo-v1/archive"
+    )
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["pine_source"] == "// pine source"
+    assert "error" in payload["verdict"]

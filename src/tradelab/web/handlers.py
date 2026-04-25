@@ -296,6 +296,13 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     if m:
         card_id = m.group(1)
         archive_dir = _pine_archive_root() / card_id
+        # Lenient by design:
+        # - Missing archive_dir → 404 (the card never had a Score/Accept frozen archive)
+        # - Empty archive_dir → 200 with {} (something else removed files, that's OK)
+        # - Partial archive (only one of pine/verdict) → 200 with what's there
+        # - Malformed verdict.json → 200 with {"verdict": {"error": "..."}} (frontend can render what succeeded)
+        # We return HTTP 200 instead of 4xx for partial/malformed data so the
+        # frontend can render whatever IS valid alongside an inline error indicator.
         if not archive_dir.exists():
             return _err("archive not found"), 404
         pine_path = archive_dir / "strategy.pine"
