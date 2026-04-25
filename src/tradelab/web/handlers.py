@@ -871,6 +871,35 @@ def handle_delete_with_status(path: str) -> tuple[str, int]:
     return _err("not found"), 404
 
 
+def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, int]:
+    """DELETE dispatcher that also accepts a body. Routes that need body
+    confirmation (cards) call this; legacy DELETE (runs) keep using
+    handle_delete_with_status."""
+    try:
+        payload = json.loads(body.decode()) if body else {}
+    except json.JSONDecodeError:
+        return _err("invalid JSON body"), 400
+
+    m = re.match(r"^/tradelab/cards/([^/]+)$", path)
+    if m:
+        card_id = m.group(1)
+        if payload.get("confirm") != "DELETE":
+            return _err("missing confirm: 'DELETE' to delete card"), 400
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return _err("card not found"), 404
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        try:
+            reg.delete(card_id)
+        except KeyError:
+            return _err("card not found"), 404
+        return _ok({"deleted": card_id}), 200
+
+    # Fall through to body-less variant for legacy routes
+    return handle_delete_with_status(path)
+
+
 def _delete_run(run_id: str) -> tuple[str, int]:
     """Soft-archive a run: insert into archived_runs + remove report folder."""
     db = _db_path()

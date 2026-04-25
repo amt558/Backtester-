@@ -308,3 +308,38 @@ def test_patch_card_accepts_null_quantity(tmp_path: Path, monkeypatch):
     assert status == 200
     on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
     assert on_disk["foo-v1"]["quantity"] is None
+
+
+# ─── DELETE /tradelab/cards/<id> ─────────────────────────────────────────────
+
+
+def test_delete_card_removes_with_confirm(tmp_path: Path, monkeypatch):
+    cards_path = _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_delete_with_status_with_body(
+        "/tradelab/cards/foo-v1",
+        json.dumps({"confirm": "DELETE"}).encode(),
+    )
+    assert status == 200
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert "foo-v1" not in on_disk
+
+
+def test_delete_card_rejects_without_confirm(tmp_path: Path, monkeypatch):
+    cards_path = _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_delete_with_status_with_body(
+        "/tradelab/cards/foo-v1",
+        json.dumps({}).encode(),
+    )
+    assert status == 400
+    assert "confirm" in json.loads(body)["error"]
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert "foo-v1" in on_disk
+
+
+def test_delete_card_404_when_missing(tmp_path: Path, monkeypatch):
+    _seed_card(tmp_path, monkeypatch, "foo-v1")
+    body, status = handlers.handle_delete_with_status_with_body(
+        "/tradelab/cards/no-such-card",
+        json.dumps({"confirm": "DELETE"}).encode(),
+    )
+    assert status == 404
