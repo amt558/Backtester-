@@ -52,3 +52,17 @@ def test_delete_unknown_card_raises_keyerror(tmp_path: Path):
     reg = _seed(tmp_path, {"foo-v1": CARD_A})
     with pytest.raises(KeyError, match="missing-id"):
         reg.delete("missing-id")
+
+
+def test_set_status_updates_in_place(tmp_path: Path):
+    reg = _seed(tmp_path, {"foo-v1": CARD_A})
+    reg.set_status("foo-v1", "enabled")
+    assert reg.get("foo-v1")["status"] == "enabled"
+
+
+def test_set_quantity_accepts_int_and_none(tmp_path: Path):
+    reg = _seed(tmp_path, {"foo-v1": CARD_A})
+    reg.set_quantity("foo-v1", 7)
+    assert reg.get("foo-v1")["quantity"] == 7
+    reg.set_quantity("foo-v1", None)
+    assert reg.get("foo-v1")["quantity"] is None

@@ -122,6 +122,14 @@ class CardRegistry:
             self._persist(new_cards)
             self._cards = new_cards
 
+    def set_status(self, card_id: str, status: str) -> None:
+        """Convenience wrapper for the toggle case."""
+        self.update(card_id, {"status": status})
+
+    def set_quantity(self, card_id: str, quantity: int | None) -> None:
+        """Convenience wrapper for inline-edit quantity."""
+        self.update(card_id, {"quantity": quantity})
+
     def _persist(self, cards: dict[str, dict]) -> None:
         """Atomic write: JSON -> .tmp -> os.replace(cards.json)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
