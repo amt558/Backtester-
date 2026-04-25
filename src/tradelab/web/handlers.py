@@ -292,6 +292,26 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         )
         return _ok({"alerts": alerts}), 200
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/archive$", path)
+    if m:
+        card_id = m.group(1)
+        archive_dir = _pine_archive_root() / card_id
+        if not archive_dir.exists():
+            return _err("archive not found"), 404
+        pine_path = archive_dir / "strategy.pine"
+        verdict_path = archive_dir / "verdict.json"
+        out: dict = {}
+        if pine_path.exists():
+            out["pine_source"] = pine_path.read_text(encoding="utf-8")
+        if verdict_path.exists():
+            try:
+                out["verdict"] = json.loads(
+                    verdict_path.read_text(encoding="utf-8-sig")
+                )
+            except json.JSONDecodeError as e:
+                out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
+        return _ok(out), 200
+
     return _err("not found"), 404
 
 

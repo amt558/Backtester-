@@ -85,3 +85,32 @@ def test_get_card_alerts_limit_param(tmp_path: Path, monkeypatch) -> None:
     )
     payload = json.loads(body)["data"]
     assert len(payload["alerts"]) == 2
+
+
+def test_get_card_archive_returns_pine_and_verdict(tmp_path: Path, monkeypatch) -> None:
+    archive_root = tmp_path / "pine_archive"
+    card_dir = archive_root / "foo-v1"
+    card_dir.mkdir(parents=True)
+    (card_dir / "strategy.pine").write_text("// pine source", encoding="utf-8")
+    (card_dir / "verdict.json").write_text(
+        json.dumps({"verdict": "ROBUST", "dsr": 0.75}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: archive_root)
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/foo-v1/archive"
+    )
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["pine_source"] == "// pine source"
+    assert payload["verdict"]["verdict"] == "ROBUST"
+
+
+def test_get_card_archive_404_when_missing(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: tmp_path / "pine_archive")
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/never-existed-v1/archive"
+    )
+    assert status == 404
