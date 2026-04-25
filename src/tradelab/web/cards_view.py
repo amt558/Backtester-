@@ -41,3 +41,32 @@ def derive_last_status(card_ids: Iterable[str], log_path: Path) -> dict[str, Opt
         if cid in wanted:
             last[cid] = entry.get("status")
     return last
+
+
+def derive_fire_counts(
+    card_ids: Iterable[str],
+    log_path: Path,
+    hours: int = 24,
+) -> dict[str, int]:
+    """Count `order_submitted` alerts per card_id in the last `hours` hours.
+
+    Other statuses (order_failed, guardrail_blocked, etc.) are NOT counted —
+    a "fire" means an order actually went to Alpaca.
+    """
+    wanted = set(card_ids)
+    counts: dict[str, int] = {cid: 0 for cid in wanted}
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    for entry in _iter_alerts(log_path):
+        cid = entry.get("card_id")
+        if cid not in wanted:
+            continue
+        if entry.get("status") != "order_submitted":
+            continue
+        ts_str = entry.get("ts", "")
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            counts[cid] += 1
+    return counts
