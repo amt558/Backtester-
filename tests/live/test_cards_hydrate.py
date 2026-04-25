@@ -45,3 +45,30 @@ def test_hydrate_preserves_legacy_v0_fields() -> None:
     assert out["symbol"] == "AMZN"
     assert out["status"] == "disabled"
     assert out["quantity"] is None
+
+
+import json
+from pathlib import Path
+from tradelab.live.cards import CardRegistry
+
+
+def test_all_hydrated_returns_hydrated_cards(tmp_path: Path) -> None:
+    path = tmp_path / "cards.json"
+    raw = {
+        "old-v1": {"card_id": "old-v1", "secret": "x" * 32,
+                   "symbol": "AAPL", "status": "disabled", "quantity": None},
+        "new-v2": {"card_id": "new-v2", "secret": "y" * 32,
+                   "symbol": "MSFT", "status": "enabled", "quantity": 10,
+                   "cadence": "weekly", "daily_limit": 1},
+    }
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    reg = CardRegistry(path)
+
+    hydrated = reg.all_hydrated()
+
+    assert hydrated["old-v1"]["cadence"] == "daily"
+    assert hydrated["old-v1"]["daily_limit"] == 5
+    assert hydrated["new-v2"]["cadence"] == "weekly"
+    assert hydrated["new-v2"]["daily_limit"] == 1
+    # Original .all() must remain unhydrated for backward compat
+    assert "cadence" not in reg.all()["old-v1"]

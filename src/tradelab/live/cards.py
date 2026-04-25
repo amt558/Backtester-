@@ -63,6 +63,15 @@ class CardRegistry:
         with self._lock:
             return dict(self._cards)
 
+    def all_hydrated(self) -> dict[str, dict]:
+        """Return all cards with v1 defaults filled in.
+
+        Use this from new (Direction A) callers. Existing callers using
+        all() continue to see raw on-disk data.
+        """
+        with self._lock:
+            return {cid: _hydrate_card(card) for cid, card in self._cards.items()}
+
     def count(self) -> int:
         with self._lock:
             return len(self._cards)
