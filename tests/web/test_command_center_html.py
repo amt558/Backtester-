@@ -75,6 +75,10 @@ REQUIRED_JS_FUNCTIONS = [
     "escapeHtml",
     "researchLoadLiveCards",
     "researchLoadPipeline",
+    "patchCard",
+    "bindRowActions",
+    "bindQuantityEdit",
+    "openDeleteModal",
 ]
 
 
