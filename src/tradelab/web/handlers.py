@@ -601,3 +601,8 @@ def _validate_accept_payload(payload: dict) -> Optional[str]:
     if payload["timeframe"] not in _ALLOWED_TIMEFRAMES:
         return f"unknown timeframe: {payload['timeframe']!r}"
     return None
+
+
+def handle_delete_with_status(path: str) -> tuple[str, int]:
+    """DELETE dispatcher with explicit status. Routes added in Task 3."""
+    return _err("not found"), 404
