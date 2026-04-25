@@ -4,8 +4,6 @@ from __future__ import annotations
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from tradelab.live.alpaca_state import AlpacaState
 
 
@@ -66,11 +64,12 @@ def test_positions_orders_account_caches_are_independent():
 
 def test_open_orders_filters_to_open_status():
     """get_orders is called with status='open' so we never see filled/cancelled."""
+    from alpaca.trading.enums import QueryOrderStatus
     client = _client_with_returns(orders=[MagicMock(status="open")])
     state = AlpacaState(client=client, ttl_seconds=10.0)
     state.open_orders()
     args, kwargs = client.get_orders.call_args
-    # alpaca-py expects a GetOrdersRequest object; assert status hint is present
-    # in either args or kwargs
     request = (args[0] if args else kwargs.get("filter") or kwargs.get("request"))
     assert request is not None, "expected a request arg"
+    assert request.status == QueryOrderStatus.OPEN, \
+        f"expected status=OPEN, got {request.status!r}"

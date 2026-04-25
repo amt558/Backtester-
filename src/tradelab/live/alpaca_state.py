@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from threading import Lock
-from typing import Any, Optional
+from typing import Any
 
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
@@ -34,10 +34,10 @@ class AlpacaState:
             self._cache[key] = (now, value)
         return value
 
-    def positions(self) -> list:
+    def positions(self):
         return self._get_cached("positions", self._client.get_all_positions)
 
-    def open_orders(self) -> list:
+    def open_orders(self):
         def fetch():
             req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
             return self._client.get_orders(filter=req)
