@@ -98,6 +98,30 @@ class CardRegistry:
             self._persist(new_cards)
             self._cards = new_cards
 
+    def update(self, card_id: str, fields: dict) -> None:
+        """Merge `fields` into existing card. Raises KeyError if missing.
+
+        Caller is responsible for validating field names and values
+        (handler does this — registry trusts internal code).
+        """
+        with self._lock:
+            if card_id not in self._cards:
+                raise KeyError(card_id)
+            new_cards = dict(self._cards)
+            new_cards[card_id] = {**new_cards[card_id], **fields}
+            self._persist(new_cards)
+            self._cards = new_cards
+
+    def delete(self, card_id: str) -> None:
+        """Remove `card_id`. Raises KeyError if missing."""
+        with self._lock:
+            if card_id not in self._cards:
+                raise KeyError(card_id)
+            new_cards = dict(self._cards)
+            del new_cards[card_id]
+            self._persist(new_cards)
+            self._cards = new_cards
+
     def _persist(self, cards: dict[str, dict]) -> None:
         """Atomic write: JSON -> .tmp -> os.replace(cards.json)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
