@@ -42,7 +42,6 @@ def test_delete_unknown_returns_404(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "history.db"
     _seed_run(db, "run-known", str(tmp_path / "reports" / "known"))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
-    monkeypatch.setattr(handlers, "_reports_root", lambda: tmp_path / "reports")
 
     body, status = handlers.handle_delete_with_status("/tradelab/runs/run-unknown")
     assert status == 404
@@ -56,7 +55,6 @@ def test_delete_success_archives_and_removes_folder(tmp_path: Path, monkeypatch)
     db = tmp_path / "history.db"
     _seed_run(db, "run-1", str(folder))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
-    monkeypatch.setattr(handlers, "_reports_root", lambda: tmp_path / "reports")
 
     body, status = handlers.handle_delete_with_status("/tradelab/runs/run-1")
     assert status == 204
@@ -71,7 +69,6 @@ def test_delete_runs_table_row_preserved(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "history.db"
     _seed_run(db, "run-1", str(folder))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
-    monkeypatch.setattr(handlers, "_reports_root", lambda: tmp_path / "reports")
 
     handlers.handle_delete_with_status("/tradelab/runs/run-1")
 
@@ -86,15 +83,20 @@ def test_delete_runs_table_row_preserved(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_delete_idempotent_on_second_call(tmp_path: Path, monkeypatch) -> None:
-    """Second delete returns 204 (folder already gone, archive row already there)."""
+    """Second delete returns 204 (folder already gone, archive row already there).
+
+    Also implicit regression check: dropping the previous third path-resolution
+    branch means the second call must NOT walk up to _reports_root() and rmtree it.
+    """
     folder = tmp_path / "reports" / "s2_run"
     folder.mkdir(parents=True)
+    reports_root = tmp_path / "reports"
     db = tmp_path / "history.db"
     _seed_run(db, "run-1", str(folder))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
-    monkeypatch.setattr(handlers, "_reports_root", lambda: tmp_path / "reports")
 
     body1, status1 = handlers.handle_delete_with_status("/tradelab/runs/run-1")
     body2, status2 = handlers.handle_delete_with_status("/tradelab/runs/run-1")
     assert status1 == 204
     assert status2 == 204  # idempotent
+    assert reports_root.exists()  # parent dir survives the second delete

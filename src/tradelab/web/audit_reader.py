@@ -69,11 +69,17 @@ def count_runs(
     verdicts: Optional[list[str]] = None,
     since: Optional[str] = None,
     db_path: Optional[Path] = None,
+    exclude_archived: bool = True,
 ) -> int:
     """Return total count matching filter — used for pagination UI."""
     db = _resolve_db(db_path)
     if not db.exists():
         return 0
+    archived_ids: set[str] = set()
+    if exclude_archived:
+        from tradelab.audit.archive import list_archived_run_ids
+        archived_ids = list_archived_run_ids(db_path=db)
+
     conn = sqlite3.connect(str(db))
     try:
         sql = "SELECT COUNT(*) FROM runs"
@@ -89,6 +95,10 @@ def count_runs(
         if since:
             where.append("timestamp_utc >= ?")
             args.append(since)
+        if archived_ids:
+            placeholders = ",".join("?" * len(archived_ids))
+            where.append(f"run_id NOT IN ({placeholders})")
+            args.extend(archived_ids)
         if where:
             sql += " WHERE " + " AND ".join(where)
         (n,) = conn.execute(sql, args).fetchone()
@@ -150,6 +160,34 @@ def get_run_folder(run_id: str, db_path: Optional[Path] = None) -> Optional[Path
     return p if p.is_dir() else p.parent
 
 
+def _pf_from_report_path(report_path_str: Optional[str]) -> Optional[float]:
+    """Read profit_factor from the run's backtest_result.json sibling.
+
+    The runs table doesn't store PF — it lives in the per-run JSON. Returns
+    None on any miss so the slide-pane history can render "PF —".
+    """
+    if not report_path_str:
+        return None
+    folder = Path(report_path_str)
+    if folder.is_file():
+        folder = folder.parent
+    json_path = folder / "backtest_result.json"
+    if not json_path.exists():
+        return None
+    try:
+        data = json.loads(json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    metrics = data.get("metrics") or {}
+    pf = metrics.get("profit_factor")
+    if pf is None:
+        pf = metrics.get("pf")
+    try:
+        return float(pf) if pf is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def history_for_strategy(
     strategy: str,
     *,
@@ -157,7 +195,11 @@ def history_for_strategy(
     exclude_archived: bool = True,
     db_path: Optional[Path] = None,
 ) -> list[dict]:
-    """Return last N runs for a single strategy, ordered by timestamp desc."""
+    """Return last N runs for a single strategy, ordered by timestamp desc.
+
+    Each row gets a `pf` field joined from the run's backtest_result.json
+    (None if the JSON is missing or has no profit_factor).
+    """
     db = _resolve_db(db_path)
     if not db.exists():
         return []
@@ -178,5 +220,7 @@ def history_for_strategy(
     finally:
         conn.close()
 
-    out = [dict(r) for r in rows if r["run_id"] not in archived_ids]
-    return out[:limit]
+    out = [dict(r) for r in rows if r["run_id"] not in archived_ids][:limit]
+    for r in out:
+        r["pf"] = _pf_from_report_path(r.get("report_card_html_path"))
+    return out

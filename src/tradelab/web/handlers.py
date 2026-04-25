@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import sqlite3
 import subprocess
 import sys
 import traceback
@@ -17,6 +19,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from tradelab.audit import archive
 from tradelab.web import audit_reader, freshness, new_strategy, ranges, whatif
 
 
@@ -187,7 +190,18 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         inflight.sort(key=lambda j: (0 if j["status"] == "running" else 1,
                                      j.get("started_at") or ""))
 
-        return json.dumps({"runs": inflight + audit_rows}), 200
+        # `total` is the unpaginated count (in-flight matching strategy filter
+        # + all audit rows matching all filters). Used by Pipeline pagination
+        # to render "Showing X of Y" — without it the UI shows X of X.
+        audit_total = audit_reader.count_runs(
+            strategy=strategy_q,
+            verdicts=verdicts_q,
+            since=since_q,
+            db_path=_db_path(),
+            exclude_archived=not include_archived,
+        )
+        total = len(inflight) + audit_total
+        return json.dumps({"runs": inflight + audit_rows, "total": total}), 200
 
     m = re.match(r"^/tradelab/runs/([^/]+)/metrics$", path)
     if m:
@@ -408,13 +422,12 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         deleted: list[str] = []
         failed: list[dict] = []
         for run_id in run_ids:
-            body, status = _delete_run(str(run_id))
+            del_body, status = _delete_run(str(run_id))
             if status == 204:
                 deleted.append(str(run_id))
             else:
-                # Parse the error message from the envelope
                 try:
-                    msg = json.loads(body).get("error", "unknown error")
+                    msg = json.loads(del_body).get("error", "unknown error")
                 except (json.JSONDecodeError, AttributeError):
                     msg = "unknown error"
                 failed.append({"id": str(run_id), "reason": msg})
@@ -669,8 +682,6 @@ def _validate_accept_payload(payload: dict) -> Optional[str]:
 
 def handle_delete_with_status(path: str) -> tuple[str, int]:
     """DELETE dispatcher with explicit status."""
-    import re
-
     m = re.match(r"^/tradelab/runs/([^/]+)$", path)
     if m:
         run_id = m.group(1)
@@ -681,16 +692,10 @@ def handle_delete_with_status(path: str) -> tuple[str, int]:
 
 def _delete_run(run_id: str) -> tuple[str, int]:
     """Soft-archive a run: insert into archived_runs + remove report folder."""
-    import shutil
-    import sqlite3
-    from pathlib import Path
-    from tradelab.audit import archive
-
     db = _db_path()
     if not db.exists():
         return _err("run not found"), 404
 
-    # Look up the report folder for this run_id
     conn = sqlite3.connect(str(db))
     try:
         row = conn.execute(
@@ -702,26 +707,26 @@ def _delete_run(run_id: str) -> tuple[str, int]:
     if row is None:
         return _err("run not found"), 404
 
+    # Resolve the run's report folder. We only act on paths that resolve to
+    # a real file (folder = its parent) or a real directory. A stale path
+    # whose parent happens to exist is intentionally ignored — falling back
+    # to `parent` could rmtree a directory holding other runs' artifacts
+    # (e.g. _reports_root() itself on an idempotent second delete).
     report_path_str = row[0]
     folder: Path | None = None
     if report_path_str:
         p = Path(report_path_str)
-        # report_card_html_path may be a file path; the folder is its parent
         if p.is_file():
             folder = p.parent
         elif p.is_dir():
             folder = p
-        elif (p.parent.is_dir() and p.parent != Path()):
-            folder = p.parent
 
-    # Try to remove the folder
     if folder and folder.exists():
         try:
             shutil.rmtree(folder)
-        except (OSError, PermissionError) as e:
+        except OSError as e:
             return _err(f"folder removal failed: {e}"), 409
 
-    # Record the archive (idempotent)
     archive.archive_run(run_id, reason="user_delete", db_path=db)
 
     return "", 204
