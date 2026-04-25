@@ -36,14 +36,6 @@ def test_create_duplicate_raises(tmp_path: Path):
         reg.create("foo-v1", DISABLED_CARD)
 
 
-def test_create_rejects_enabled_status(tmp_path: Path):
-    path = tmp_path / "cards.json"
-    reg = CardRegistry(path)
-    enabled = dict(DISABLED_CARD, status="enabled")
-    with pytest.raises(ValueError, match="disabled"):
-        reg.create("foo-v1", enabled)
-
-
 def test_next_version_for_empty_registry(tmp_path: Path):
     reg = CardRegistry(tmp_path / "cards.json")
     assert reg.next_version_for("viprasol-amzn") == 1

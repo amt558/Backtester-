@@ -2,9 +2,6 @@
 
 One card = one immutable strategy version × one symbol. Live trade execution
 is gated by card lookup + secret validation.
-
-Session 3a adds mutation surface: create (append-only, disabled-by-default)
-+ next_version_for (for -v{n} auto-versioning). No update/delete in 3a.
 """
 from __future__ import annotations
 
@@ -92,17 +89,7 @@ class CardRegistry:
             return (max(versions) + 1) if versions else 1
 
     def create(self, card_id: str, data: dict) -> None:
-        """Append a new card. Raises CardExistsError on duplicate.
-
-        Safety guardrail for Session 3a: every created card must have
-        status='disabled'. Lifecycle (enable/disable/delete) is Session 3b
-        — remove this assertion when the toggle endpoint ships.
-        """
-        if data.get("status") != "disabled":
-            raise ValueError(
-                f"Session 3a safety: new cards must have status='disabled', "
-                f"got {data.get('status')!r}"
-            )
+        """Append a new card. Raises CardExistsError on duplicate."""
         with self._lock:
             if card_id in self._cards:
                 raise CardExistsError(card_id)
