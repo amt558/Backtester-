@@ -132,7 +132,12 @@ def tail_alerts_for_card(
     log_path: Path,
     limit: int = 50,
 ) -> list[dict]:
-    """Return up to `limit` most-recent alerts for a card_id, newest first."""
+    """Return up to `limit` most-recent alerts for a card_id, newest first.
+
+    A non-positive `limit` returns an empty list.
+    """
+    if limit <= 0:
+        return []
     matches = [e for e in _iter_alerts(log_path) if e.get("card_id") == card_id]
     return list(reversed(matches[-limit:]))
 

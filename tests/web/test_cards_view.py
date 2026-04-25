@@ -182,3 +182,19 @@ def test_tail_alerts_for_card_respects_limit(tmp_path: Path) -> None:
     # Most recent 3 (indices 7, 6, 5)
     assert out[0]["ts"] == "2026-04-25T09:07:00+00:00"
     assert out[2]["ts"] == "2026-04-25T09:05:00+00:00"
+
+
+def test_tail_alerts_for_card_zero_limit_returns_empty(tmp_path: Path) -> None:
+    log = tmp_path / "alerts.jsonl"
+    _write_alerts(log, [
+        {"ts": "2026-04-25T09:00:00+00:00", "card_id": "foo-v1", "status": "order_submitted"},
+    ])
+    assert cards_view.tail_alerts_for_card("foo-v1", log, limit=0) == []
+
+
+def test_tail_alerts_for_card_negative_limit_returns_empty(tmp_path: Path) -> None:
+    log = tmp_path / "alerts.jsonl"
+    _write_alerts(log, [
+        {"ts": "2026-04-25T09:00:00+00:00", "card_id": "foo-v1", "status": "order_submitted"},
+    ])
+    assert cards_view.tail_alerts_for_card("foo-v1", log, limit=-5) == []
