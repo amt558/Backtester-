@@ -357,6 +357,29 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     except json.JSONDecodeError:
         return _err("invalid JSON body"), 400
 
+    if path == "/tradelab/runs/bulk-delete":
+        run_ids = payload.get("run_ids")
+        if run_ids is None:
+            return _err("missing run_ids field"), 400
+        if not isinstance(run_ids, list):
+            return _err("run_ids must be a list"), 400
+
+        deleted: list[str] = []
+        failed: list[dict] = []
+        for run_id in run_ids:
+            body, status = _delete_run(str(run_id))
+            if status == 204:
+                deleted.append(str(run_id))
+            else:
+                # Parse the error message from the envelope
+                try:
+                    msg = json.loads(body).get("error", "unknown error")
+                except (json.JSONDecodeError, AttributeError):
+                    msg = "unknown error"
+                failed.append({"id": str(run_id), "reason": msg})
+
+        return json.dumps({"deleted": deleted, "failed": failed}), 200
+
     if path == "/tradelab/jobs":
         return _post_job(payload)
 
