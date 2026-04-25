@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, fields as dc_fields
 from pathlib import Path
 from typing import Optional
 
@@ -60,7 +60,12 @@ class Job:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Job":
-        d = dict(d)
+        # Drop unknown keys: to_dict() injects runtime-derived fields like
+        # `failure_hint` for FAILED jobs which aren't dataclass attributes.
+        # The persistence path round-trips through to_dict, so those keys
+        # land in jobs.json and would fail cls(**d).
+        known = {f.name for f in dc_fields(cls)}
+        d = {k: v for k, v in d.items() if k in known}
         d["status"] = JobStatus(d["status"])
         return cls(**d)
 
