@@ -604,5 +604,60 @@ def _validate_accept_payload(payload: dict) -> Optional[str]:
 
 
 def handle_delete_with_status(path: str) -> tuple[str, int]:
-    """DELETE dispatcher with explicit status. Routes added in Task 3."""
+    """DELETE dispatcher with explicit status."""
+    import re
+
+    m = re.match(r"^/tradelab/runs/([^/]+)$", path)
+    if m:
+        run_id = m.group(1)
+        return _delete_run(run_id)
+
     return _err("not found"), 404
+
+
+def _delete_run(run_id: str) -> tuple[str, int]:
+    """Soft-archive a run: insert into archived_runs + remove report folder."""
+    import shutil
+    import sqlite3
+    from pathlib import Path
+    from tradelab.audit import archive
+
+    db = _db_path()
+    if not db.exists():
+        return _err("run not found"), 404
+
+    # Look up the report folder for this run_id
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute(
+            "SELECT report_card_html_path FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        return _err("run not found"), 404
+
+    report_path_str = row[0]
+    folder: Path | None = None
+    if report_path_str:
+        p = Path(report_path_str)
+        # report_card_html_path may be a file path; the folder is its parent
+        if p.is_file():
+            folder = p.parent
+        elif p.is_dir():
+            folder = p
+        elif (p.parent.is_dir() and p.parent != Path()):
+            folder = p.parent
+
+    # Try to remove the folder
+    if folder and folder.exists():
+        try:
+            shutil.rmtree(folder)
+        except (OSError, PermissionError) as e:
+            return _err(f"folder removal failed: {e}"), 409
+
+    # Record the archive (idempotent)
+    archive.archive_run(run_id, reason="user_delete", db_path=db)
+
+    return "", 204
