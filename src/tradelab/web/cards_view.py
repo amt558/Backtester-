@@ -140,6 +140,9 @@ def list_cards_view(cards: dict[str, dict], alerts_log: Path) -> dict:
 
     enriched: dict[str, dict] = {}
     for cid, card in cards.items():
+        # NOTE: shallow copy via dict-spread. Safe for v1 (read-only), but
+        # before Slice 2 mutations we must use copy.deepcopy(card) to avoid
+        # mutating CardRegistry's in-memory cache via nested-dict aliasing.
         enriched[cid] = {
             **card,
             "last_status": last_status.get(cid),
