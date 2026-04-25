@@ -202,6 +202,18 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         from tradelab.web.preflight import compute_preflight
         return _ok(compute_preflight()), 200
 
+    m = re.match(r"^/tradelab/strategies/([^/]+)/history$", path)
+    if m:
+        strategy = m.group(1)
+        try:
+            limit = int(q.get("limit", "10"))
+        except (TypeError, ValueError):
+            limit = 10
+        runs = audit_reader.history_for_strategy(
+            strategy, limit=limit, db_path=_db_path()
+        )
+        return json.dumps({"runs": runs}), 200
+
     return _err("not found"), 404
 
 

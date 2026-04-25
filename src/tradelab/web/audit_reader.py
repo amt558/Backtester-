@@ -139,3 +139,40 @@ def get_run_folder(run_id: str, db_path: Optional[Path] = None) -> Optional[Path
         return None
     p = Path(row[0])
     return p if p.is_dir() else p.parent
+
+
+def history_for_strategy(
+    strategy: str,
+    *,
+    limit: int = 10,
+    exclude_archived: bool = True,
+    db_path: Optional[Path] = None,
+) -> list[dict]:
+    """Return last N runs for a single strategy, ordered by timestamp desc."""
+    db = _resolve_db(db_path)
+    if not db.exists():
+        return []
+
+    archived_ids: set[str] = set()
+    if exclude_archived:
+        from tradelab.audit.archive import list_archived_run_ids
+        try:
+            archived_ids = list_archived_run_ids(db_path=db)
+        except sqlite3.OperationalError:
+            # archived_runs sidecar table may not exist yet (no run has been
+            # archived). Treat as no archived runs.
+            archived_ids = set()
+
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT * FROM runs WHERE strategy_name = ? "
+            "ORDER BY timestamp_utc DESC LIMIT ?",
+            (strategy, limit + len(archived_ids)),  # over-fetch to compensate
+        ).fetchall()
+    finally:
+        conn.close()
+
+    out = [dict(r) for r in rows if r["run_id"] not in archived_ids]
+    return out[:limit]
