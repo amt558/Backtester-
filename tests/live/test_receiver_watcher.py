@@ -48,6 +48,42 @@ def test_watcher_triggers_reload_on_external_write(tmp_path: Path) -> None:
         observer.join(timeout=2.0)
 
 
+def test_handler_burst_writes_each_get_reloaded(tmp_path: Path) -> None:
+    """Burst writes must each be reflected — no time-based debounce.
+
+    Regression: a 100ms time-debounce silently swallowed any burst
+    writes that landed within the window, leaving the receiver's
+    in-memory registry stale relative to disk. Reproduced live by
+    seeding 8 cards back-to-back: receiver showed 4 while disk had 11.
+    """
+    from watchdog.events import FileMovedEvent
+    from tradelab.live.receiver import _CardsReloadHandler
+
+    cards_path = tmp_path / "cards.json"
+    cards_path.write_text(json.dumps({"foo-v1": CARD_A}), encoding="utf-8")
+    reg = CardRegistry(cards_path)
+    handler = _CardsReloadHandler(reg, cards_path)
+
+    state = {"foo-v1": CARD_A}
+    for i in range(5):
+        cid = f"burst-{i}-v1"
+        state[cid] = {**CARD_B, "card_id": cid}
+        cards_path.write_text(json.dumps(state), encoding="utf-8")
+        # Force-bump mtime in case OS coalesces same-second writes
+        atime = cards_path.stat().st_atime
+        import os as _os
+        _os.utime(cards_path, (atime, atime + (i + 1) * 0.01))
+        handler.on_moved(FileMovedEvent(
+            src_path=str(cards_path.with_suffix(".json.tmp")),
+            dest_path=str(cards_path),
+        ))
+
+    # All 5 burst writes must be reflected in the in-memory registry
+    assert reg.count() == 6
+    for i in range(5):
+        assert reg.get(f"burst-{i}-v1") is not None
+
+
 def test_handler_on_moved_triggers_reload(tmp_path: Path) -> None:
     """Atomic os.replace fires on_moved on Windows native Observer.
 

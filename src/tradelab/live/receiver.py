@@ -44,32 +44,31 @@ logger = logging.getLogger("tradelab.live.receiver")
 class _CardsReloadHandler(FileSystemEventHandler):
     """Watchdog handler that calls registry.reload() on cards.json change.
 
-    Debounces with a 100ms cooldown — atomic os.replace() can fire two
-    events on Windows, and we only need one reload per write.
+    Uses an mtime gate to dedupe events. Atomic os.replace can fire two
+    events on Windows (RENAMED_NEW_NAME + synthesized MODIFIED) — both
+    carry the same post-write mtime, so the gate skips the second.
+
+    No time-based debounce: a 100ms cooldown silently swallowed any
+    burst writes that landed within the window, leaving the receiver's
+    in-memory registry stale relative to disk. mtime advances on every
+    real write, so the gate alone does the right thing.
     """
     def __init__(self, registry: CardRegistry, watched_path: Path):
         self._registry = registry
         self._watched_name = watched_path.name
         self._watched_path = watched_path.resolve()
         self._lock = Lock()
-        self._last_reload_at = 0.0
         self._last_mtime: float = 0.0
 
     def _maybe_reload(self) -> None:
-        # Debounce + mtime gate
         with self._lock:
-            now = time.time()
-            if now - self._last_reload_at < 0.1:
-                return
             try:
                 mtime = self._watched_path.stat().st_mtime
             except FileNotFoundError:
-                # File was deleted; nothing to reload
                 return
             if mtime <= self._last_mtime:
                 return
             self._last_mtime = mtime
-            self._last_reload_at = now
         try:
             self._registry.reload()
             logger.info("cards.json reloaded; cards_loaded=%d",
