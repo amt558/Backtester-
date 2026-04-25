@@ -62,3 +62,22 @@ def check_cooldown(card: dict, state: CardRuntimeState, now: datetime) -> Option
         message=f"cooldown active: {cooldown - elapsed:.1f}s remaining",
         details={"cooldown_seconds": cooldown, "seconds_remaining": cooldown - elapsed},
     )
+
+
+def check_daily_limit(card: dict, state: CardRuntimeState, now: datetime) -> Optional[BlockReason]:
+    limit = int(card.get("daily_limit", 5))
+    current_window = get_rth_window_start(now)
+    # Stale or absent window means the count cannot be attributed to today
+    fires_today = (
+        state.fires_today
+        if state.fire_window_start is not None
+        and state.fire_window_start >= current_window
+        else 0
+    )
+    if fires_today < limit:
+        return None
+    return BlockReason(
+        code="daily_limit_exceeded",
+        message=f"daily limit reached: {fires_today}/{limit}",
+        details={"fires_today": fires_today, "daily_limit": limit},
+    )
