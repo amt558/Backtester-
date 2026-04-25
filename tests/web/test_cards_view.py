@@ -72,3 +72,46 @@ def test_derive_fire_counts_filters_to_24h_window(tmp_path: Path) -> None:
     assert counts["foo-v1"] == 2  # only the two within 24h that submitted
     assert counts["bar-v1"] == 1
     assert counts["baz-v1"] == 0
+
+
+def test_group_by_base_name_extracts_and_groups() -> None:
+    cards = {
+        "viprasol-amzn-v1": {"card_id": "viprasol-amzn-v1", "status": "disabled"},
+        "viprasol-amzn-v2": {"card_id": "viprasol-amzn-v2", "status": "enabled"},
+        "viprasol-amzn-v3": {"card_id": "viprasol-amzn-v3", "status": "enabled"},
+        "scalper-spy-v1": {"card_id": "scalper-spy-v1", "status": "enabled"},
+        "manual-card": {"card_id": "manual-card", "status": "disabled"},  # no -vN
+    }
+    groups = cards_view.group_by_base_name(cards)
+
+    by_name = {g["base_name"]: g for g in groups}
+
+    assert "viprasol-amzn" in by_name
+    assert "scalper-spy" in by_name
+    assert "manual-card" in by_name  # cards without -vN form their own group
+
+    vip = by_name["viprasol-amzn"]
+    assert vip["enabled_count"] == 2
+    assert vip["total_count"] == 3
+    # Within group: enabled first (sorted by version desc), then disabled
+    assert [c["card_id"] for c in vip["cards"]] == [
+        "viprasol-amzn-v3", "viprasol-amzn-v2", "viprasol-amzn-v1"
+    ]
+
+
+def test_group_by_base_name_flags_multi_enabled_collision() -> None:
+    cards = {
+        "viprasol-amzn-v1": {"card_id": "viprasol-amzn-v1", "status": "enabled"},
+        "viprasol-amzn-v2": {"card_id": "viprasol-amzn-v2", "status": "enabled"},
+    }
+    groups = cards_view.group_by_base_name(cards)
+    assert groups[0]["multi_enabled_warning"] is True
+
+
+def test_group_by_base_name_no_warning_when_one_enabled() -> None:
+    cards = {
+        "viprasol-amzn-v1": {"card_id": "viprasol-amzn-v1", "status": "disabled"},
+        "viprasol-amzn-v2": {"card_id": "viprasol-amzn-v2", "status": "enabled"},
+    }
+    groups = cards_view.group_by_base_name(cards)
+    assert groups[0]["multi_enabled_warning"] is False

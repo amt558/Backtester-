@@ -6,6 +6,7 @@ so tests can use tmp_path.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -70,3 +71,57 @@ def derive_fire_counts(
         if ts >= cutoff:
             counts[cid] += 1
     return counts
+
+
+_VERSION_PATTERN = re.compile(r"^(?P<base>.+)-v(?P<n>\d+)$")
+
+
+def _parse_card_id(card_id: str) -> tuple[str, Optional[int]]:
+    """Split card_id into (base_name, version). version is None if no -vN suffix."""
+    m = _VERSION_PATTERN.match(card_id)
+    if not m:
+        return card_id, None
+    return m.group("base"), int(m.group("n"))
+
+
+def group_by_base_name(cards: dict[str, dict]) -> list[dict]:
+    """Group cards by their base_name (the part before -vN).
+
+    Returns groups sorted by base_name asc. Within each group, cards are
+    sorted enabled-first then version-desc, with disabled appended after.
+
+    Each group dict shape:
+        {
+          "base_name": str,
+          "enabled_count": int,
+          "total_count": int,
+          "multi_enabled_warning": bool,
+          "cards": [hydrated card dicts in display order],
+        }
+    """
+    by_base: dict[str, list[tuple[Optional[int], dict]]] = {}
+    for cid, card in cards.items():
+        base, version = _parse_card_id(cid)
+        by_base.setdefault(base, []).append((version, card))
+
+    groups = []
+    for base_name in sorted(by_base.keys()):
+        entries = by_base[base_name]
+        enabled = [(v, c) for v, c in entries if c.get("status") == "enabled"]
+        disabled = [(v, c) for v, c in entries if c.get("status") != "enabled"]
+
+        def _sortkey(t: tuple[Optional[int], dict]) -> tuple[int, int]:
+            v, _ = t
+            return (-v if v is not None else 1, 0)
+
+        enabled.sort(key=_sortkey)
+        disabled.sort(key=_sortkey)
+        ordered = [c for _, c in enabled] + [c for _, c in disabled]
+        groups.append({
+            "base_name": base_name,
+            "enabled_count": len(enabled),
+            "total_count": len(entries),
+            "multi_enabled_warning": len(enabled) > 1,
+            "cards": ordered,
+        })
+    return groups
