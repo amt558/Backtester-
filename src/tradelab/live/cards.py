@@ -16,6 +16,27 @@ from threading import RLock
 from typing import Optional
 
 
+_V1_DEFAULTS: dict = {
+    "cadence": "daily",
+    "last_fired_at": None,
+    "last_attempted_at": None,
+    "enabled_at": None,
+    "daily_limit": 5,
+    "cooldown_seconds": 30,
+    "allow_collision": False,
+    "allow_naked_short": False,
+}
+
+
+def _hydrate_card(card: dict) -> dict:
+    """Fill missing v1 fields with defaults; preserve all existing keys.
+
+    Lets v0 cards (pre Direction A) coexist with v1 logic without a
+    one-shot data migration. Existing key wins via dict-merge order.
+    """
+    return {**_V1_DEFAULTS, **card}
+
+
 class CardExistsError(Exception):
     """Raised by CardRegistry.create when card_id is already present."""
 
