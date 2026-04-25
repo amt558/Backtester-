@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from threading import RLock
 from typing import Optional
@@ -174,8 +175,30 @@ class CardRegistry:
             return deleted, failed
 
     def _persist(self, cards: dict[str, dict]) -> None:
-        """Atomic write: JSON -> .tmp -> os.replace(cards.json)."""
+        """Atomic write: JSON -> .tmp -> os.replace(cards.json).
+
+        Retry on Windows PermissionError: the receiver's watcher reads
+        cards.json after each os.replace and briefly holds a read handle.
+        A second rapid os.replace from any process (back-to-back create
+        in approve_strategy.py, two quick PATCH calls, etc.) can collide
+        with WinError 5 'Access is denied'. Short backoffs let the read
+        release; the total worst-case wait is ~350ms before re-raising.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp.write_text(json.dumps(cards, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)
+        last_exc: Optional[OSError] = None
+        for delay in (0.0, 0.05, 0.1, 0.2):
+            if delay:
+                time.sleep(delay)
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError as e:
+                last_exc = e
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        assert last_exc is not None
+        raise last_exc

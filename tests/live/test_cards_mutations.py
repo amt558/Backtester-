@@ -163,3 +163,43 @@ def test_bulk_delete_all_missing_does_not_persist(tmp_path: Path):
     assert deleted == []
     assert len(failed) == 2
     assert persist_count[0] == 0
+
+
+def test_persist_retries_on_windows_permission_error(tmp_path: Path, monkeypatch):
+    """Transient PermissionError from os.replace must be retried.
+
+    Reproduces the race where the receiver's cards.json watcher holds a
+    momentary read handle after each replace; a second rapid write from
+    any process collides with WinError 5.
+    """
+    import os as _os
+    reg = _seed(tmp_path, {"a-v1": dict(CARD_A, card_id="a-v1")})
+    real_replace = _os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise PermissionError(5, "Access is denied")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("tradelab.live.cards.os.replace", flaky_replace)
+
+    reg.update("a-v1", {"status": "enabled"})
+
+    assert calls["n"] == 3
+    on_disk = json.loads((tmp_path / "cards.json").read_text(encoding="utf-8-sig"))
+    assert on_disk["a-v1"]["status"] == "enabled"
+
+
+def test_persist_reraises_after_exhausting_retries(tmp_path: Path, monkeypatch):
+    """If every retry hits PermissionError, re-raise so the caller sees it."""
+    reg = _seed(tmp_path, {"a-v1": dict(CARD_A, card_id="a-v1")})
+
+    def always_fails(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr("tradelab.live.cards.os.replace", always_fails)
+
+    with pytest.raises(PermissionError):
+        reg.update("a-v1", {"status": "enabled"})
