@@ -639,14 +639,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err("no cards.json"), 404
         from tradelab.live.cards import CardRegistry
         reg = CardRegistry(cards_path)
-        updated: list[str] = []
-        failed: list[dict] = []
-        for cid in ids:
-            try:
-                reg.set_status(str(cid), status_val)
-                updated.append(str(cid))
-            except KeyError:
-                failed.append({"id": str(cid), "reason": "card not found"})
+        updated, failed = reg.bulk_update_status(
+            [str(cid) for cid in ids], status_val
+        )
         return _ok({"updated": updated, "failed": failed}), 200
 
     if path == "/tradelab/cards/bulk-delete":
@@ -660,14 +655,7 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err("no cards.json"), 404
         from tradelab.live.cards import CardRegistry
         reg = CardRegistry(cards_path)
-        deleted: list[str] = []
-        failed: list[dict] = []
-        for cid in ids:
-            try:
-                reg.delete(str(cid))
-                deleted.append(str(cid))
-            except KeyError:
-                failed.append({"id": str(cid), "reason": "card not found"})
+        deleted, failed = reg.bulk_delete([str(cid) for cid in ids])
         return _ok({"deleted": deleted, "failed": failed}), 200
 
     # Fallback to legacy POST dispatcher for everything else

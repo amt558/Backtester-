@@ -130,6 +130,49 @@ class CardRegistry:
         """Convenience wrapper for inline-edit quantity."""
         self.update(card_id, {"quantity": quantity})
 
+    def bulk_update_status(
+        self, ids: list[str], status: str
+    ) -> tuple[list[str], list[dict]]:
+        """Set status on many cards in a single atomic write.
+
+        Per-id loops that each call set_status fail on Windows: the
+        receiver's cards.json watcher reads after each os.replace, and
+        a second rapid os.replace can collide with WinError 5. Bulk ops
+        therefore mutate in memory first and persist once at the end.
+        Returns (updated_ids, failed_records).
+        """
+        with self._lock:
+            new_cards = dict(self._cards)
+            updated: list[str] = []
+            failed: list[dict] = []
+            for cid in ids:
+                if cid not in new_cards:
+                    failed.append({"id": cid, "reason": "card not found"})
+                    continue
+                new_cards[cid] = {**new_cards[cid], "status": status}
+                updated.append(cid)
+            if updated:
+                self._persist(new_cards)
+                self._cards = new_cards
+            return updated, failed
+
+    def bulk_delete(self, ids: list[str]) -> tuple[list[str], list[dict]]:
+        """Delete many cards in a single atomic write."""
+        with self._lock:
+            new_cards = dict(self._cards)
+            deleted: list[str] = []
+            failed: list[dict] = []
+            for cid in ids:
+                if cid not in new_cards:
+                    failed.append({"id": cid, "reason": "card not found"})
+                    continue
+                del new_cards[cid]
+                deleted.append(cid)
+            if deleted:
+                self._persist(new_cards)
+                self._cards = new_cards
+            return deleted, failed
+
     def _persist(self, cards: dict[str, dict]) -> None:
         """Atomic write: JSON -> .tmp -> os.replace(cards.json)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
