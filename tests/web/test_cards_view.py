@@ -153,3 +153,32 @@ def test_list_cards_view_combines_grouping_and_derivations(tmp_path: Path) -> No
     foo_v2 = foo_group["cards"][1]
     assert foo_v2["last_status"] is None
     assert foo_v2["fires_24h"] == 0
+
+
+def test_tail_alerts_for_card_returns_most_recent_first(tmp_path: Path) -> None:
+    log = tmp_path / "alerts.jsonl"
+    _write_alerts(log, [
+        {"ts": "2026-04-25T09:00:00+00:00", "card_id": "foo-v1", "status": "order_submitted"},
+        {"ts": "2026-04-25T09:30:00+00:00", "card_id": "bar-v1", "status": "order_submitted"},
+        {"ts": "2026-04-25T10:00:00+00:00", "card_id": "foo-v1", "status": "order_failed"},
+    ])
+
+    out = cards_view.tail_alerts_for_card("foo-v1", log, limit=10)
+
+    assert len(out) == 2
+    assert out[0]["ts"] == "2026-04-25T10:00:00+00:00"  # most recent first
+    assert out[1]["ts"] == "2026-04-25T09:00:00+00:00"
+
+
+def test_tail_alerts_for_card_respects_limit(tmp_path: Path) -> None:
+    log = tmp_path / "alerts.jsonl"
+    _write_alerts(log, [
+        {"ts": f"2026-04-25T09:0{i}:00+00:00", "card_id": "foo-v1",
+         "status": "order_submitted"}
+        for i in range(8)
+    ])
+    out = cards_view.tail_alerts_for_card("foo-v1", log, limit=3)
+    assert len(out) == 3
+    # Most recent 3 (indices 7, 6, 5)
+    assert out[0]["ts"] == "2026-04-25T09:07:00+00:00"
+    assert out[2]["ts"] == "2026-04-25T09:05:00+00:00"

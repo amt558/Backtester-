@@ -127,6 +127,16 @@ def group_by_base_name(cards: dict[str, dict]) -> list[dict]:
     return groups
 
 
+def tail_alerts_for_card(
+    card_id: str,
+    log_path: Path,
+    limit: int = 50,
+) -> list[dict]:
+    """Return up to `limit` most-recent alerts for a card_id, newest first."""
+    matches = [e for e in _iter_alerts(log_path) if e.get("card_id") == card_id]
+    return list(reversed(matches[-limit:]))
+
+
 def list_cards_view(cards: dict[str, dict], alerts_log: Path) -> dict:
     """Top-level aggregator for GET /tradelab/cards.
 

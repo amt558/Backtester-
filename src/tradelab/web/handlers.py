@@ -281,6 +281,17 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         )
         return _ok(view), 200
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/alerts$", path)
+    if m:
+        try:
+            limit = int(q.get("limit", "50"))
+        except (TypeError, ValueError):
+            limit = 50
+        alerts = cards_view.tail_alerts_for_card(
+            m.group(1), _alerts_log_path(), limit=limit
+        )
+        return _ok({"alerts": alerts}), 200
+
     return _err("not found"), 404
 
 
