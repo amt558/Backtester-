@@ -129,6 +129,14 @@ def _alerts_log_path() -> Path:
     return Path("live") / "alerts.jsonl"
 
 
+def _receiver_health_url() -> str:
+    return "http://127.0.0.1:8878/health"
+
+
+def _ngrok_api_url() -> str:
+    return "http://127.0.0.1:4040/api/tunnels"
+
+
 def _probe_json(url: str, timeout: float = 1.5) -> dict:
     """Tiny GET-and-parse-JSON helper used by /receiver/status. Returns
     parsed JSON dict on success; raises on any error so the caller can
@@ -332,7 +340,7 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         receiver_up = False
         cards_loaded = None
         try:
-            health = _probe_json("http://127.0.0.1:8878/health", timeout=1.5)
+            health = _probe_json(_receiver_health_url(), timeout=1.5)
             receiver_up = health.get("status") == "ok"
             cards_loaded = health.get("cards_loaded")
         except Exception:
@@ -341,7 +349,7 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         ngrok_up = False
         ngrok_url = None
         try:
-            tunnels = _probe_json("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
+            tunnels = _probe_json(_ngrok_api_url(), timeout=1.5)
             for t in tunnels.get("tunnels", []):
                 if t.get("proto") == "https":
                     ngrok_url = t.get("public_url")

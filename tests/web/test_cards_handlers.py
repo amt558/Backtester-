@@ -193,3 +193,40 @@ def test_get_receiver_status_reports_down(monkeypatch) -> None:
     assert payload["receiver_up"] is False
     assert payload["ngrok_up"] is False
     assert payload["ngrok_url"] is None
+
+
+def test_get_receiver_status_mixed_states(monkeypatch) -> None:
+    """Receiver up, ngrok down → only receiver=True."""
+    call_count = {"count": 0}
+    def fake_probe(url: str, timeout: float):
+        call_count["count"] += 1
+        if "8878" in url:
+            return {"status": "ok", "cards_loaded": 2}
+        raise urllib.error.URLError("ngrok down")
+
+    monkeypatch.setattr(handlers, "_probe_json", fake_probe)
+    body, status = handlers.handle_get_with_status("/tradelab/receiver/status")
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["receiver_up"] is True
+    assert payload["ngrok_up"] is False
+    assert payload["ngrok_url"] is None
+    assert payload["cards_loaded"] == 2
+    assert call_count["count"] == 2  # both probes ran independently
+
+
+def test_get_receiver_status_ngrok_no_https_tunnel(monkeypatch) -> None:
+    """ngrok responds but has no HTTPS tunnel yet (only HTTP)."""
+    def fake_probe(url: str, timeout: float):
+        if "8878" in url:
+            return {"status": "ok", "cards_loaded": 0}
+        return {"tunnels": [{"proto": "http", "public_url": "http://abcd-1234.ngrok-free.app"}]}
+
+    monkeypatch.setattr(handlers, "_probe_json", fake_probe)
+    body, status = handlers.handle_get_with_status("/tradelab/receiver/status")
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["ngrok_up"] is False  # no HTTPS tunnel found
+    assert payload["ngrok_url"] is None
