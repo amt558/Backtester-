@@ -11,12 +11,67 @@ web/handlers.py validate request shape and map exceptions to HTTP codes.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
 from tradelab.audit.history import DEFAULT_DB_PATH as _DEFAULT_DB_PATH
 from tradelab.csv_scoring import score_trades, write_report_folder
 from tradelab.io.tv_csv import parse_tv_trades_csv
+
+
+# ─── Pine source linter (UPGRADES #2-A) ──────────────────────────────
+#
+# Catches the common foot-gun: a Pine script with optimistic execution
+# flags backtests with fills the broker can't replicate live, so the
+# verdict / DSR look better than reality. Cheap regex sweep — no Pine
+# parser. Each rule returns a {flag, level, message} dict for the UI.
+
+_PINE_LINT_RULES: list[tuple[str, "re.Pattern[str]", str, str]] = [
+    (
+        "process_orders_on_close",
+        re.compile(r"process_orders_on_close\s*=\s*true", re.IGNORECASE),
+        "warning",
+        "process_orders_on_close=true fills at the signal bar's close — "
+        "the broker can't replicate this. Backtest PF/DSR will overstate.",
+    ),
+    (
+        "calc_on_every_tick",
+        re.compile(r"calc_on_every_tick\s*=\s*true", re.IGNORECASE),
+        "warning",
+        "calc_on_every_tick=true makes intrabar evaluation optimistic. "
+        "Real-time signals will fire at different prices than the backtest.",
+    ),
+    (
+        "lookahead_on",
+        re.compile(r"lookahead\s*=\s*barmerge\.lookahead_on", re.IGNORECASE),
+        "error",
+        "lookahead=barmerge.lookahead_on peeks future bars. Backtest is "
+        "look-ahead biased; live performance will diverge sharply.",
+    ),
+    (
+        "calc_on_order_fills",
+        re.compile(r"calc_on_order_fills\s*=\s*true", re.IGNORECASE),
+        "warning",
+        "calc_on_order_fills=true triggers extra evaluations on fills, "
+        "potentially adding signals the broker won't see.",
+    ),
+]
+
+
+def lint_pine_source(pine_source: Optional[str]) -> list[dict]:
+    """Scan Pine v5/v6 source for optimistic execution flags.
+
+    Returns a list of {flag, level, message} dicts; empty if clean or no
+    source provided. Caller (score endpoint) surfaces them to the UI.
+    """
+    if not pine_source:
+        return []
+    findings: list[dict] = []
+    for flag, pattern, level, message in _PINE_LINT_RULES:
+        if pattern.search(pine_source):
+            findings.append({"flag": flag, "level": level, "message": message})
+    return findings
 
 
 def score_csv(
@@ -68,6 +123,7 @@ def score_csv(
             "annual_return":    m.annual_return,
             "sharpe_ratio":     m.sharpe_ratio,
         },
+        "pine_lints": lint_pine_source(pine_source),
     }
 
 
