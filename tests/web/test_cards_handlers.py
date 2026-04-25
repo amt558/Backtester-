@@ -343,3 +343,66 @@ def test_delete_card_404_when_missing(tmp_path: Path, monkeypatch):
         json.dumps({"confirm": "DELETE"}).encode(),
     )
     assert status == 404
+
+
+# ─── POST /tradelab/cards/bulk-toggle ────────────────────────────────────────
+
+
+def _seed_n_cards(tmp_path, monkeypatch, ids):
+    cards_path = tmp_path / "cards.json"
+    cards = {
+        cid: {"card_id": cid, "secret": "x" * 32, "symbol": "AAPL",
+              "status": "disabled", "quantity": 1}
+        for cid in ids
+    }
+    cards_path.write_text(json.dumps(cards), encoding="utf-8")
+    monkeypatch.setattr(handlers, "_cards_path", lambda: cards_path)
+    monkeypatch.setattr(handlers, "_alerts_log_path", lambda: tmp_path / "no_alerts.jsonl")
+    return cards_path
+
+
+def test_bulk_toggle_enables_all(tmp_path: Path, monkeypatch):
+    cards_path = _seed_n_cards(tmp_path, monkeypatch, ["a-v1", "b-v1", "c-v1"])
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-toggle",
+        json.dumps({"ids": ["a-v1", "b-v1", "c-v1"], "status": "enabled"}).encode(),
+    )
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload == {"updated": ["a-v1", "b-v1", "c-v1"], "failed": []}
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert all(on_disk[cid]["status"] == "enabled" for cid in ["a-v1", "b-v1", "c-v1"])
+
+
+def test_bulk_toggle_reports_failed_ids(tmp_path: Path, monkeypatch):
+    _seed_n_cards(tmp_path, monkeypatch, ["a-v1"])
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-toggle",
+        json.dumps({"ids": ["a-v1", "ghost-v1"], "status": "enabled"}).encode(),
+    )
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["updated"] == ["a-v1"]
+    assert payload["failed"] == [{"id": "ghost-v1", "reason": "card not found"}]
+
+
+def test_bulk_delete_removes_with_confirm(tmp_path: Path, monkeypatch):
+    cards_path = _seed_n_cards(tmp_path, monkeypatch, ["a-v1", "b-v1", "c-v1"])
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-delete",
+        json.dumps({"ids": ["a-v1", "b-v1"], "confirm": "DELETE"}).encode(),
+    )
+    assert status == 200
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert set(on_disk.keys()) == {"c-v1"}
+
+
+def test_bulk_delete_rejects_without_confirm(tmp_path: Path, monkeypatch):
+    cards_path = _seed_n_cards(tmp_path, monkeypatch, ["a-v1"])
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-delete",
+        json.dumps({"ids": ["a-v1"]}).encode(),
+    )
+    assert status == 400
+    on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
+    assert "a-v1" in on_disk

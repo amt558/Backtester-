@@ -627,6 +627,49 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             traceback.print_exc(file=sys.stderr)
             return _err("accept failed: internal error"), 500
 
+    if path == "/tradelab/cards/bulk-toggle":
+        ids = payload.get("ids")
+        status_val = payload.get("status")
+        if not isinstance(ids, list) or not ids:
+            return _err("ids must be a non-empty list"), 400
+        if status_val not in _ALLOWED_STATUSES:
+            return _err(f"status must be one of {sorted(_ALLOWED_STATUSES)}"), 400
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return _err("no cards.json"), 404
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        updated: list[str] = []
+        failed: list[dict] = []
+        for cid in ids:
+            try:
+                reg.set_status(str(cid), status_val)
+                updated.append(str(cid))
+            except KeyError:
+                failed.append({"id": str(cid), "reason": "card not found"})
+        return _ok({"updated": updated, "failed": failed}), 200
+
+    if path == "/tradelab/cards/bulk-delete":
+        ids = payload.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return _err("ids must be a non-empty list"), 400
+        if payload.get("confirm") != "DELETE":
+            return _err("missing confirm: 'DELETE' to bulk-delete cards"), 400
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return _err("no cards.json"), 404
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        deleted: list[str] = []
+        failed: list[dict] = []
+        for cid in ids:
+            try:
+                reg.delete(str(cid))
+                deleted.append(str(cid))
+            except KeyError:
+                failed.append({"id": str(cid), "reason": "card not found"})
+        return _ok({"deleted": deleted, "failed": failed}), 200
+
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
 
