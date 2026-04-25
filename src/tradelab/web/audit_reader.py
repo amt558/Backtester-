@@ -156,12 +156,7 @@ def history_for_strategy(
     archived_ids: set[str] = set()
     if exclude_archived:
         from tradelab.audit.archive import list_archived_run_ids
-        try:
-            archived_ids = list_archived_run_ids(db_path=db)
-        except sqlite3.OperationalError:
-            # archived_runs sidecar table may not exist yet (no run has been
-            # archived). Treat as no archived runs.
-            archived_ids = set()
+        archived_ids = list_archived_run_ids(db_path=db)
 
     conn = sqlite3.connect(str(db))
     conn.row_factory = sqlite3.Row

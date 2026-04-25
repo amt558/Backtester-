@@ -62,7 +62,7 @@ def is_archived(run_id: str, *, db_path: Optional[Path] = None) -> bool:
     db = Path(db_path) if db_path else DEFAULT_DB_PATH
     if not db.exists():
         return False
-    conn = sqlite3.connect(str(db))
+    conn = _connect(db)
     try:
         row = conn.execute(
             "SELECT 1 FROM archived_runs WHERE run_id = ?", (run_id,)
@@ -77,7 +77,7 @@ def list_archived_run_ids(*, db_path: Optional[Path] = None) -> set[str]:
     db = Path(db_path) if db_path else DEFAULT_DB_PATH
     if not db.exists():
         return set()
-    conn = sqlite3.connect(str(db))
+    conn = _connect(db)
     try:
         rows = conn.execute("SELECT run_id FROM archived_runs").fetchall()
         return {r[0] for r in rows}

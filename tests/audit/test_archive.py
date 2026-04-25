@@ -71,3 +71,20 @@ def test_list_archived_run_ids_returns_set(tmp_path: Path) -> None:
 def test_list_archived_run_ids_empty_when_db_missing(tmp_path: Path) -> None:
     db = tmp_path / "missing.db"
     assert archive.list_archived_run_ids(db_path=db) == set()
+
+
+def test_is_archived_safe_when_db_exists_but_table_missing(tmp_path: Path) -> None:
+    """Real audit DB may exist (created by tradelab CLI runs) but with no
+    archived_runs table yet. Read functions must not raise."""
+    db = tmp_path / "history.db"
+    # Create a DB with a different table — simulates fresh tradelab DB
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("CREATE TABLE runs (run_id TEXT)")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Both reads should return safe defaults, not raise OperationalError
+    assert archive.is_archived("any-id", db_path=db) is False
+    assert archive.list_archived_run_ids(db_path=db) == set()
