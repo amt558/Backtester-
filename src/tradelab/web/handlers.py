@@ -129,6 +129,15 @@ def _alerts_log_path() -> Path:
     return Path("live") / "alerts.jsonl"
 
 
+def _probe_json(url: str, timeout: float = 1.5) -> dict:
+    """Tiny GET-and-parse-JSON helper used by /receiver/status. Returns
+    parsed JSON dict on success; raises on any error so the caller can
+    use a single try/except to mark the probe as down."""
+    import urllib.request
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
 def _yaml_path() -> Path:
     return Path("tradelab.yaml")
 
@@ -318,6 +327,35 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             except json.JSONDecodeError as e:
                 out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
         return _ok(out), 200
+
+    if path == "/tradelab/receiver/status":
+        receiver_up = False
+        cards_loaded = None
+        try:
+            health = _probe_json("http://127.0.0.1:8878/health", timeout=1.5)
+            receiver_up = health.get("status") == "ok"
+            cards_loaded = health.get("cards_loaded")
+        except Exception:
+            pass
+
+        ngrok_up = False
+        ngrok_url = None
+        try:
+            tunnels = _probe_json("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
+            for t in tunnels.get("tunnels", []):
+                if t.get("proto") == "https":
+                    ngrok_url = t.get("public_url")
+                    ngrok_up = bool(ngrok_url)
+                    break
+        except Exception:
+            pass
+
+        return _ok({
+            "receiver_up": receiver_up,
+            "ngrok_up": ngrok_up,
+            "ngrok_url": ngrok_url,
+            "cards_loaded": cards_loaded,
+        }), 200
 
     return _err("not found"), 404
 

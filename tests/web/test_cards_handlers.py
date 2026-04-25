@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -154,3 +155,41 @@ def test_get_card_archive_malformed_verdict_returns_error_in_payload(tmp_path: P
     payload = json.loads(body)["data"]
     assert payload["pine_source"] == "// pine source"
     assert "error" in payload["verdict"]
+
+
+def test_get_receiver_status_reports_up(tmp_path: Path, monkeypatch) -> None:
+    """Receiver and ngrok both responding → both up=True."""
+    def fake_probe(url: str, timeout: float):
+        if "8878" in url:
+            return {"status": "ok", "cards_loaded": 3}
+        if "4040" in url:
+            return {"tunnels": [
+                {"public_url": "https://abcd-1234.ngrok-free.app",
+                 "proto": "https"}
+            ]}
+        raise ValueError(f"unexpected url {url}")
+
+    monkeypatch.setattr(handlers, "_probe_json", fake_probe)
+    body, status = handlers.handle_get_with_status("/tradelab/receiver/status")
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["receiver_up"] is True
+    assert payload["ngrok_up"] is True
+    assert payload["ngrok_url"] == "https://abcd-1234.ngrok-free.app"
+    assert payload["cards_loaded"] == 3
+
+
+def test_get_receiver_status_reports_down(monkeypatch) -> None:
+    """Both probes fail → both up=False, no ngrok URL."""
+    def fake_probe(url: str, timeout: float):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(handlers, "_probe_json", fake_probe)
+    body, status = handlers.handle_get_with_status("/tradelab/receiver/status")
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["receiver_up"] is False
+    assert payload["ngrok_up"] is False
+    assert payload["ngrok_url"] is None
