@@ -122,6 +122,42 @@ def test_runs_inflight_running_before_queued(tmp_path: Path, monkeypatch) -> Non
     assert statuses == ["running", "queued"]
 
 
+def test_runs_tags_archived_flag_when_include_archived(tmp_path: Path, monkeypatch) -> None:
+    """include_archived=true returns archived rows tagged with archived: true."""
+    db = tmp_path / "history.db"
+    _seed_audit_runs(db, [
+        ("r1", "2026-04-25T00:00:00Z", "S2", "STRONG", 0.4),
+        ("r2", "2026-04-24T00:00:00Z", "S2", "WEAK", 0.1),
+    ])
+    archive.archive_run("r2", db_path=db)
+    monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.setattr(handlers, "_get_job_manager", lambda: _fake_job_manager([]))
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs?include_archived=true"
+    )
+    assert status == 200
+    payload = json.loads(body)
+    archived_by_id = {r["run_id"]: r["archived"] for r in payload["runs"]
+                      if r.get("source") == "audit"}
+    assert archived_by_id == {"r1": False, "r2": True}
+
+
+def test_runs_archived_flag_default_false(tmp_path: Path, monkeypatch) -> None:
+    """Without include_archived, every returned row has archived: false."""
+    db = tmp_path / "history.db"
+    _seed_audit_runs(db, [
+        ("r1", "2026-04-25T00:00:00Z", "S2", "STRONG", 0.4),
+    ])
+    monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.setattr(handlers, "_get_job_manager", lambda: _fake_job_manager([]))
+
+    body, status = handlers.handle_get_with_status("/tradelab/runs")
+    payload = json.loads(body)
+    audit_rows = [r for r in payload["runs"] if r.get("source") == "audit"]
+    assert all(r["archived"] is False for r in audit_rows)
+
+
 def test_runs_inflight_excludes_terminal_jobs(tmp_path: Path, monkeypatch) -> None:
     """Done/failed/cancelled jobs come from the audit DB, not the job list.
 

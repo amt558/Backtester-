@@ -72,6 +72,27 @@ def is_archived(run_id: str, *, db_path: Optional[Path] = None) -> bool:
         conn.close()
 
 
+def unarchive_run(run_id: str, *, db_path: Optional[Path] = None) -> bool:
+    """Remove run_id from archived_runs. Idempotent.
+
+    Returns True if a row was removed, False if it wasn't archived to begin
+    with. Caller can use the bool to differentiate but the HTTP layer treats
+    both as success.
+    """
+    db = Path(db_path) if db_path else DEFAULT_DB_PATH
+    if not db.exists():
+        return False
+    conn = _connect(db)
+    try:
+        cur = conn.execute(
+            "DELETE FROM archived_runs WHERE run_id = ?", (run_id,)
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 def list_archived_run_ids(*, db_path: Optional[Path] = None) -> set[str]:
     """Return the set of all archived run_ids. Empty set if DB missing."""
     db = Path(db_path) if db_path else DEFAULT_DB_PATH

@@ -169,9 +169,17 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             db_path=_db_path(),
             exclude_archived=not include_archived,
         )
+        # When include_archived is on, the FE needs to know which rows are
+        # archived to render them dim + show the unarchive button. Otherwise
+        # archived rows are filtered out and the flag is always False.
+        archived_set: set[str] = (
+            archive.list_archived_run_ids(db_path=_db_path())
+            if include_archived else set()
+        )
         for r in audit_rows:
             r["source"] = "audit"
             r["status"] = "done"  # all audit rows are completed by definition
+            r["archived"] = r.get("run_id") in archived_set
 
         # In-flight jobs
         jm = _get_job_manager()
@@ -411,6 +419,13 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         payload = json.loads(body.decode()) if body else {}
     except json.JSONDecodeError:
         return _err("invalid JSON body"), 400
+
+    m = re.match(r"^/tradelab/runs/([^/]+)/unarchive$", path)
+    if m:
+        run_id = m.group(1)
+        archive.unarchive_run(run_id, db_path=_db_path())
+        # Idempotent: succeed regardless of whether a row was actually removed.
+        return "", 204
 
     if path == "/tradelab/runs/bulk-delete":
         run_ids = payload.get("run_ids")
