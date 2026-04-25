@@ -198,3 +198,27 @@ def test_tail_alerts_for_card_negative_limit_returns_empty(tmp_path: Path) -> No
         {"ts": "2026-04-25T09:00:00+00:00", "card_id": "foo-v1", "status": "order_submitted"},
     ])
     assert cards_view.tail_alerts_for_card("foo-v1", log, limit=-5) == []
+
+
+def test_list_cards_view_does_not_alias_registry_cache(tmp_path):
+    """Mutating the view payload must NOT mutate the source cards dict."""
+    from tradelab.web.cards_view import list_cards_view
+    cards = {
+        "foo-v1": {
+            "card_id": "foo-v1", "symbol": "AAPL", "quantity": 5,
+            "status": "enabled", "secret": "x" * 32,
+            "nested": {"daily_limit": 5, "extra": [1, 2, 3]},
+        }
+    }
+    alerts_log = tmp_path / "no_alerts.jsonl"
+
+    view = list_cards_view(cards, alerts_log)
+
+    # Mutate the enriched copy (both top-level and nested)
+    enriched = view["groups"][0]["cards"][0]
+    enriched["quantity"] = 999
+    enriched["nested"]["daily_limit"] = 999
+
+    # Source dict must be unchanged
+    assert cards["foo-v1"]["quantity"] == 5
+    assert cards["foo-v1"]["nested"]["daily_limit"] == 5

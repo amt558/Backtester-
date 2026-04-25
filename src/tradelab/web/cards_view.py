@@ -5,6 +5,7 @@ so tests can use tmp_path.
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -155,14 +156,10 @@ def list_cards_view(cards: dict[str, dict], alerts_log: Path) -> dict:
 
     enriched: dict[str, dict] = {}
     for cid, card in cards.items():
-        # NOTE: shallow copy via dict-spread. Safe for v1 (read-only), but
-        # before Slice 2 mutations we must use copy.deepcopy(card) to avoid
-        # mutating CardRegistry's in-memory cache via nested-dict aliasing.
-        enriched[cid] = {
-            **card,
-            "last_status": last_status.get(cid),
-            "fires_24h": fires_24h.get(cid, 0),
-        }
+        copied = copy.deepcopy(card)
+        copied["last_status"] = last_status.get(cid)
+        copied["fires_24h"] = fires_24h.get(cid, 0)
+        enriched[cid] = copied
 
     groups = group_by_base_name(enriched)
     total_enabled = sum(g["enabled_count"] for g in groups)
