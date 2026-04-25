@@ -89,6 +89,17 @@ class _CardsReloadHandler(FileSystemEventHandler):
         if Path(event.src_path).name == self._watched_name:
             self._maybe_reload()
 
+    def on_moved(self, event):
+        # Atomic os.replace generates a move event on Windows native
+        # Observer with cards.json as dest_path. Without this, every
+        # PATCH/DELETE mutation through the dashboard would persist to
+        # disk but the receiver would keep stale state.
+        if event.is_directory:
+            return
+        dest = getattr(event, "dest_path", "") or ""
+        if Path(dest).name == self._watched_name:
+            self._maybe_reload()
+
 
 def _start_cards_watcher(registry: CardRegistry, *, polling: bool = False):
     """Start a watchdog observer on the parent dir of registry.path.

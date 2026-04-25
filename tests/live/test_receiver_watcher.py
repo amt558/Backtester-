@@ -48,6 +48,41 @@ def test_watcher_triggers_reload_on_external_write(tmp_path: Path) -> None:
         observer.join(timeout=2.0)
 
 
+def test_handler_on_moved_triggers_reload(tmp_path: Path) -> None:
+    """Atomic os.replace fires on_moved on Windows native Observer.
+
+    Before fix: on_moved was unhandled, so PATCH/DELETE mutations through
+    the dashboard (which persist via CardRegistry._persist → os.replace)
+    silently failed to refresh the receiver's in-memory registry. A user
+    could disable a card via UI but the receiver kept firing trades.
+
+    The polling-based test above passes because PollingObserver checks
+    mtime regardless of event type; production uses native Observer
+    where on_moved is the actual signal for atomic replace.
+    """
+    from watchdog.events import FileMovedEvent
+    from tradelab.live.receiver import _CardsReloadHandler
+
+    cards_path = tmp_path / "cards.json"
+    cards_path.write_text(json.dumps({"foo-v1": CARD_A}), encoding="utf-8")
+    reg = CardRegistry(cards_path)
+    assert reg.count() == 1
+
+    cards_path.write_text(
+        json.dumps({"foo-v1": CARD_A, "bar-v1": CARD_B}), encoding="utf-8"
+    )
+
+    handler = _CardsReloadHandler(reg, cards_path)
+    event = FileMovedEvent(
+        src_path=str(cards_path.with_suffix(".json.tmp")),
+        dest_path=str(cards_path),
+    )
+    handler.on_moved(event)
+
+    assert reg.count() == 2
+    assert reg.get("bar-v1") == CARD_B
+
+
 def test_watcher_handles_missing_initial_file(tmp_path: Path) -> None:
     cards_path = tmp_path / "cards.json"
     # File doesn't exist yet
