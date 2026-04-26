@@ -270,3 +270,32 @@ def test_stop_when_not_running_is_safe():
     # No prior start; stop should not raise
     silence_checker.stop()
     assert silence_checker._thread is None
+
+
+def test_stop_acquires_start_lock(monkeypatch):
+    """Regression test: stop() must acquire _start_lock before mutating _thread.
+
+    Slice 5 follow-up #11: start() acquires _start_lock; stop() did not. Two
+    threads racing start+stop could see a torn read of _thread.
+    """
+    from tradelab.live import silence_checker
+
+    enter_calls = []
+    exit_calls = []
+
+    class TrackingLock:
+        def __enter__(self):
+            enter_calls.append(True)
+            return self
+        def __exit__(self, *a):
+            exit_calls.append(True)
+            return False
+
+    monkeypatch.setattr(silence_checker, "_start_lock", TrackingLock())
+    # Also avoid join blocking on a real thread
+    monkeypatch.setattr(silence_checker, "_thread", None)
+
+    silence_checker.stop()
+
+    assert len(enter_calls) >= 1, "stop() did not acquire _start_lock"
+    assert len(exit_calls) >= 1, "stop() did not release _start_lock"

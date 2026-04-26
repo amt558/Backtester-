@@ -164,9 +164,14 @@ def start() -> None:
 
 
 def stop() -> None:
-    """Signal stop and join the thread. Safe when not running."""
+    """Signal stop and join the thread. Safe when not running.
+
+    Acquires _start_lock to mirror start(); prevents torn reads of _thread
+    when start+stop race (Slice 5 follow-up #11).
+    """
     global _thread
     _stop_evt.set()
-    if _thread is not None:
-        _thread.join(timeout=2.0)
-        _thread = None
+    with _start_lock:
+        if _thread is not None:
+            _thread.join(timeout=2.0)
+            _thread = None
