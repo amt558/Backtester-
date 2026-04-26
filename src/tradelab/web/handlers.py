@@ -764,6 +764,26 @@ def handle_sse(wfile) -> None:
         bc.unsubscribe(token)
 
 
+def handle_notify_sse(wfile) -> None:
+    """SSE endpoint for /tradelab/live/notify-stream.
+
+    Subscribes to the notify broadcaster (separate from the job-tracker
+    broadcaster). No initial-state replay — notifications are ephemeral;
+    a new browser tab only sees events emitted after subscription.
+    """
+    from tradelab.web import get_notify_broadcaster
+
+    bc = get_notify_broadcaster()
+    # Pass an empty list (not None) so the spec §6.3 retry hint is sent
+    token = bc.subscribe(wfile, initial_state=[])
+    try:
+        import time
+        while bc.is_subscribed(token):
+            time.sleep(1.0)
+    finally:
+        bc.unsubscribe(token)
+
+
 def _cancel_job(job_id: str) -> Tuple[str, int]:
     from tradelab.web import get_job_manager
     jm = get_job_manager()
