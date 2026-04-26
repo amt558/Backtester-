@@ -164,3 +164,35 @@ def test_email_send_returns_false_on_smtp_exception(monkeypatch):
     }}}
     ok = send("warning", "T", "B", cfg)
     assert ok is False
+
+
+# ─── browser ─────────────────────────────────────────────────────────
+
+
+def test_browser_send_calls_notify_broadcaster_broadcast(monkeypatch):
+    fake_bc = MagicMock()
+    fake_bc.broadcast = MagicMock()
+    monkeypatch.setattr("tradelab.live.notify_channels.browser.get_notify_broadcaster", lambda: fake_bc)
+    from tradelab.live.notify_channels.browser import send
+    ok = send("warning", "Title", "Body", {})
+    assert ok is True
+    fake_bc.broadcast.assert_called_once()
+    payload = fake_bc.broadcast.call_args[0][0]
+    assert payload["severity"] == "warning"
+    assert payload["title"] == "Title"
+    assert payload["body"] == "Body"
+    assert "ts" in payload
+
+
+def test_browser_send_returns_false_on_broadcaster_error(monkeypatch):
+    fake_bc = MagicMock()
+    fake_bc.broadcast.side_effect = RuntimeError("no subscribers? actually any raise")
+    monkeypatch.setattr("tradelab.live.notify_channels.browser.get_notify_broadcaster", lambda: fake_bc)
+    from tradelab.live.notify_channels.browser import send
+    ok = send("info", "T", "B", {})
+    assert ok is False
+
+
+def test_get_notify_broadcaster_is_a_singleton():
+    from tradelab.web import get_notify_broadcaster
+    assert get_notify_broadcaster() is get_notify_broadcaster()

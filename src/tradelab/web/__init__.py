@@ -29,6 +29,13 @@ def get_broadcaster() -> Broadcaster:
     return _broadcaster
 
 
+_notify_broadcaster = Broadcaster()
+
+
+def get_notify_broadcaster() -> Broadcaster:
+    return _notify_broadcaster
+
+
 def get_job_manager() -> JobManager:
     return _job_manager
 
