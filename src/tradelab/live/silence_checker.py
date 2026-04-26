@@ -51,6 +51,7 @@ def _compute_should_be_silent(
     return count_trading_days_between(ref, now_utc) >= multiplier
 
 
+import sys
 import threading
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
@@ -138,3 +139,39 @@ def tick(
             "Card silent",
             f"{cid} ({symbol}) has not fired within its {cadence} cadence threshold.",
         )
+
+
+TICK_SECONDS = 1800  # 30 minutes (spec §8.3)
+
+_thread: Optional[threading.Thread] = None
+_stop_evt = threading.Event()
+
+
+def _run_loop() -> None:
+    """Thread body: tick, sleep TICK_SECONDS (interruptible), repeat."""
+    while not _stop_evt.is_set():
+        try:
+            tick()
+        except Exception as e:
+            print(f"[silence_checker] tick raised: {type(e).__name__}: {e}", file=sys.stderr)
+        if _stop_evt.wait(TICK_SECONDS):
+            break
+
+
+def start() -> None:
+    """Boot the periodic thread. Idempotent — repeated calls are no-ops."""
+    global _thread
+    if _thread is not None and _thread.is_alive():
+        return
+    _stop_evt.clear()
+    _thread = threading.Thread(target=_run_loop, daemon=True, name="silence_checker")
+    _thread.start()
+
+
+def stop() -> None:
+    """Signal stop and join the thread. Safe when not running."""
+    global _thread
+    _stop_evt.set()
+    if _thread is not None:
+        _thread.join(timeout=2.0)
+        _thread = None

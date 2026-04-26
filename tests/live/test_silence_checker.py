@@ -234,3 +234,35 @@ def test_is_rth_at_market_open_boundary_is_true():
 def test_is_rth_at_market_close_boundary_is_false():
     # Exactly 16:00:00 ET = 20:00 UTC → False (close is exclusive)
     assert silence_checker.is_rth(_utc(2026, 4, 22, 20, 0)) is False
+
+
+import time
+
+
+# ---- T6: thread lifecycle --------------------------------------------------
+
+def test_start_creates_running_thread_then_stop_joins_cleanly():
+    silence_checker.start()
+    try:
+        assert silence_checker._thread is not None
+        assert silence_checker._thread.is_alive()
+        assert silence_checker._thread.daemon is True
+    finally:
+        silence_checker.stop()
+    assert silence_checker._thread is None
+
+
+def test_start_is_idempotent():
+    silence_checker.start()
+    first = silence_checker._thread
+    try:
+        silence_checker.start()
+        assert silence_checker._thread is first  # same thread, not replaced
+    finally:
+        silence_checker.stop()
+
+
+def test_stop_when_not_running_is_safe():
+    # No prior start; stop should not raise
+    silence_checker.stop()
+    assert silence_checker._thread is None
