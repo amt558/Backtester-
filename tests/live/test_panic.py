@@ -121,3 +121,126 @@ def test_build_body_l3_with_failures():
     )
     body = _build_notification_body(r)
     assert "Errors: 1" in body  # one failed cancel
+
+
+# ─── Section: execute_panic L1 ──────────────────────────────────────────
+
+@pytest.fixture
+def tmp_panic_log(monkeypatch, tmp_path):
+    """Redirect panic_events.jsonl to a tmp file."""
+    from tradelab.live import panic
+    p = tmp_path / "panic_events.jsonl"
+    monkeypatch.setattr(panic, "PANIC_LOG_PATH", p)
+    return p
+
+
+@pytest.fixture
+def mock_card_registry(monkeypatch):
+    """Mock the CardRegistry that panic.py loads to snapshot/disable cards."""
+    from tradelab.live import panic
+
+    cards_state = {
+        "card_a": {"card_id": "card_a", "base_name": "S2_AAPL_LONG",
+                   "status": "enabled", "qty": 100, "last_fired_at": "2026-04-26T13:00:00-04:00"},
+        "card_b": {"card_id": "card_b", "base_name": "S4_MSFT_SHORT",
+                   "status": "enabled", "qty": 50, "last_fired_at": None},
+        "card_c": {"card_id": "card_c", "base_name": "S7_NVDA_LONG",
+                   "status": "disabled", "qty": 200, "last_fired_at": None},
+    }
+    disabled_calls = []
+
+    class FakeRegistry:
+        def all_hydrated(self):
+            return dict(cards_state)
+        def set_status(self, card_id, status):
+            cards_state[card_id]["status"] = status
+            disabled_calls.append((card_id, status))
+
+    fake = FakeRegistry()
+    monkeypatch.setattr(panic, "_load_registry", lambda: fake)
+    fake._calls = disabled_calls
+    return fake
+
+
+@pytest.fixture
+def mock_notify(monkeypatch):
+    from tradelab.live import panic
+    calls = []
+
+    def fake_notify(severity, title, body, **kwargs):
+        calls.append({"severity": severity, "title": title, "body": body})
+
+    monkeypatch.setattr(panic, "_notify_fn", fake_notify)
+    return calls
+
+
+def test_l1_disables_all_enabled_cards(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+
+    result = execute_panic("L1")
+
+    assert result.level == "L1"
+    assert set(result.cards_disabled) == {"card_a", "card_b"}
+    # card_c was already disabled — should NOT appear in cards_disabled
+    assert "card_c" not in result.cards_disabled
+    # set_status was called only for the enabled ones
+    disabled_ids = {cid for cid, status in mock_card_registry._calls if status == "disabled"}
+    assert disabled_ids == {"card_a", "card_b"}
+
+
+def test_l1_no_alpaca_calls(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+    with patch("tradelab.live.alpaca_client.list_open_orders") as lo, \
+         patch("tradelab.live.alpaca_client.cancel_order_by_id") as co, \
+         patch("tradelab.live.alpaca_client.list_positions") as lp, \
+         patch("tradelab.live.alpaca_client.submit_market_order") as sm:
+        execute_panic("L1")
+        lo.assert_not_called()
+        co.assert_not_called()
+        lp.assert_not_called()
+        sm.assert_not_called()
+
+
+def test_l1_audit_log_appended(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+
+    execute_panic("L1")
+
+    lines = tmp_panic_log.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["level"] == "L1"
+    assert "ts" in entry
+    assert set(entry["cards_disabled"]) == {"card_a", "card_b"}
+    assert entry["orders_cancelled"] == []
+    assert entry["positions_flattened"] == []
+
+
+def test_l1_audit_log_snapshot_shape(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+
+    execute_panic("L1")
+
+    entry = json.loads(tmp_panic_log.read_text(encoding="utf-8").strip())
+    snap = entry["before_state_snapshot"]
+    assert len(snap) == 3  # all 3 cards (enabled + disabled)
+    fields = set(snap[0].keys())
+    assert {"card_id", "base_name", "status", "qty", "last_fired_at"}.issubset(fields)
+
+
+def test_l1_notify_called_with_critical(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+    from tradelab.live.notify import Severity
+
+    execute_panic("L1")
+
+    assert len(mock_notify) == 1
+    assert mock_notify[0]["severity"] == Severity.CRITICAL
+    assert "L1 panic" in mock_notify[0]["title"]
+    assert "2 cards disabled" in mock_notify[0]["title"]
+
+
+def test_l1_invalid_level_raises(tmp_panic_log, mock_card_registry, mock_notify):
+    from tradelab.live.panic import execute_panic
+    with pytest.raises(ValueError):
+        execute_panic("L4")

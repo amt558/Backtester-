@@ -96,3 +96,105 @@ def _build_notification_body(result: PanicResult) -> str:
     if total_failures > 0:
         lines.append(f"Errors: {total_failures} failed action(s) (see audit log).")
     return "\n".join(lines)
+
+
+# ─── Module-level injectable hooks (test seam) ───────────────────────────
+
+def _default_notify(severity, title, body, **kwargs):
+    from tradelab.live import notify as _n
+    return _n.notify(severity, title, body, **kwargs)
+
+_notify_fn = _default_notify  # tests monkey-patch this
+
+
+def _load_registry():
+    """Load the live CardRegistry. Tests monkey-patch this."""
+    from tradelab.live.cards import CardRegistry
+    path = Path(__file__).resolve().parents[3] / "live" / "cards.json"
+    return CardRegistry(path)
+
+
+# ─── Audit log ───────────────────────────────────────────────────────────
+
+def _append_audit(result: PanicResult) -> None:
+    """Append one JSON line to panic_events.jsonl. Best-effort — failure to
+    write the audit log MUST NOT crash the panic (the panic itself succeeded).
+    """
+    try:
+        PANIC_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(_serialize_result(result))
+        with open(PANIC_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception as e:
+        print(f"[panic] audit append failed: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def _serialize_result(result: PanicResult) -> dict:
+    d = asdict(result)
+    return d
+
+
+# ─── execute_panic dispatch ──────────────────────────────────────────────
+
+_VALID_LEVELS = {"L1", "L2", "L3"}
+
+
+def execute_panic(level: str, also_cancel_nontradelab: bool = False) -> PanicResult:
+    """Execute panic at the given level.
+
+    Always succeeds — partial failures (failed Alpaca calls) are recorded
+    inside PanicResult as PanicAction(ok=False, error=...) entries. Raises
+    ValueError only on programmer error (bad level).
+    """
+    if level not in _VALID_LEVELS:
+        raise ValueError(f"invalid panic level: {level!r}; expected one of {sorted(_VALID_LEVELS)}")
+
+    ts = datetime.now(ET).isoformat()
+
+    # Step 1: snapshot current state
+    registry = _load_registry()
+    cards_now = registry.all_hydrated()
+    snapshot = [
+        {
+            "card_id": c.get("card_id", cid),
+            "base_name": c.get("base_name"),
+            "status": c.get("status"),
+            "qty": c.get("qty") or c.get("quantity"),
+            "last_fired_at": c.get("last_fired_at"),
+        }
+        for cid, c in cards_now.items()
+    ]
+
+    # Step 2: L1 — disable all enabled cards
+    cards_disabled: list[str] = []
+    for cid, card in cards_now.items():
+        if card.get("status") == "enabled":
+            try:
+                registry.set_status(cid, "disabled")
+                cards_disabled.append(cid)
+            except Exception as e:
+                # Per-card disable failure: still record what we attempted
+                print(f"[panic] failed to disable {cid}: {type(e).__name__}: {e}", file=sys.stderr)
+
+    orders_cancelled: list[CancelAction] = []
+    positions_flattened: list[FlattenAction] = []
+
+    # Step 3+4 deferred to T5/T6
+
+    result = PanicResult(
+        ts=ts,
+        level=level,
+        before_state_snapshot=snapshot,
+        cards_disabled=cards_disabled,
+        orders_cancelled=orders_cancelled,
+        positions_flattened=positions_flattened,
+    )
+
+    _append_audit(result)
+
+    title = f"🚨 {level} panic — {len(cards_disabled)} cards disabled"
+    body = _build_notification_body(result)
+    from tradelab.live.notify import Severity
+    _notify_fn(Severity.CRITICAL, title, body)
+
+    return result
