@@ -89,15 +89,30 @@ Direct send is intentional — see §2 deferrals for why `notify(DIGEST, ...)` w
 {
   "last_sent_date": "2026-04-27",
   "last_sent_failed": false,
-  "last_attempted_at": "2026-04-27T20:00:14.221+00:00"
+  "last_attempted_at": "2026-04-27T20:00:14.221+00:00",
+  "attempts_today": 0
 }
 ```
 
-- One field that matters (`last_sent_date`); the other two are diagnostic.
+- `last_sent_date` is the only field that gates re-fire; the other three are diagnostic + retry tracking.
+- `attempts_today` increments on each failed send attempt for today's window; reset to 0 once a different `last_sent_date` is being recorded (i.e., a new trading day).
 - Atomic write via `os.replace()` (same pattern as `live_config._persist()`).
 - Read fresh on every `tick()` — no in-memory cache (caching would complicate restart semantics).
 - Gitignored. New file. No rotation needed (overwritten, never appended).
 - On corrupt-file read: log to stderr, treat `last_sent_date` as missing → today's tick will fire (acceptable: re-sending an idempotency-corrupt-day digest is a tolerable failure mode).
+
+### 3.5 Send-failure retry policy
+
+When `notify_channels.email.send()` raises (SMTP unreachable, auth failure, network error):
+
+1. Catch the exception. Do NOT update `last_sent_date` (so today's window remains "not sent").
+2. Increment `attempts_today` and persist (with `last_sent_failed: true`, `last_attempted_at: now`).
+3. Fire `notify(WARNING, "daily digest send failed", "<exception>", attempt=N)` so the user sees something in real-time.
+4. Next tick (60s later) will retry — the gating logic only checks `last_sent_date == today`, not `attempts_today`.
+5. **Retry cap:** when `attempts_today >= 5`, set `last_sent_date = today` anyway and write `last_sent_failed: true`. This breaks the retry loop for the day. The next 60s tick sees today is already "sent" and skips. Tomorrow starts fresh.
+6. The retry-cap WARNING includes a "no further retries today" suffix in the body so the user knows manual intervention is needed.
+
+This bounds the retry burst to 5 minutes of attempts (5 ticks × 60s) per day. Trades aggressive recovery against not spamming the SMTP relay during sustained outages.
 
 ## 4. Data sources for `render()`
 
@@ -155,7 +170,9 @@ Pattern:
 </div>
 ```
 
-CSS is **inline-styled** (not a `<style>` block) for maximum email-client compatibility. Color palette: `#d32f2f` (crit), `#f57c00` (warn), `#388e3c` (ok), `#1a1a1a` (text), `#888` (meta).
+**Note on the snippet above:** the `class="badge badge-crit"` and similar attributes are shown for readability. Actual generated HTML uses **inline `style="..."` attributes** on each element — no `<style>` block, no class-to-style mapping, no external CSS. This is required for email-client compatibility (Gmail strips `<style>` blocks that aren't in `<head>`; Outlook ignores classes in many contexts).
+
+Color palette used in inline styles: `#d32f2f` (crit), `#f57c00` (warn), `#388e3c` (ok), `#1a1a1a` (text), `#888` (meta), `#f7f7f7` (table-header bg).
 
 ### 5.3 Plaintext fallback
 
@@ -296,9 +313,9 @@ New structure: §1-9 + **NEW §10-16 Live Trading & Operations group** + renumbe
 
 | § | Title | Source slice | Source done doc |
 |---|---|---|---|
-| 10 | Live Trading tab | Slice 1 | (locate Slice 1 done doc) |
-| 11 | Card mutations from UI | Slice 2 | (locate Slice 2 done doc) |
-| 12 | Position guardrails | Slice 3 | (locate Slice 3 done doc) |
+| 10 | Live Trading tab | Slice 1 | `2026-04-25-DIRECTION-A-SLICE-1-COMPLETE.md` |
+| 11 | Card mutations from UI | Slice 2 | `2026-04-25-DIRECTION-A-SLICE-2-COMPLETE.md` |
+| 12 | Position guardrails | Slice 3 | `2026-04-25-DIRECTION-A-SLICE-3-COMPLETE.md` |
 | 13 | Notification system | Slice 4 | `2026-04-25-DIRECTION-A-SLICE-4-COMPLETE.md` |
 | 14 | Silence detection | Slice 5 | `2026-04-25-DIRECTION-A-SLICE-5-COMPLETE.md` |
 | 15 | Panic Panel | Slice 6 | `2026-04-26-DIRECTION-A-SLICE-6-COMPLETE.md` |
@@ -419,8 +436,9 @@ Tactical, will get resolved when writing the plan:
 2. **Iframe height** — 480px static (mockup default) vs auto-resize via `postMessage` from the iframe. Static is fine for v1; auto-resize is polish.
 3. **F2 rotation date format** — `YYYY-MM-DD` vs `YYYYMMDD` in archive filenames. Plan picks one; either works.
 4. **F2 first-rotation race** — if launcher boots and `rotate_all()` runs same day as a previous rotation, the N suffix needs to look at existing archives to compute next N. Detail for the plan.
-5. **Manual update — Slice 1 done doc location** — the parent dir at `C:\TradingScripts\` has Slice 4/5/6 done docs but Slice 1/2/3 may be in different paths. Plan needs to locate before writing §10-12.
-6. **F1 — exact `build_alpaca_state` location** — receiver code structure may require introducing the helper if it doesn't exist yet (current receiver may inline these calls). Plan to confirm.
+5. **F1 — exact `build_alpaca_state` location** — receiver code structure may require introducing the helper if it doesn't exist yet (current receiver may inline these calls). Plan to confirm.
+6. **Subject-line ordering precedence when ≥3 anomaly types are present** — §5.1 says "top 2 categories most-severe-first" but doesn't define severity ordering across the 6 anomaly types. Plan picks one (suggested: PANIC > BLOCK > FAIL > DOWNTIME > NGROK > SILENT).
+7. **Notify-event audit row schema** — §3.3 says digest sends append an INFO line directly to `notify_events.jsonl`. Plan defines the exact schema (e.g., `{"ts": ..., "severity": "INFO", "title": "daily_digest_sent", "body": "...", "event_type": "daily_digest_sent"}`).
 
 These are not blockers for the spec but will need answers when writing the plan.
 
