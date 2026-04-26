@@ -192,6 +192,7 @@ def hydrate_card_state_from_alerts_log(
 
 
 _alpaca_state: Optional["AlpacaState"] = None
+_data_client: Optional["StockHistoricalDataClient"] = None
 
 
 def _ensure_alpaca_state() -> AlpacaState:
@@ -199,6 +200,25 @@ def _ensure_alpaca_state() -> AlpacaState:
     if _alpaca_state is None:
         _alpaca_state = AlpacaState(client=get_client(), ttl_seconds=2.0)
     return _alpaca_state
+
+
+def _ensure_data_client():
+    """Lazy singleton for the market-data client (last-price lookups).
+
+    Reads alpaca_config.json once on first webhook; subsequent calls
+    return the cached client. Mirrors the trading-client memoization
+    in alpaca_client.get_client().
+    """
+    global _data_client
+    if _data_client is not None:
+        return _data_client
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+    from tradelab.live.alpaca_client import CONFIG_PATH
+    cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+    _data_client = StockHistoricalDataClient(
+        cfg["alpaca"]["api_key"], cfg["alpaca"]["secret_key"],
+    )
+    return _data_client
 
 
 def _fetch_last_price(symbol: str) -> float:
@@ -211,13 +231,8 @@ def _fetch_last_price(symbol: str) -> float:
     a missed check).
     """
     try:
-        from alpaca.data.historical.stock import StockHistoricalDataClient
         from alpaca.data.requests import StockLatestTradeRequest
-        from tradelab.live.alpaca_client import CONFIG_PATH
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
-        client = StockHistoricalDataClient(
-            cfg["alpaca"]["api_key"], cfg["alpaca"]["secret_key"],
-        )
+        client = _ensure_data_client()
         req = StockLatestTradeRequest(symbol_or_symbols=symbol)
         trade = client.get_stock_latest_trade(req)[symbol]
         return float(trade.price)

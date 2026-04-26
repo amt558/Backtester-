@@ -125,7 +125,7 @@ def test_webhook_naked_short_blocked_when_no_position(patched_receiver):
     r = p["client"].post("/webhook", json=_alert_payload(action="sell"))
     assert r.status_code == 403
     body = r.json()
-    assert "no_position_to_sell" in body["error"] or "no position" in body["error"].lower()
+    assert "no_position_to_sell" in body["error"]
 
 
 def test_webhook_records_fire_only_on_successful_submit(patched_receiver, monkeypatch):
