@@ -112,7 +112,7 @@ def test_render_snapshot_section_with_data(monkeypatch):
     monkeypatch.setattr(daily_summary, "_open_orders",
                          lambda: [{"symbol": "GOOG", "qty": "10", "side": "buy", "status": "new"}])
     monkeypatch.setattr(daily_summary, "_receiver_status",
-                         lambda: {"up": True, "uptime_seconds": 30120, "ngrok_url": "abc.ngrok-free.app"})
+                         lambda: {"up": True, "ngrok_url": "abc.ngrok-free.app"})
 
     section = daily_summary._render_snapshot_section(date(2026, 4, 27))
 
@@ -121,7 +121,7 @@ def test_render_snapshot_section_with_data(monkeypatch):
     assert "4 CRITICAL" in section
     assert "AMZN" in section and "GOOG" in section
     assert "abc.ngrok-free.app" in section
-    assert "8h" in section.lower()  # uptime humanized
+    assert "up" in section.lower()  # receiver line rendered
 
 
 def test_render_snapshot_section_empty_alpaca(monkeypatch):
@@ -134,7 +134,7 @@ def test_render_snapshot_section_empty_alpaca(monkeypatch):
     monkeypatch.setattr(daily_summary, "_open_positions", lambda: [])
     monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
     monkeypatch.setattr(daily_summary, "_receiver_status",
-                         lambda: {"up": True, "uptime_seconds": 0, "ngrok_url": "—"})
+                         lambda: {"up": True, "ngrok_url": "—"})
 
     section = daily_summary._render_snapshot_section(date(2026, 4, 27))
     assert "Open positions (0)" in section
@@ -154,7 +154,7 @@ def test_render_snapshot_section_alpaca_error_degrades(monkeypatch):
                          lambda: (_ for _ in ()).throw(RuntimeError("alpaca down")))
     monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
     monkeypatch.setattr(daily_summary, "_receiver_status",
-                         lambda: {"up": True, "uptime_seconds": 100, "ngrok_url": "x"})
+                         lambda: {"up": True, "ngrok_url": "x"})
 
     section = daily_summary._render_snapshot_section(date(2026, 4, 27))
     assert "[error: RuntimeError]" in section

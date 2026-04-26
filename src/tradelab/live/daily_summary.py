@@ -28,6 +28,7 @@ ALERTS_PATH = _LIVE_DIR / "alerts.jsonl"
 NOTIFY_PATH = _LIVE_DIR / "notify_events.jsonl"
 PANIC_PATH = _LIVE_DIR / "panic_events.jsonl"
 STATE_PATH = _LIVE_DIR / "digest_state.json"
+CARDS_PATH = _LIVE_DIR / "cards.json"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -215,7 +216,7 @@ def _card_counts() -> dict:
     from tradelab.live.cards import CardRegistry
     from tradelab.live import silence_checker
 
-    cards = CardRegistry().list_all()
+    cards = CardRegistry(CARDS_PATH).all_hydrated().values()
     total = len(cards)
     enabled = sum(1 for c in cards if c.get("status") == "enabled")
     disabled = sum(1 for c in cards if c.get("status") == "disabled")
@@ -251,22 +252,21 @@ def _open_orders() -> list[dict]:
 
 
 def _receiver_status() -> dict:
-    """Best-effort: probe the receiver's /health endpoint via the receiver_status helper.
-    Returns {up, uptime_seconds, ngrok_url}. On failure: up=False."""
+    """Best-effort: probe the receiver's status endpoint.
+    Returns {up, ngrok_url}. On failure: {up: False, ngrok_url: "—"}.
+    Note: uptime is not available from the current endpoint shape; see
+    Slice 7a follow-up for adding receiver_uptime_seconds to handlers.py."""
     try:
-        # Reuse the existing /tradelab/receiver/status logic if present.
-        # Defer import to avoid circular ref at module-load time.
         import urllib.request
         import json as _json
         with urllib.request.urlopen("http://127.0.0.1:8877/tradelab/receiver/status", timeout=2) as r:
             data = _json.loads(r.read().decode("utf-8")).get("data", {})
         return {
             "up": bool(data.get("receiver_up", False)),
-            "uptime_seconds": int(data.get("receiver_uptime_seconds", 0)),
             "ngrok_url": data.get("ngrok_url", "—") or "—",
         }
     except Exception:
-        return {"up": False, "uptime_seconds": 0, "ngrok_url": "—"}
+        return {"up": False, "ngrok_url": "—"}
 
 
 def _humanize_seconds(s: int) -> str:
@@ -305,11 +305,11 @@ def _render_snapshot_section(today_et: date) -> str:
             f'{nsc["CRITICAL"]} CRITICAL / {nsc["WARNING"]} WARNING / {nsc["INFO"]} INFO notifications</p>'
         )
 
-    rs, err = _safe_call(_receiver_status, default={"up": False, "uptime_seconds": 0, "ngrok_url": "—"})
+    rs, err = _safe_call(_receiver_status, default={"up": False, "ngrok_url": "—"})
     if err:
         parts.append(f'<p>[error: {err}] receiver status</p>')
     else:
-        up_str = f'up, {_humanize_seconds(rs["uptime_seconds"])}' if rs["up"] else "down"
+        up_str = "up" if rs["up"] else "down"
         parts.append(
             f'<p><strong>Receiver:</strong> {up_str} · '
             f'<strong>ngrok:</strong> <code>{rs["ngrok_url"]}</code></p>'
