@@ -368,6 +368,9 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     if path == "/tradelab/live/config":
         return handle_live_config_get()
 
+    if path == "/tradelab/live/silence-status":
+        return handle_silence_status_get()
+
     return _err("not found"), 404
 
 
@@ -966,6 +969,12 @@ def handle_test_notification(payload) -> Tuple[str, int]:
         channels={channel},
     )
     return _ok({"channel": channel, "severity": severity_str}), 200
+
+
+def handle_silence_status_get() -> Tuple[str, int]:
+    """Return current silent-card set as {<card_id>: true} envelope."""
+    from tradelab.live import silence_checker
+    return _ok({cid: True for cid in silence_checker.silent_set()}), 200
 
 
 # ─── Validation for /tradelab/score + /tradelab/accept (Option H 3a) ──

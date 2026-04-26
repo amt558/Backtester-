@@ -92,3 +92,29 @@ def test_test_notification_endpoint_writes_to_notify_events(tmp_path, monkeypatc
 def test_test_notification_rejects_unknown_channel():
     body, status = handlers.handle_test_notification({"channel": "carrier_pigeon", "severity": "critical"})
     assert status == 400
+
+
+def test_silence_status_endpoint_returns_current_silent_set(monkeypatch):
+    from tradelab.live import silence_checker
+    monkeypatch.setattr(silence_checker, "_silent_cards", {"foo-v1", "bar-v2"})
+    body, status = handlers.handle_silence_status_get()
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["error"] is None
+    assert payload["data"] == {"foo-v1": True, "bar-v2": True}
+
+
+def test_silence_status_empty_set_returns_empty_dict(monkeypatch):
+    from tradelab.live import silence_checker
+    monkeypatch.setattr(silence_checker, "_silent_cards", set())
+    body, status = handlers.handle_silence_status_get()
+    assert status == 200
+    assert json.loads(body)["data"] == {}
+
+
+def test_silence_status_route_dispatched_via_handle_get(monkeypatch):
+    from tradelab.live import silence_checker
+    monkeypatch.setattr(silence_checker, "_silent_cards", {"only-one"})
+    body, status = handlers.handle_get_with_status("/tradelab/live/silence-status")
+    assert status == 200
+    assert json.loads(body)["data"] == {"only-one": True}
