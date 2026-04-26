@@ -110,3 +110,57 @@ def test_ntfy_send_returns_false_on_http_error(monkeypatch):
     cfg = {"notifications": {"ntfy": {"topic": "x", "server": "https://ntfy.sh"}}}
     ok = send("info", "T", "B", cfg)
     assert ok is False
+
+
+# ─── email ───────────────────────────────────────────────────────────
+
+
+def test_email_send_uses_starttls_login_and_sendmail(monkeypatch):
+    smtp_instance = MagicMock()
+    smtp_class = MagicMock(return_value=smtp_instance)
+    smtp_instance.__enter__ = MagicMock(return_value=smtp_instance)
+    smtp_instance.__exit__ = MagicMock(return_value=False)
+    monkeypatch.setattr("tradelab.live.notify_channels.email.smtplib.SMTP", smtp_class)
+    from tradelab.live.notify_channels.email import send
+    cfg = {"notifications": {"smtp": {
+        "host": "smtp.example.com", "port": 587,
+        "user": "u@e.com", "password": "pw",
+        "from_address": "u@e.com", "to_address": "amit@e.com",
+    }}}
+    ok = send("critical", "Boom", "Body line", cfg)
+    assert ok is True
+    smtp_class.assert_called_once_with("smtp.example.com", 587, timeout=10)
+    smtp_instance.starttls.assert_called_once()
+    smtp_instance.login.assert_called_once_with("u@e.com", "pw")
+    smtp_instance.sendmail.assert_called_once()
+    args = smtp_instance.sendmail.call_args[0]
+    assert args[0] == "u@e.com"
+    assert args[1] == ["amit@e.com"]
+    assert "Boom" in args[2]
+    assert "Body line" in args[2]
+
+
+def test_email_send_no_op_when_host_empty(monkeypatch):
+    smtp_class = MagicMock()
+    monkeypatch.setattr("tradelab.live.notify_channels.email.smtplib.SMTP", smtp_class)
+    from tradelab.live.notify_channels.email import send
+    cfg = {"notifications": {"smtp": {"host": "", "to_address": "x@e.com"}}}
+    ok = send("info", "T", "B", cfg)
+    assert ok is False
+    smtp_class.assert_not_called()
+
+
+def test_email_send_returns_false_on_smtp_exception(monkeypatch):
+    import smtplib as real_smtplib
+    smtp_instance = MagicMock()
+    smtp_instance.__enter__ = MagicMock(return_value=smtp_instance)
+    smtp_instance.__exit__ = MagicMock(return_value=False)
+    smtp_instance.login.side_effect = real_smtplib.SMTPAuthenticationError(535, b"nope")
+    monkeypatch.setattr("tradelab.live.notify_channels.email.smtplib.SMTP", MagicMock(return_value=smtp_instance))
+    from tradelab.live.notify_channels.email import send
+    cfg = {"notifications": {"smtp": {
+        "host": "smtp.example.com", "port": 587, "user": "u", "password": "x",
+        "from_address": "u@e.com", "to_address": "amit@e.com",
+    }}}
+    ok = send("warning", "T", "B", cfg)
+    assert ok is False
