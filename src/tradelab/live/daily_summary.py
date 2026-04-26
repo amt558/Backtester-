@@ -12,7 +12,6 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
 
 try:
     from zoneinfo import ZoneInfo
@@ -97,10 +96,13 @@ def _ts_to_et_hhmm(ts: str) -> str:
 
 
 def _safe_call(fn, *args, default):
-    """Call fn(*args); on any exception return (default, exc_type_name)."""
+    """Call fn(*args); on any exception return (default, exc_type_name).
+    Logs the exception to stderr for operator visibility — the rendered
+    [error: <type>] placeholder shows the type but stderr shows the detail."""
     try:
         return fn(*args), None
     except Exception as e:
+        print(f"[daily_summary] {fn.__name__} failed: {type(e).__name__}: {e}", file=sys.stderr)
         return default, type(e).__name__
 
 
