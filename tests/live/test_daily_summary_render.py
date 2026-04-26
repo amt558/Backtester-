@@ -228,3 +228,67 @@ def test_render_plaintext_fallback_present():
     assert "X" in plain
     # No HTML tags in output
     assert "<" not in plain and ">" not in plain
+
+
+def test_render_subject_pluralization_n_equals_1(monkeypatch):
+    """When n=1 for a non-panic category, subject must use singular form."""
+    monkeypatch.setattr(daily_summary, "_today_panics", lambda d: [
+        _make_panic_entry("2026-04-27T13:00:00+00:00", "L1"),
+    ])
+    monkeypatch.setattr(daily_summary, "_today_guardrail_blocks", lambda d: [
+        _make_alert_entry("2026-04-27T14:00:00+00:00", "guardrail_blocked", "c1", reason="cooldown_active"),
+    ])
+    for fn in ("_today_silent_transitions", "_today_order_failures",
+               "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 1, "enabled": 1, "disabled": 0, "silent": 0})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0})
+    monkeypatch.setattr(daily_summary, "_open_positions", lambda: [])
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "ngrok_url": "x"})
+
+    subject, _ = daily_summary.render(datetime(2026, 4, 27, 16, 0, 0))
+    # 1 panic, 1 block — both singular
+    assert subject == "tradelab daily — 2026-04-27 — 1 panic, 1 block"
+
+
+def test_render_plaintext_handles_table_headers(monkeypatch):
+    """Plaintext stripper must space <th> headers, not just <td> cells."""
+    html = '<table><tr><th>Symbol</th><th>Qty</th><th>Side</th></tr>' \
+           '<tr><td>AMZN</td><td>12</td><td>long</td></tr></table>'
+    plain = daily_summary._render_plaintext(html)
+    # Headers should have at least one space between them
+    assert "Symbol  Qty  Side" in plain or "Symbol Qty Side" in plain or \
+           ("Symbol" in plain and "Qty" in plain and "Side" in plain
+            and "SymbolQty" not in plain and "QtySide" not in plain)
+
+
+def test_render_plaintext_end_to_end_via_render(monkeypatch):
+    """Feed actual render() output through _render_plaintext to catch any tag drift."""
+    for fn in ("_today_panics", "_today_silent_transitions", "_today_guardrail_blocks",
+               "_today_order_failures", "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 1, "enabled": 1, "disabled": 0, "silent": 0})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0})
+    # One position to force the table to render
+    monkeypatch.setattr(daily_summary, "_open_positions",
+                         lambda: [{"symbol": "AMZN", "qty": "12", "side": "long"}])
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "ngrok_url": "x"})
+
+    _, html = daily_summary.render(datetime(2026, 4, 27, 16, 0, 0))
+    plain = daily_summary._render_plaintext(html)
+    # Headers visible in plaintext, with separation
+    assert "Symbol" in plain and "Qty" in plain and "Side" in plain
+    # Symbol+Qty must not be glued together
+    assert "SymbolQty" not in plain
+    # No HTML tags survived
+    assert "<" not in plain and ">" not in plain

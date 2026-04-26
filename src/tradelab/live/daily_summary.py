@@ -367,29 +367,30 @@ def _render_snapshot_section(today_et: date) -> str:
 # Render — public render(now) + subject + plaintext fallback
 # ────────────────────────────────────────────────────────────────────────────
 
-_SUBJECT_PRECEDENCE = ["panic", "block", "fail", "downtime", "ngrok", "silent"]
-_SUBJECT_LABELS = {
-    "panic": "panic",
-    "block": "blocks",
-    "fail": "failures",
-    "downtime": "downtimes",
-    "ngrok": "ngrok changes",
-    "silent": "silent",
-}
+_SUBJECT_CATEGORIES = [
+    # (key, singular_label, plural_label)
+    ("panic",    "panic",              "panics"),
+    ("block",    "block",              "blocks"),
+    ("fail",     "failure",            "failures"),
+    ("downtime", "downtime",           "downtimes"),
+    ("ngrok",    "ngrok change",       "ngrok changes"),
+    ("silent",   "silent transition",  "silent transitions"),
+]
 
 
 def _render_subject(today_str: str, counts: dict[str, int]) -> str:
     """tradelab daily — YYYY-MM-DD — <tail>.
     Tail = 'all clear' if total=0, else top-2 categories by precedence
-    (PANIC>BLOCK>FAIL>DOWNTIME>NGROK>SILENT) per spec §15 q6."""
+    (PANIC > BLOCK > FAIL > DOWNTIME > NGROK > SILENT). Pluralized correctly."""
     if sum(counts.values()) == 0:
         return f"tradelab daily — {today_str} — all clear"
-    nonzero = [(k, counts[k]) for k in _SUBJECT_PRECEDENCE if counts.get(k, 0) > 0]
+    nonzero = [(key, sing, plur, counts[key])
+               for key, sing, plur in _SUBJECT_CATEGORIES
+               if counts.get(key, 0) > 0]
     top = nonzero[:2]
     parts = []
-    for k, n in top:
-        # Singular handling for panic only ("1 panic" not "1 panics")
-        label = "panic" if (k == "panic" and n == 1) else _SUBJECT_LABELS[k]
+    for _key, sing, plur, n in top:
+        label = sing if n == 1 else plur
         parts.append(f"{n} {label}")
     return f"tradelab daily — {today_str} — {', '.join(parts)}"
 
@@ -400,7 +401,7 @@ def _render_plaintext(html: str) -> str:
     # Replace block-level closers with newlines for readability
     s = re.sub(r"</(h[1-6]|p|li|tr|div)>", "\n", html, flags=re.IGNORECASE)
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</td>", "  ", s, flags=re.IGNORECASE)
+    s = re.sub(r"</(td|th)>", "  ", s, flags=re.IGNORECASE)
     s = re.sub(r"<[^>]+>", "", s)  # strip remaining tags
     # Decode common entities
     s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
