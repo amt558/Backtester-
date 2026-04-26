@@ -230,3 +230,58 @@ def test_collision_allow_collision_override_passes():
         "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=5)),
     }
     assert check_symbol_collision(me, registry, states, now) is None
+
+
+# ── Naked short ─────────────────────────────────────────────────────
+
+from tradelab.live.guardrails import check_naked_short
+
+
+class _Position:
+    def __init__(self, symbol: str, qty: str = "10"):
+        self.symbol = symbol
+        self.qty = qty
+
+
+class _AlpacaStateStub:
+    def __init__(self, positions=None):
+        self._positions = positions or []
+    def positions(self):
+        return self._positions
+
+
+def test_naked_short_buy_action_passes_regardless():
+    state = _AlpacaStateStub(positions=[])
+    assert check_naked_short(_card(), "buy", state) is None
+
+
+def test_naked_short_sell_with_position_passes():
+    state = _AlpacaStateStub(positions=[_Position("AAPL", "10")])
+    assert check_naked_short(_card(symbol="AAPL"), "sell", state) is None
+
+
+def test_naked_short_sell_without_position_blocks():
+    state = _AlpacaStateStub(positions=[_Position("MSFT", "5")])
+    reason = check_naked_short(_card(symbol="AAPL"), "sell", state)
+    assert reason is not None
+    assert reason.code == "no_position_to_sell"
+    assert reason.details["symbol"] == "AAPL"
+
+
+def test_naked_short_sell_zero_qty_position_blocks():
+    """A position record with qty=0 still means no inventory to sell."""
+    state = _AlpacaStateStub(positions=[_Position("AAPL", "0")])
+    reason = check_naked_short(_card(symbol="AAPL"), "sell", state)
+    assert reason is not None
+    assert reason.code == "no_position_to_sell"
+
+
+def test_naked_short_allow_override_passes():
+    state = _AlpacaStateStub(positions=[])
+    card = _card(symbol="AAPL", allow_naked_short=True)
+    assert check_naked_short(card, "sell", state) is None
+
+
+def test_naked_short_symbol_match_is_case_insensitive():
+    state = _AlpacaStateStub(positions=[_Position("aapl", "10")])
+    assert check_naked_short(_card(symbol="AAPL"), "sell", state) is None

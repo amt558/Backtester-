@@ -119,3 +119,25 @@ def check_symbol_collision(
             },
         )
     return None
+
+
+def check_naked_short(card: dict, action: str, alpaca_state) -> Optional[BlockReason]:
+    if action != "sell":
+        return None
+    if card.get("allow_naked_short"):
+        return None
+    target = str(card.get("symbol", "")).upper()
+    for pos in alpaca_state.positions():
+        if str(getattr(pos, "symbol", "")).upper() != target:
+            continue
+        try:
+            qty = float(getattr(pos, "qty", 0) or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        if qty > 0:
+            return None
+    return BlockReason(
+        code="no_position_to_sell",
+        message=f"sell rejected: no open position in {target}",
+        details={"symbol": target},
+    )
