@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
+from typing import Optional
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -25,10 +26,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from tradelab.live.alpaca_client import submit_market_order
+from tradelab.live.alpaca_client import get_client, submit_market_order
+from tradelab.live.alpaca_state import AlpacaState
 from tradelab.live.cards import CardRegistry
 from tradelab.live.guardrails import (
     CardRuntimeState,
+    evaluate_guardrails,
     get_rth_window_start,
 )
 from tradelab.live.schema import AlertPayload
@@ -188,6 +191,41 @@ def hydrate_card_state_from_alerts_log(
     return states
 
 
+_alpaca_state: Optional["AlpacaState"] = None
+
+
+def _ensure_alpaca_state() -> AlpacaState:
+    global _alpaca_state
+    if _alpaca_state is None:
+        _alpaca_state = AlpacaState(client=get_client(), ttl_seconds=2.0)
+    return _alpaca_state
+
+
+def _fetch_last_price(symbol: str) -> float:
+    """Best-effort last-trade price for buying-power check.
+
+    Returns 0.0 on any failure (paper accounts without market data, network
+    errors, missing subscriptions). 0.0 makes the buying-power candidate
+    notional 0, which always passes (the check is intentionally lenient on
+    data unavailability — a flat-out cap miss is more user-hostile than
+    a missed check).
+    """
+    try:
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestTradeRequest
+        from tradelab.live.alpaca_client import CONFIG_PATH
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+        client = StockHistoricalDataClient(
+            cfg["alpaca"]["api_key"], cfg["alpaca"]["secret_key"],
+        )
+        req = StockLatestTradeRequest(symbol_or_symbols=symbol)
+        trade = client.get_stock_latest_trade(req)[symbol]
+        return float(trade.price)
+    except Exception as e:
+        logger.warning("last-price fetch failed for %s: %s", symbol, e)
+        return 0.0
+
+
 app = FastAPI(title="tradelab live webhook receiver", version="0.1.0")
 
 
@@ -287,11 +325,49 @@ async def webhook(request: Request):
         _log_alert(payload_dict, alert.card_id, "bad_quantity", {"qty": qty})
         return JSONResponse({"error": f"bad quantity: {qty}"}, status_code=422)
 
-    client_order_id = f"{alert.card_id}-{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+    # ── Guardrail pipeline ───────────────────────────────────────────
+    # Order matters: evaluate FIRST (reading the prior last_attempted_at),
+    # THEN record this attempt. Recording first would self-block every
+    # card's first webhook on cooldown (elapsed = 0 < cooldown_seconds).
+    now = datetime.now(timezone.utc)
+    last_price = _fetch_last_price(alert_symbol)
+    alpaca_state = _ensure_alpaca_state()
+    hydrated_card = {**card, "card_id": alert.card_id}
+    block = evaluate_guardrails(
+        card=hydrated_card,
+        action=alert.action,
+        qty=qty,
+        last_price=last_price,
+        registry=cards.all_hydrated(),
+        states=_card_state,
+        alpaca_state=alpaca_state,
+        now=now,
+    )
+    # Record the attempt regardless of outcome (debounces a flood of
+    # blocked webhooks — each one pushes the cooldown forward).
+    record_attempt(_card_state, alert.card_id, now)
+
+    if block is not None:
+        _log_alert(
+            payload_dict, alert.card_id, "guardrail_blocked",
+            {"reason": block.code, "message": block.message, **block.details},
+        )
+        return JSONResponse(
+            {"error": f"{block.code}: {block.message}"},
+            status_code=403,
+        )
+
+    client_order_id = f"{alert.card_id}-{int(now.timestamp() * 1000)}"
     try:
         result = await asyncio.to_thread(
             submit_market_order, alert_symbol, alert.action, qty, client_order_id
         )
+        record_fire(_card_state, alert.card_id, now)
+        alpaca_state.invalidate()
+        try:
+            cards.update(alert.card_id, {"last_fired_at": now.isoformat()})
+        except Exception as e:
+            logger.warning("failed to persist last_fired_at: %s", e)
         _log_alert(payload_dict, alert.card_id, "order_submitted", result)
         return {"ok": True, "order": result}
     except Exception as e:
