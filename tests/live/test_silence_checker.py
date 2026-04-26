@@ -77,3 +77,18 @@ def test_never_fired_no_enabled_at_returns_false():
 def test_unknown_cadence_returns_false():
     card = _card(cadence="bogus")
     assert _compute_should_be_silent(card, _utc(2026, 4, 29), MULTS) is False
+
+
+def test_non_string_last_fired_at_returns_false():
+    # Future schema bug: int instead of ISO string. Should not crash, should not flag silent.
+    card = _card(last_fired_at=12345)
+    assert _compute_should_be_silent(card, _utc(2026, 4, 29), MULTS) is False
+
+
+def test_naive_now_utc_treated_as_utc():
+    # Defensive: caller passes naive datetime — function should not crash.
+    from datetime import datetime as _dt
+    naive_now = _dt(2026, 4, 29, 18, 0)  # no tzinfo
+    card = _card(cadence="daily", last_fired_at=_utc(2026, 4, 22).isoformat())
+    # Apr 22 → Apr 29 = 5 trading days; daily threshold = 5 → silent
+    assert _compute_should_be_silent(card, naive_now, MULTS) is True

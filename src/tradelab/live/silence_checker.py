@@ -32,12 +32,16 @@ def _compute_should_be_silent(
     ref_str = card.get("last_fired_at") or card.get("enabled_at")
     if ref_str is None:
         return False
+    if not isinstance(ref_str, str):
+        return False
     try:
         ref = datetime.fromisoformat(ref_str.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+    except ValueError:
         return False
     if ref.tzinfo is None:
         ref = ref.replace(tzinfo=timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
     multiplier = int(multipliers.get(cadence, 0))
     if multiplier <= 0:
         return False
