@@ -342,3 +342,11 @@ def test_fetch_and_render_calls_silence_status_first(html: str) -> None:
         "fetchAndRender must call fetchSilenceStatus() BEFORE fetching /tradelab/cards "
         "so silentSet is fresh when renderRow reads it"
     )
+
+
+def test_amber_silent_pill_css_has_visible_content(html: str) -> None:
+    """The ::after content must produce visible text — an empty or missing
+    content would make the pill invisible without breaking the selector test."""
+    assert 'content: "● silent"' in html or "content: '● silent'" in html, (
+        "amber pill ::after must set content to '● silent' (otherwise pill renders empty)"
+    )
