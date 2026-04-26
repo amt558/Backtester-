@@ -112,7 +112,6 @@ def tick(
         from pathlib import Path
         path = Path(__file__).resolve().parents[3] / "live" / "cards.json"
         registry = CardRegistry(path)
-        registry.reload()
         cards = registry.all_hydrated()
     if multipliers is None:
         from tradelab.live import live_config
