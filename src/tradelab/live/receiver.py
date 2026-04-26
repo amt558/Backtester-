@@ -34,6 +34,8 @@ from tradelab.live.guardrails import (
     evaluate_guardrails,
     get_rth_window_start,
 )
+from tradelab.live import notify as _notify
+from tradelab.live.notify import Severity
 from tradelab.live.schema import AlertPayload
 
 LIVE_DATA_DIR = Path("C:/TradingScripts/tradelab/live")
@@ -367,6 +369,11 @@ async def webhook(request: Request):
             payload_dict, alert.card_id, "guardrail_blocked",
             {"reason": block.code, "message": block.message, **block.details},
         )
+        _notify.notify(
+            Severity.CRITICAL,
+            "Guardrail blocked",
+            f"{alert.card_id} {alert.action} {alert_symbol}: {block.code} — {block.message}",
+        )
         return JSONResponse(
             {"error": f"{block.code}: {block.message}"},
             status_code=403,
@@ -387,4 +394,9 @@ async def webhook(request: Request):
         return {"ok": True, "order": result}
     except Exception as e:
         _log_alert(payload_dict, alert.card_id, "order_failed", {"error": str(e)})
-        return JSONResponse({"error": f"order placement failed: {e}"}, status_code=500)
+        _notify.notify(
+            Severity.CRITICAL,
+            "Alpaca order failed",
+            f"{alert.card_id} {alert.action} {alert_symbol} qty={card['quantity']}: {type(e).__name__}: {e}",
+        )
+        return JSONResponse({"error": f"order placement failed: {e}"}, status_code=502)

@@ -136,7 +136,7 @@ def test_webhook_records_fire_only_on_successful_submit(patched_receiver, monkey
         MagicMock(side_effect=RuntimeError("alpaca down")),
     )
     r = p["client"].post("/webhook", json=_alert_payload())
-    assert r.status_code == 500
+    assert r.status_code == 502  # changed from 500→502 in T12 (order_failed now 502)
     state = rec._card_state.get("foo-v1")
     assert state is None or state.fires_today == 0
     # last_attempted_at still set (we made an attempt)

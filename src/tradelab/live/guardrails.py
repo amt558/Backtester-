@@ -12,6 +12,8 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from tradelab.live import live_config
+
 
 _NY = ZoneInfo("America/New_York")
 _RTH_OPEN = time(9, 30)
@@ -156,13 +158,18 @@ def check_buying_power(
     alpaca_state,
     qty: float,
     last_price: float,
-    max_exposure_pct: float = 0.90,
+    max_exposure_pct: Optional[float] = None,
 ) -> Optional[BlockReason]:
     """Check if (working_orders_notional + new_order_notional) exceeds buying_power cap.
 
     Working notional is the sum of each open order's qty × (limit_price or filled_avg_price or 0).
     New order's notional is qty × last_price. Both are checked against buying_power × max_exposure_pct.
+
+    max_exposure_pct: when None (default), reads from live_config["guardrails"]["max_exposure_pct"].
+    Pass an explicit float to override (used in tests that predate live_config).
     """
+    if max_exposure_pct is None:
+        max_exposure_pct = live_config.get()["guardrails"]["max_exposure_pct"]
     bp = _coerce_float(alpaca_state.account().buying_power)
     cap = bp * max_exposure_pct
     working = 0.0
@@ -197,7 +204,7 @@ def evaluate_guardrails(
     states: dict[str, CardRuntimeState],
     alpaca_state,
     now: datetime,
-    max_exposure_pct: float = 0.90,
+    max_exposure_pct: Optional[float] = None,
 ) -> Optional[BlockReason]:
     """Run the 5 checks in fixed cheapest-first order. First failure wins.
 
@@ -207,6 +214,8 @@ def evaluate_guardrails(
       3. collision     — in-memory scan over <=50 cards
       4. naked_short   — Alpaca positions (cached)
       5. buying_power  — Alpaca account+orders (cached)
+
+    max_exposure_pct: when None (default), check_buying_power reads from live_config.
     """
     state = states.get(card["card_id"], CardRuntimeState())
 
