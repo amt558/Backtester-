@@ -9,6 +9,7 @@ digest_state.json to prevent same-day re-fires.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -360,3 +361,70 @@ def _render_snapshot_section(today_et: date) -> str:
             )
 
     return "\n".join(parts)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Render — public render(now) + subject + plaintext fallback
+# ────────────────────────────────────────────────────────────────────────────
+
+_SUBJECT_PRECEDENCE = ["panic", "block", "fail", "downtime", "ngrok", "silent"]
+_SUBJECT_LABELS = {
+    "panic": "panic",
+    "block": "blocks",
+    "fail": "failures",
+    "downtime": "downtimes",
+    "ngrok": "ngrok changes",
+    "silent": "silent",
+}
+
+
+def _render_subject(today_str: str, counts: dict[str, int]) -> str:
+    """tradelab daily — YYYY-MM-DD — <tail>.
+    Tail = 'all clear' if total=0, else top-2 categories by precedence
+    (PANIC>BLOCK>FAIL>DOWNTIME>NGROK>SILENT) per spec §15 q6."""
+    if sum(counts.values()) == 0:
+        return f"tradelab daily — {today_str} — all clear"
+    nonzero = [(k, counts[k]) for k in _SUBJECT_PRECEDENCE if counts.get(k, 0) > 0]
+    top = nonzero[:2]
+    parts = []
+    for k, n in top:
+        # Singular handling for panic only ("1 panic" not "1 panics")
+        label = "panic" if (k == "panic" and n == 1) else _SUBJECT_LABELS[k]
+        parts.append(f"{n} {label}")
+    return f"tradelab daily — {today_str} — {', '.join(parts)}"
+
+
+def _render_plaintext(html: str) -> str:
+    """Strip HTML tags and decode entities for the plaintext alternative MIME part.
+    Preserves section text and table cell contents; collapses whitespace."""
+    # Replace block-level closers with newlines for readability
+    s = re.sub(r"</(h[1-6]|p|li|tr|div)>", "\n", html, flags=re.IGNORECASE)
+    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</td>", "  ", s, flags=re.IGNORECASE)
+    s = re.sub(r"<[^>]+>", "", s)  # strip remaining tags
+    # Decode common entities
+    s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    # Collapse runs of blank lines and trailing spaces
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def render(now: datetime) -> tuple[str, str]:
+    """Render today's digest. Returns (subject, html_body). Pure — no I/O writes."""
+    today_et = now.astimezone(_ET).date()
+    today_str = today_et.strftime("%Y-%m-%d")
+
+    anomaly_html, counts = _render_anomaly_section(today_et)
+    snapshot_html = _render_snapshot_section(today_et)
+    subject = _render_subject(today_str, counts)
+
+    body = (
+        f'<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#1a1a1a;line-height:1.5">\n'
+        f'<div style="font-weight:600;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:12px;font-size:14px">{subject}</div>\n'
+        f'{anomaly_html}\n'
+        f'{snapshot_html}\n'
+        f'<p {_META} style="margin-top:14px">tradelab · end of summary</p>\n'
+        f'</div>'
+    )
+    return subject, body

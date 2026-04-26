@@ -160,3 +160,71 @@ def test_render_snapshot_section_alpaca_error_degrades(monkeypatch):
     assert "[error: RuntimeError]" in section
     # The rest still rendered
     assert "1 total" in section
+
+
+def test_render_returns_subject_and_html(monkeypatch):
+    """render(now) returns (subject, html_body) with both populated."""
+    # All-clear case
+    for fn in ("_today_panics", "_today_silent_transitions", "_today_guardrail_blocks",
+               "_today_order_failures", "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 1, "enabled": 1, "disabled": 0, "silent": 0})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0})
+    monkeypatch.setattr(daily_summary, "_open_positions", lambda: [])
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "ngrok_url": "x"})
+
+    now = datetime(2026, 4, 27, 16, 0, 0)
+    subject, html = daily_summary.render(now)
+
+    assert subject == "tradelab daily — 2026-04-27 — all clear"
+    assert "tradelab daily — 2026-04-27 — all clear" in html
+    assert "✓ No anomalies today" in html
+    assert "📊 Health snapshot" in html
+    assert "tradelab · end of summary" in html
+
+
+def test_render_subject_with_anomalies(monkeypatch):
+    """Subject shows top-2 categories ordered PANIC > BLOCK > FAIL > DOWNTIME > NGROK > SILENT."""
+    monkeypatch.setattr(daily_summary, "_today_panics", lambda d: [
+        _make_panic_entry("2026-04-27T13:00:00+00:00", "L1"),
+    ])
+    monkeypatch.setattr(daily_summary, "_today_guardrail_blocks", lambda d: [
+        _make_alert_entry("2026-04-27T14:00:00+00:00", "guardrail_blocked", "c1", reason="cooldown_active"),
+        _make_alert_entry("2026-04-27T14:01:00+00:00", "guardrail_blocked", "c1", reason="cooldown_active"),
+        _make_alert_entry("2026-04-27T14:02:00+00:00", "guardrail_blocked", "c2", reason="symbol_collision"),
+    ])
+    monkeypatch.setattr(daily_summary, "_today_silent_transitions", lambda d: [
+        _make_notify_entry("2026-04-27T15:00:00+00:00", "WARNING", "Card silent", card_id="c3"),
+    ])
+    for fn in ("_today_order_failures", "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+    # Fill in snapshot stubs
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 1, "enabled": 1, "disabled": 0, "silent": 1})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 1, "INFO": 0, "DEBUG": 0})
+    monkeypatch.setattr(daily_summary, "_open_positions", lambda: [])
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "ngrok_url": "x"})
+
+    subject, _ = daily_summary.render(datetime(2026, 4, 27, 16, 0, 0))
+    # PANIC (1) > BLOCK (3) by precedence even though count is lower; spec §15 q6 ordering
+    assert subject == "tradelab daily — 2026-04-27 — 1 panic, 3 blocks"
+
+
+def test_render_plaintext_fallback_present():
+    """render_plaintext(html) returns a stripped-tag version with section headers preserved."""
+    html = '<h4>⚠ Anomalies (1)</h4><p>Stuff</p><table><tr><td>X</td></tr></table>'
+    plain = daily_summary._render_plaintext(html)
+    assert "Anomalies" in plain
+    assert "Stuff" in plain
+    assert "X" in plain
+    # No HTML tags in output
+    assert "<" not in plain and ">" not in plain
