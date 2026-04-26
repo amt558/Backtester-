@@ -81,6 +81,10 @@ REQUIRED_JS_FUNCTIONS = [
     "openDeleteModal",
     "renderOverridesDrawer",
     "saveOverrides",
+    "loadSettings",
+    "saveSettings",
+    "testChannel",
+    "subscribeBrowserToasts",
 ]
 
 
@@ -246,3 +250,41 @@ def test_overrides_drawer_uses_open_class_pattern(html: str) -> None:
         "lt-overrides-drawer.open CSS rule missing"
     assert "classList.toggle('open')" in html, \
         "drawer toggle handler not using .open class"
+
+
+def test_lt_settings_block_present_with_required_sections(html: str) -> None:
+    """Settings panel block + 4 sections render in the markup."""
+    assert 'id="lt-settings"' in html
+    for section in ("notifications", "silence", "guardrails", "email_digest"):
+        assert f'data-section="{section}"' in html
+
+
+def test_lt_settings_has_test_button_per_channel(html: str) -> None:
+    for channel in ("browser", "windows_toast", "audible", "ntfy", "email"):
+        assert f'data-channel="{channel}"' in html
+
+
+def test_lt_settings_severity_matrix_complete(html: str) -> None:
+    """3 severities × 5 channels = 15 routing checkboxes."""
+    import re
+    matches = re.findall(r'data-config="notifications\.severity_routing\.(critical|warning|info)" value="(\w+)"', html)
+    assert len(matches) == 15
+    by_sev = {}
+    for sev, chan in matches:
+        by_sev.setdefault(sev, set()).add(chan)
+    assert by_sev["critical"] == {"browser", "windows_toast", "audible", "ntfy", "email"}
+    assert by_sev["warning"] == {"browser", "windows_toast", "audible", "ntfy", "email"}
+    assert by_sev["info"] == {"browser", "windows_toast", "audible", "ntfy", "email"}
+
+
+def test_lt_settings_save_button_present(html: str) -> None:
+    assert 'id="lt-settings-save"' in html
+    assert 'id="lt-settings-status"' in html
+
+
+def test_lt_toast_container_styles_present(html: str) -> None:
+    """CSS for #lt-toast-container + .lt-toast severity variants must be in the embedded <style>."""
+    assert "#lt-toast-container" in html
+    assert ".lt-toast.critical" in html
+    assert ".lt-toast.warning" in html
+    assert ".lt-toast.info" in html
