@@ -368,3 +368,83 @@ def test_buying_power_at_boundary_passes():
     state = _AlpacaStateStubBP(buying_power="100000", open_orders=[])
     # 900 * 100 = 90k; cap = 90k -> pass (not > cap)
     assert check_buying_power(_card(), state, qty=900, last_price=100.0, max_exposure_pct=0.9) is None
+
+
+# ── evaluate_guardrails composer ────────────────────────────────────
+
+from tradelab.live.guardrails import evaluate_guardrails
+
+
+def test_evaluate_returns_none_when_all_pass():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    registry = _registry_dict(me)
+    states = {"foo-v1": CardRuntimeState()}
+    # naked-short check needs positions; full stub for all-pass
+    class FullStub:
+        def positions(self): return [_Position("AAPL", "100")]
+        def account(self): return _Account("100000")
+        def open_orders(self): return []
+    result = evaluate_guardrails(
+        card=me, action="sell", qty=1, last_price=100.0,
+        registry=registry, states=states, alpaca_state=FullStub(), now=now,
+    )
+    assert result is None
+
+
+def test_evaluate_short_circuits_at_cooldown_first():
+    """Cooldown is cheapest — must fire even if daily_limit also tripped."""
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL", daily_limit=2)
+    registry = _registry_dict(me)
+    states = {"foo-v1": CardRuntimeState(
+        last_attempted_at=now - timedelta(seconds=5),  # cooldown trips
+        fires_today=99,                                  # daily_limit trips too
+        fire_window_start=get_rth_window_start(now),
+    )}
+    class FullStub:
+        def positions(self): return []
+        def account(self): return _Account("100000")
+        def open_orders(self): return []
+    result = evaluate_guardrails(
+        card=me, action="buy", qty=1, last_price=100.0,
+        registry=registry, states=states, alpaca_state=FullStub(), now=now,
+    )
+    assert result.code == "cooldown_active"
+
+
+def test_evaluate_short_circuits_daily_before_collision():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL", daily_limit=1)
+    other = _card(card_id="bar-v1", symbol="AAPL")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(fires_today=5, fire_window_start=get_rth_window_start(now)),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=5)),
+    }
+    class FullStub:
+        def positions(self): return []
+        def account(self): return _Account("100000")
+        def open_orders(self): return []
+    result = evaluate_guardrails(
+        card=me, action="buy", qty=1, last_price=100.0,
+        registry=registry, states=states, alpaca_state=FullStub(), now=now,
+    )
+    assert result.code == "daily_limit_exceeded"
+
+
+def test_evaluate_runs_naked_short_only_for_sells():
+    """A 'buy' must never trip naked_short even with empty positions."""
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    registry = _registry_dict(me)
+    states = {"foo-v1": CardRuntimeState()}
+    class FullStub:
+        def positions(self): return []
+        def account(self): return _Account("100000")
+        def open_orders(self): return []
+    result = evaluate_guardrails(
+        card=me, action="buy", qty=1, last_price=100.0,
+        registry=registry, states=states, alpaca_state=FullStub(), now=now,
+    )
+    assert result is None

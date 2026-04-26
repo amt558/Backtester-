@@ -185,3 +185,39 @@ def check_buying_power(
             "new_notional": new_notional,
         },
     )
+
+
+def evaluate_guardrails(
+    *,
+    card: dict,
+    action: str,
+    qty: float,
+    last_price: float,
+    registry: dict[str, dict],
+    states: dict[str, CardRuntimeState],
+    alpaca_state,
+    now: datetime,
+    max_exposure_pct: float = 0.90,
+) -> Optional[BlockReason]:
+    """Run the 5 checks in fixed cheapest-first order. First failure wins.
+
+    Order matters:
+      1. cooldown      — cheap, in-memory
+      2. daily_limit   — cheap, in-memory
+      3. collision     — in-memory scan over <=50 cards
+      4. naked_short   — Alpaca positions (cached)
+      5. buying_power  — Alpaca account+orders (cached)
+    """
+    state = states.get(card["card_id"], CardRuntimeState())
+
+    if (br := check_cooldown(card, state, now)) is not None:
+        return br
+    if (br := check_daily_limit(card, state, now)) is not None:
+        return br
+    if (br := check_symbol_collision(card, registry, states, now)) is not None:
+        return br
+    if (br := check_naked_short(card, action, alpaca_state)) is not None:
+        return br
+    if (br := check_buying_power(card, alpaca_state, qty, last_price, max_exposure_pct)) is not None:
+        return br
+    return None
