@@ -81,3 +81,41 @@ def check_daily_limit(card: dict, state: CardRuntimeState, now: datetime) -> Opt
         message=f"daily limit reached: {fires_today}/{limit}",
         details={"fires_today": fires_today, "daily_limit": limit},
     )
+
+
+_COLLISION_WINDOW_SECONDS = 30
+
+
+def check_symbol_collision(
+    card: dict,
+    registry: dict[str, dict],
+    states: dict[str, CardRuntimeState],
+    now: datetime,
+) -> Optional[BlockReason]:
+    if card.get("allow_collision"):
+        return None
+    my_id = card["card_id"]
+    my_symbol = str(card.get("symbol", "")).upper()
+    cutoff = now - timedelta(seconds=_COLLISION_WINDOW_SECONDS)
+    for other_id, other_card in registry.items():
+        if other_id == my_id:
+            continue
+        if other_card.get("status") != "enabled":
+            continue
+        if str(other_card.get("symbol", "")).upper() != my_symbol:
+            continue
+        other_state = states.get(other_id)
+        if other_state is None or other_state.last_fired_at is None:
+            continue
+        if other_state.last_fired_at < cutoff:
+            continue
+        return BlockReason(
+            code="symbol_collision",
+            message=f"another card ({other_id}) fired {my_symbol} within {_COLLISION_WINDOW_SECONDS}s",
+            details={
+                "other_card_id": other_id,
+                "symbol": my_symbol,
+                "window_seconds": _COLLISION_WINDOW_SECONDS,
+            },
+        )
+    return None

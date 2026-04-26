@@ -138,3 +138,95 @@ def test_daily_limit_no_window_recorded_treated_as_zero_count():
     # No window means we have no record of which RTH the count belongs to,
     # so we treat it as fresh (do NOT block on a stale-but-windowless count)
     assert check_daily_limit(_card(daily_limit=5), state, now) is None
+
+
+# ── Symbol collision ────────────────────────────────────────────────
+
+from tradelab.live.guardrails import check_symbol_collision
+
+
+def _registry_dict(*cards):
+    """Build the {card_id: card_dict} shape `cards.all_hydrated()` returns."""
+    return {c["card_id"]: c for c in cards}
+
+
+def test_collision_no_other_fires_passes():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    registry = _registry_dict(me)
+    states = {"foo-v1": CardRuntimeState()}
+    assert check_symbol_collision(me, registry, states, now) is None
+
+
+def test_collision_other_card_same_symbol_within_window_blocks():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    other = _card(card_id="bar-v1", symbol="AAPL")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=10)),
+    }
+    reason = check_symbol_collision(me, registry, states, now)
+    assert reason is not None
+    assert reason.code == "symbol_collision"
+    assert reason.details["other_card_id"] == "bar-v1"
+
+
+def test_collision_other_card_different_symbol_passes():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    other = _card(card_id="bar-v1", symbol="MSFT")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=10)),
+    }
+    assert check_symbol_collision(me, registry, states, now) is None
+
+
+def test_collision_outside_30s_window_passes():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    other = _card(card_id="bar-v1", symbol="AAPL")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=45)),
+    }
+    assert check_symbol_collision(me, registry, states, now) is None
+
+
+def test_collision_self_fire_does_not_collide_with_itself():
+    """My own last_fired_at must not block me — that's the cooldown's job."""
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    registry = _registry_dict(me)
+    states = {"foo-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=5))}
+    assert check_symbol_collision(me, registry, states, now) is None
+
+
+def test_collision_disabled_other_card_does_not_block():
+    """A disabled card whose state still has a recent last_fired_at must
+    not block — disabled cards cannot have just fired (only stale state)."""
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL")
+    other = _card(card_id="bar-v1", symbol="AAPL", status="disabled")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=5)),
+    }
+    assert check_symbol_collision(me, registry, states, now) is None
+
+
+def test_collision_allow_collision_override_passes():
+    now = datetime(2026, 3, 4, 16, 0, tzinfo=timezone.utc)
+    me = _card(card_id="foo-v1", symbol="AAPL", allow_collision=True)
+    other = _card(card_id="bar-v1", symbol="AAPL")
+    registry = _registry_dict(me, other)
+    states = {
+        "foo-v1": CardRuntimeState(),
+        "bar-v1": CardRuntimeState(last_fired_at=now - timedelta(seconds=5)),
+    }
+    assert check_symbol_collision(me, registry, states, now) is None
