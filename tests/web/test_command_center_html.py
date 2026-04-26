@@ -79,6 +79,8 @@ REQUIRED_JS_FUNCTIONS = [
     "bindRowActions",
     "bindQuantityEdit",
     "openDeleteModal",
+    "renderOverridesDrawer",
+    "saveOverrides",
 ]
 
 
@@ -224,3 +226,23 @@ def test_lt_delete_modal_uses_show_class_pattern(html: str) -> None:
     assert "ltDeleteDialog').hidden = true" not in close_body, (
         "closeDeleteModal must not toggle the [hidden] attribute on the dialog"
     )
+
+
+def test_overrides_drawer_has_all_four_fields(html: str) -> None:
+    """The 4 fields the PATCH endpoint accepts must each be bound by
+    data-field=. A silent rename in renderOverridesDrawer breaks PATCH
+    silently; pin the contract."""
+    for field in ("allow_collision", "allow_naked_short",
+                  "daily_limit", "cooldown_seconds"):
+        assert f'data-field="{field}"' in html, \
+            f"renderOverridesDrawer missing data-field={field!r}"
+
+
+def test_overrides_drawer_uses_open_class_pattern(html: str) -> None:
+    """saveOverrides toggles the .open class — same pattern as the
+    delete modal's .show class. Pin that the CSS rule + the toggle
+    name still agree (regression on Slice 2 modal-CSS bug)."""
+    assert ".lt-overrides-drawer.open" in html, \
+        "lt-overrides-drawer.open CSS rule missing"
+    assert "classList.toggle('open')" in html, \
+        "drawer toggle handler not using .open class"
