@@ -113,6 +113,25 @@ def test_dispatcher_explicit_channels_override_routing(_isolated_paths, monkeypa
         d.stop()
 
 
+def test_dispatcher_explicit_channels_bypass_enabled_kill_switch(_isolated_paths, monkeypatch):
+    """Settings-panel 'Test [channel]' buttons use explicit channels (plan §97) and
+    must reach the channel even when it is not yet in enabled_channels — otherwise
+    clicking Test next to a disabled channel is a silent no-op with no error."""
+    live_config.update({"notifications": {"enabled_channels": ["browser"]}})  # audible/windows_toast disabled
+    fired = []
+    from tradelab.live.notify_channels import CHANNELS
+    monkeypatch.setitem(CHANNELS, "audible", lambda s, t, b, c: fired.append("audible") or True)
+    monkeypatch.setitem(CHANNELS, "windows_toast", lambda s, t, b, c: fired.append("windows_toast") or True)
+
+    d = _start_dispatcher(_isolated_paths)
+    try:
+        notify.notify(Severity.CRITICAL, "T", "B", channels={"audible"})
+        notify.notify(Severity.CRITICAL, "T", "B", channels={"windows_toast"})
+        assert _wait_for(lambda: sorted(fired) == ["audible", "windows_toast"], timeout=1.0)
+    finally:
+        d.stop()
+
+
 def test_dispatcher_skips_disabled_channel(_isolated_paths, monkeypatch):
     live_config.update({"notifications": {"enabled_channels": ["browser"]}})  # only browser enabled
     fired = []

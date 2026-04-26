@@ -87,13 +87,17 @@ class NotifyDispatcher:
         body = event.get("body", "")
         explicit = event.get("channels")
 
-        enabled = set(cfg["notifications"]["enabled_channels"])
         if explicit is not None:
-            requested = set(explicit)
+            # Explicit channel set (settings-panel "Test [channel]" buttons, plan §97)
+            # bypasses both severity_routing and the enabled_channels kill-switch — caller
+            # is opting in per-event, so silently dropping a Test click is the wrong UX.
+            targets = set(explicit)
         else:
-            requested = set(cfg["notifications"]["severity_routing"].get(severity, []))
+            enabled = set(cfg["notifications"]["enabled_channels"])
+            routed = set(cfg["notifications"]["severity_routing"].get(severity, []))
+            targets = routed & enabled
 
-        for ch_name in sorted(requested & enabled):
+        for ch_name in sorted(targets):
             send_fn = CHANNELS.get(ch_name)
             if send_fn is None:
                 print(f"[notify_dispatcher] no such channel: {ch_name}", file=sys.stderr)
