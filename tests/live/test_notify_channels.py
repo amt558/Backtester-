@@ -73,3 +73,40 @@ def test_windows_toast_no_op_when_plyer_unimportable(monkeypatch):
     from tradelab.live.notify_channels.windows_toast import send
     ok = send("info", "T", "B", {})
     assert ok is False
+
+
+# ─── ntfy ────────────────────────────────────────────────────────────
+
+
+def test_ntfy_send_posts_to_topic_url(monkeypatch):
+    fake_urlopen = MagicMock()
+    fake_urlopen.return_value.__enter__.return_value.status = 200
+    monkeypatch.setattr("tradelab.live.notify_channels.ntfy.urlopen", fake_urlopen)
+    from tradelab.live.notify_channels.ntfy import send
+    cfg = {"notifications": {"ntfy": {"topic": "tradelab-test", "server": "https://ntfy.sh"}}}
+    ok = send("critical", "Boom", "AAPL guardrail blocked", cfg)
+    assert ok is True
+    req = fake_urlopen.call_args[0][0]
+    assert req.full_url == "https://ntfy.sh/tradelab-test"
+    assert req.data == b"AAPL guardrail blocked"
+    assert req.headers["Title"] == "Boom"
+    assert req.headers["Priority"] == "5"
+
+
+def test_ntfy_send_no_op_when_topic_empty(monkeypatch):
+    fake_urlopen = MagicMock()
+    monkeypatch.setattr("tradelab.live.notify_channels.ntfy.urlopen", fake_urlopen)
+    from tradelab.live.notify_channels.ntfy import send
+    ok = send("critical", "T", "B", {"notifications": {"ntfy": {"topic": "", "server": "https://ntfy.sh"}}})
+    assert ok is False
+    fake_urlopen.assert_not_called()
+
+
+def test_ntfy_send_returns_false_on_http_error(monkeypatch):
+    from urllib.error import URLError
+    fake_urlopen = MagicMock(side_effect=URLError("connection refused"))
+    monkeypatch.setattr("tradelab.live.notify_channels.ntfy.urlopen", fake_urlopen)
+    from tradelab.live.notify_channels.ntfy import send
+    cfg = {"notifications": {"ntfy": {"topic": "x", "server": "https://ntfy.sh"}}}
+    ok = send("info", "T", "B", cfg)
+    assert ok is False
