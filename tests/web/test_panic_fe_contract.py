@@ -82,3 +82,29 @@ def test_executePanic_function_pinned(html_text):
     assert "function executePanic" in html_text or "executePanic =" in html_text
     # Must POST to the right URL
     assert "/tradelab/live/panic" in html_text
+
+
+# ─── L3 modal — armed countdown state machine ──────────────────────────
+
+def test_l3_modal_present(html_text):
+    assert 'id="lt-panic-l3-modal"' in html_text
+    block = html_text[html_text.find('id="lt-panic-l3-modal"'):html_text.find('id="lt-panic-l3-modal"') + 5000]
+    assert "FLATTEN" in block, "FLATTEN confirm word not in L3 modal"
+    assert "ENTIRE Alpaca account" in block or "entire Alpaca account" in block.lower()
+
+
+def test_l3_data_attributes_pinned(html_text):
+    """L3 modal must use data-armed and data-countdown for the state machine."""
+    assert "data-armed" in html_text
+    assert "data-countdown" in html_text
+
+
+def test_l3_state_machine_fns_pinned(html_text):
+    for fn in ("openL3PanicModal", "armFlatten", "disarmFlatten"):
+        assert fn in html_text, f"missing JS function: {fn}"
+
+
+def test_l3_arm_timeout_pinned(html_text):
+    """3-second armed countdown + 10-second auto-abort must be present
+    as numeric literals so a refactor that drops them gets caught."""
+    assert "3000" in html_text and "10000" in html_text  # ms
