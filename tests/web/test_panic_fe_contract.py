@@ -131,3 +131,14 @@ def test_banner_fns_pinned(html_text):
 def test_banner_dismiss_uses_localstorage(html_text):
     assert "panicDismissedTs" in html_text
     assert "localStorage" in html_text
+
+
+# ─── Slice 5 follow-up #9: dead .lt-pill--silent CSS regression guard ──
+
+def test_dead_lt_pill_silent_class_removed(html_text):
+    """The .lt-pill--silent CSS rule was unused dead code from an earlier
+    Slice 5 draft (the final implementation uses ::after instead). Slice 6
+    deletes it; this test guards against it being re-added by accident."""
+    assert ".lt-pill--silent" not in html_text, (
+        "dead .lt-pill--silent CSS class re-introduced — see Slice 5 follow-up #9"
+    )
