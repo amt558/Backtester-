@@ -85,6 +85,8 @@ REQUIRED_JS_FUNCTIONS = [
     "saveSettings",
     "testChannel",
     "subscribeBrowserToasts",
+    "fetchSilenceStatus",
+    "refreshSilentPills",
 ]
 
 
@@ -288,3 +290,55 @@ def test_lt_toast_container_styles_present(html: str) -> None:
     assert ".lt-toast.critical" in html
     assert ".lt-toast.warning" in html
     assert ".lt-toast.info" in html
+
+
+# ── Slice 5: silence detection FE contracts ────────────────────────
+
+
+def test_lt_row_template_injects_data_silent_attribute(html: str) -> None:
+    """Slice 5 T9: outer .lt-row must inject data-silent dynamically from silentSet
+    so the amber pill CSS rule has an anchor to attach to."""
+    assert 'data-silent="${silentSet.has(card.card_id) ? \'true\' : \'false\'}"' in html, (
+        ".lt-row template must inject data-silent dynamically from silentSet "
+        "(both 'true' and 'false' cases) — Slice 5 T9 contract"
+    )
+
+
+def test_amber_silent_pill_css_targets_lt_pill_descendant(html: str) -> None:
+    """Slice 5 T9 + T9-fix: CSS rule must anchor on .lt-pill descendant inside
+    the silent row, not on the .lt-row itself (the row is a 12-col CSS grid;
+    pseudo-element on the row container becomes a phantom 13th grid item)."""
+    assert '.lt-row[data-silent="true"] .lt-pill::after' in html, (
+        "amber pill CSS rule must target .lt-row[data-silent='true'] .lt-pill::after "
+        "(NOT .lt-row[data-silent='true']::after — that would create a phantom grid item)"
+    )
+
+
+def test_subscribe_browser_toasts_calls_refresh_silent_pills(html: str) -> None:
+    """Slice 5 T9-fix: SSE notify handler must call refreshSilentPills (diff-update),
+    NOT fetchAndRender (full innerHTML rebuild that destroys inline-edit state)."""
+    idx = html.find("function subscribeBrowserToasts")
+    assert idx >= 0, "subscribeBrowserToasts function not found"
+    # Look at the function body (next ~3000 chars).
+    chunk = html[idx:idx + 3000]
+    assert "refreshSilentPills()" in chunk, (
+        "subscribeBrowserToasts SSE handler must call refreshSilentPills() to "
+        "diff-update silent pills without rebuilding the LT row list"
+    )
+
+
+def test_fetch_and_render_calls_silence_status_first(html: str) -> None:
+    """Slice 5 T9: fetchAndRender must call fetchSilenceStatus() BEFORE the
+    /tradelab/cards fetch so silentSet is fresh when renderRow reads it."""
+    idx = html.find("async function fetchAndRender")
+    assert idx >= 0, "fetchAndRender function not found"
+    # Examine the function body — first ~1500 chars cover the body
+    chunk = html[idx:idx + 1500]
+    silence_pos = chunk.find("fetchSilenceStatus()")
+    cards_pos = chunk.find("/tradelab/cards")
+    assert silence_pos >= 0, "fetchAndRender must call fetchSilenceStatus()"
+    assert cards_pos >= 0, "fetchAndRender must fetch /tradelab/cards"
+    assert silence_pos < cards_pos, (
+        "fetchAndRender must call fetchSilenceStatus() BEFORE fetching /tradelab/cards "
+        "so silentSet is fresh when renderRow reads it"
+    )
