@@ -60,3 +60,53 @@ def submit_market_order(
         "status": order.status.value if hasattr(order.status, "value") else str(order.status),
         "submitted_at": order.submitted_at.isoformat() if order.submitted_at else None,
     }
+
+
+from alpaca.trading.requests import GetOrdersRequest
+from alpaca.trading.enums import QueryOrderStatus
+
+
+def list_open_orders() -> list[dict]:
+    """Return all open orders in the Alpaca account as plain dicts.
+
+    Each dict has: id, client_order_id, symbol, qty, side, status.
+    Used by panic.py L2 step.
+    """
+    client = get_client()
+    req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
+    orders = client.get_orders(filter=req)
+    return [
+        {
+            "id": str(o.id),
+            "client_order_id": o.client_order_id,
+            "symbol": o.symbol,
+            "qty": str(o.qty),
+            "side": o.side.value if hasattr(o.side, "value") else str(o.side),
+            "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+        }
+        for o in orders
+    ]
+
+
+def cancel_order_by_id(order_id: str) -> None:
+    """Cancel a single Alpaca order by its server-side ID. Raises on failure."""
+    client = get_client()
+    client.cancel_order_by_id(order_id)
+
+
+def list_positions() -> list[dict]:
+    """Return all open positions in the Alpaca account as plain dicts.
+
+    Each dict has: symbol, qty (string for precision), side.
+    Used by panic.py L3 step.
+    """
+    client = get_client()
+    positions = client.get_all_positions()
+    return [
+        {
+            "symbol": p.symbol,
+            "qty": str(p.qty),
+            "side": p.side.value if hasattr(p.side, "value") else str(p.side),
+        }
+        for p in positions
+    ]
