@@ -667,6 +667,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     if path == "/tradelab/live/config/test-notification":
         return handle_test_notification(payload)
 
+    if path == "/tradelab/live/panic":
+        return handle_panic_post(payload)
+
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
 
@@ -975,6 +978,38 @@ def handle_silence_status_get() -> Tuple[str, int]:
     """Return current silent-card set as {<card_id>: true} envelope."""
     from tradelab.live import silence_checker
     return _ok({cid: True for cid in silence_checker.silent_set()}), 200
+
+
+_PANIC_CONFIRM_WORDS = {"L1": "DISABLE", "L2": "PANIC", "L3": "FLATTEN"}
+
+
+def handle_panic_post(payload: dict) -> Tuple[str, int]:
+    """POST /tradelab/live/panic — execute panic at the given level.
+
+    Body: {level: "L1"|"L2"|"L3", confirm: "DISABLE"|"PANIC"|"FLATTEN",
+           also_cancel_nontradelab?: bool}
+    Server-side confirm-word check is defense in depth — FE also enforces.
+    """
+    level = payload.get("level")
+    confirm = payload.get("confirm")
+    if level not in _PANIC_CONFIRM_WORDS:
+        return json.dumps({"ok": False, "error": f"invalid or missing level (got {level!r}); expected L1/L2/L3", "data": None}), 400
+    if confirm != _PANIC_CONFIRM_WORDS[level]:
+        return json.dumps({"ok": False, "error": f"confirm word mismatch for {level} (expected {_PANIC_CONFIRM_WORDS[level]!r})", "data": None}), 400
+
+    also_cancel = bool(payload.get("also_cancel_nontradelab", False))
+    # L1 has no Alpaca calls; the flag is meaningless. Force-False for safety.
+    if level == "L1":
+        also_cancel = False
+
+    from tradelab.live import panic
+    try:
+        result = panic.execute_panic(level, also_cancel_nontradelab=also_cancel)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": f"panic execution raised: {type(e).__name__}: {e}", "data": None}), 500
+
+    from dataclasses import asdict
+    return json.dumps({"ok": True, "error": None, "data": asdict(result)}), 200
 
 
 # ─── Validation for /tradelab/score + /tradelab/accept (Option H 3a) ──
