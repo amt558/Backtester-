@@ -429,3 +429,227 @@ def render(now: datetime) -> tuple[str, str]:
         f'</div>'
     )
     return subject, body
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Config + calendar helpers (small wrappers — easy to monkeypatch in tests)
+# ────────────────────────────────────────────────────────────────────────────
+
+def _config_enabled() -> bool:
+    from tradelab.live import live_config
+    cfg = live_config.get()
+    return bool(cfg.get("email_digest", {}).get("enabled", False))
+
+
+def _config_send_time() -> str:
+    from tradelab.live import live_config
+    cfg = live_config.get()
+    return str(cfg.get("email_digest", {}).get("send_time", "16:00"))
+
+
+def _config_recipient() -> str:
+    from tradelab.live import live_config
+    cfg = live_config.get()
+    return str(cfg.get("notifications", {}).get("smtp", {}).get("to_address", ""))
+
+
+def _is_trading_day(d: date) -> bool:
+    from tradelab.live import trading_calendar
+    return trading_calendar.is_trading_day(d)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# State helpers
+# ────────────────────────────────────────────────────────────────────────────
+
+def _read_state() -> dict:
+    """Read digest_state.json. Returns {} on missing or corrupt file."""
+    if not STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[daily_summary] state read failed: {e}", file=sys.stderr)
+        return {}
+
+
+def _write_state(state: dict) -> None:
+    """Atomic write via tmpfile + os.replace."""
+    import os
+    import tempfile
+
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".digest_state.", dir=str(STATE_PATH.parent), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, STATE_PATH)
+    except OSError as e:
+        print(f"[daily_summary] state write failed: {e}", file=sys.stderr)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Send + audit
+# ────────────────────────────────────────────────────────────────────────────
+
+def _send_email(subject: str, html_body: str, to_address: str) -> None:
+    """Direct SMTP multipart send (HTML + plaintext alternative).
+
+    Intentionally bypasses notify_channels.email.send() because that helper:
+      - Mangles the subject by prepending '[tradelab SEVERITY]'
+      - Sends plaintext-only (no HTML alternative)
+      - Returns False on failure rather than raising
+    Per spec §3.3, the digest path is deliberately direct-SMTP.
+    Raises on send failure (caller catches and increments attempts_today).
+    """
+    import smtplib
+    from email.message import EmailMessage
+
+    from tradelab.live import live_config
+    cfg = live_config.get()
+    smtp_cfg = cfg.get("notifications", {}).get("smtp", {})
+    host = str(smtp_cfg.get("host", "")).strip()
+    port = int(smtp_cfg.get("port", 587))
+    user = str(smtp_cfg.get("user", ""))
+    password = str(smtp_cfg.get("password", ""))
+    from_addr = str(smtp_cfg.get("from_address", "") or user)
+    if not host:
+        raise RuntimeError("smtp host not configured")
+
+    plaintext = _render_plaintext(html_body)
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_addr
+    msg["To"] = to_address
+    msg.set_content(plaintext)
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(host, port, timeout=10) as conn:
+        conn.starttls()
+        if user:
+            conn.login(user, password)
+        conn.sendmail(from_addr, [to_address], msg.as_string())
+
+
+def _append_audit_line(today_str: str) -> None:
+    """Append a single INFO line to notify_events.jsonl marking that today's
+    digest was sent. Does NOT route through notify() — direct file append to
+    avoid feeding the digest's own activity into tomorrow's tally."""
+    line = json.dumps({
+        "ts": datetime.now(_ET).isoformat(),
+        "severity": "INFO",
+        "title": "daily_digest_sent",
+        "body": f"Daily digest for {today_str} sent successfully.",
+        "event_type": "daily_digest_sent",
+    }) + "\n"
+    try:
+        NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(NOTIFY_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError as e:
+        print(f"[daily_summary] audit append failed: {e}", file=sys.stderr)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Tick — gate, render, send, persist state
+# ────────────────────────────────────────────────────────────────────────────
+
+MAX_ATTEMPTS_PER_DAY = 5
+
+
+def tick(now: datetime) -> None:
+    """One tick of the digest scheduler. Idempotent + send_time-gated."""
+    # 1. Trading-day gate
+    if now.tzinfo is None:
+        # Treat naive datetime as ET (tests pass naive datetimes).
+        now_et = now.replace(tzinfo=_ET)
+    else:
+        now_et = now.astimezone(_ET)
+    today_et = now_et.date()
+    if not _is_trading_day(today_et):
+        return
+
+    # 2. Send-time gate (current ET time >= configured send_time HH:MM)
+    send_time_str = _config_send_time()
+    try:
+        hh, mm = (int(x) for x in send_time_str.split(":"))
+    except (ValueError, AttributeError):
+        hh, mm = 16, 0
+    if (now_et.hour, now_et.minute) < (hh, mm):
+        return
+
+    # 3. Config-enabled gate
+    if not _config_enabled():
+        return
+
+    today_str = today_et.strftime("%Y-%m-%d")
+    state = _read_state()
+
+    # 4. Idempotency gate — already sent (or capped) today?
+    if state.get("last_sent_date") == today_str:
+        return
+
+    # New day — reset attempts_today if state is stale (yesterday or earlier).
+    attempts = state.get("attempts_today", 0)
+    if state.get("last_sent_date") != today_str and state.get("last_sent_date") is not None:
+        attempts = 0
+
+    # 5. Render + send
+    subject, html_body = render(now)
+    to_address = _config_recipient()
+    if not to_address:
+        # Can't send without a recipient — treat as fatal-for-the-day to avoid spinning.
+        _write_state({
+            "last_sent_date": today_str,
+            "last_sent_failed": True,
+            "last_attempted_at": now_et.isoformat(),
+            "attempts_today": attempts,
+        })
+        return
+
+    try:
+        _send_email(subject, html_body, to_address)
+    except Exception as e:
+        attempts += 1
+        capped = attempts >= MAX_ATTEMPTS_PER_DAY
+        _write_state({
+            "last_sent_date": today_str if capped else state.get("last_sent_date"),
+            "last_sent_failed": True,
+            "last_attempted_at": now_et.isoformat(),
+            "attempts_today": attempts,
+        })
+        # Notify only on failure (one line per attempt).
+        try:
+            from tradelab.live.notify import notify, Severity
+            suffix = " — no further retries today" if capped else ""
+            notify(
+                Severity.WARNING,
+                "daily digest send failed",
+                f"attempt={attempts}: {type(e).__name__}: {e}{suffix}",
+            )
+        except Exception:
+            pass  # never let notify-failure crash tick
+        return
+
+    # Success path
+    _write_state({
+        "last_sent_date": today_str,
+        "last_sent_failed": False,
+        "last_attempted_at": now_et.isoformat(),
+        "attempts_today": 0,
+    })
+    _append_audit_line(today_str)
+
+    # F2 — rotate logs once per day after a successful send
+    try:
+        from tradelab.live import jsonl_rotation
+        jsonl_rotation.rotate_all()
+    except Exception as e:
+        print(f"[daily_summary] jsonl_rotation failed: {e}", file=sys.stderr)
