@@ -108,3 +108,26 @@ def test_l3_arm_timeout_pinned(html_text):
     """3-second armed countdown + 10-second auto-abort must be present
     as numeric literals so a refactor that drops them gets caught."""
     assert "3000" in html_text and "10000" in html_text  # ms
+
+
+# ─── Post-panic banner ─────────────────────────────────────────────────
+
+def test_panic_banner_present(html_text):
+    assert 'id="lt-panic-banner"' in html_text
+    assert "data-panic-banner" in html_text
+    # banner placed between panic strip and cards-list
+    banner_idx = html_text.find('id="lt-panic-banner"')
+    cards_idx = html_text.find('id="lt-cards-list"')
+    panic_idx = html_text.find('id="lt-panic-strip"')
+    assert panic_idx < banner_idx < cards_idx, "banner must be between panic strip and cards-list"
+
+
+def test_banner_fns_pinned(html_text):
+    for fn in ("fetchLastPanicEvent", "renderPanicBanner",
+               "dismissPanicBanner", "reenableFromSnapshot"):
+        assert fn in html_text, f"missing JS function: {fn}"
+
+
+def test_banner_dismiss_uses_localstorage(html_text):
+    assert "panicDismissedTs" in html_text
+    assert "localStorage" in html_text
