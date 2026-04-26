@@ -92,3 +92,104 @@ def test_naive_now_utc_treated_as_utc():
     card = _card(cadence="daily", last_fired_at=_utc(2026, 4, 22).isoformat())
     # Apr 22 → Apr 29 = 5 trading days; daily threshold = 5 → silent
     assert _compute_should_be_silent(card, naive_now, MULTS) is True
+
+
+import pytest
+
+from tradelab.live import silence_checker
+from tradelab.live.notify import Severity
+
+
+@pytest.fixture(autouse=True)
+def _reset_silent_set():
+    silence_checker._silent_cards.clear()
+    yield
+    silence_checker._silent_cards.clear()
+
+
+def _enabled_card(cid="foo-v1", cadence="daily", last_fired_iso=None, enabled_at_iso=None):
+    return {
+        "card_id": cid,
+        "status": "enabled",
+        "symbol": "AAPL",
+        "cadence": cadence,
+        "last_fired_at": last_fired_iso,
+        "enabled_at": enabled_at_iso or _utc(2026, 4, 1).isoformat(),
+    }
+
+
+def test_tick_outside_rth_no_notify_no_state_change(monkeypatch):
+    fired = []
+    cards = {"a": _enabled_card("a", last_fired_iso=_utc(2020, 1, 1).isoformat())}
+    # Saturday — not RTH
+    silence_checker.tick(
+        now_utc=_utc(2026, 4, 25, 14),
+        cards=cards,
+        multipliers=MULTS,
+        notify_fn=lambda *a, **kw: fired.append(a),
+    )
+    assert fired == []
+    assert silence_checker.silent_set() == set()
+
+
+def test_tick_transition_into_silent_fires_warning_once():
+    fired = []
+    cards = {"foo-v1": _enabled_card("foo-v1", last_fired_iso=_utc(2026, 4, 22).isoformat())}
+    # Wed Apr 29 14:00 ET ≈ 18:00 UTC — RTH, 5 trading days since Apr 22
+    now = _utc(2026, 4, 29, 18)
+    silence_checker.tick(now_utc=now, cards=cards, multipliers=MULTS,
+                        notify_fn=lambda sev, title, body: fired.append((sev, title, body)))
+    assert silence_checker.is_silent("foo-v1") is True
+    assert len(fired) == 1
+    sev, title, body = fired[0]
+    assert sev == Severity.WARNING
+    assert title == "Card silent"
+    assert "foo-v1" in body and "AAPL" in body and "daily" in body
+
+
+def test_tick_silent_then_silent_no_repeat_notify():
+    fired = []
+    cards = {"foo-v1": _enabled_card("foo-v1", last_fired_iso=_utc(2026, 4, 22).isoformat())}
+    now = _utc(2026, 4, 29, 18)
+    notify_fn = lambda sev, title, body: fired.append((sev, title, body))
+    silence_checker.tick(now_utc=now, cards=cards, multipliers=MULTS, notify_fn=notify_fn)
+    silence_checker.tick(now_utc=now, cards=cards, multipliers=MULTS, notify_fn=notify_fn)
+    silence_checker.tick(now_utc=now, cards=cards, multipliers=MULTS, notify_fn=notify_fn)
+    assert len(fired) == 1
+
+
+def test_tick_card_fires_after_silence_clears_silently():
+    fired = []
+    cards_silent = {"foo-v1": _enabled_card("foo-v1", last_fired_iso=_utc(2026, 4, 22).isoformat())}
+    silence_checker.tick(now_utc=_utc(2026, 4, 29, 18), cards=cards_silent,
+                        multipliers=MULTS, notify_fn=lambda *a: fired.append(a))
+    assert silence_checker.is_silent("foo-v1") is True
+    # Now card fires — last_fired_at moves forward
+    cards_fresh = {"foo-v1": _enabled_card("foo-v1", last_fired_iso=_utc(2026, 4, 29, 17).isoformat())}
+    silence_checker.tick(now_utc=_utc(2026, 4, 29, 18), cards=cards_fresh,
+                        multipliers=MULTS, notify_fn=lambda *a: fired.append(a))
+    assert silence_checker.is_silent("foo-v1") is False
+    assert len(fired) == 1  # only the entry-into-silent, no exit notify
+
+
+def test_tick_multiple_cards_independent_transitions():
+    fired = []
+    cards = {
+        "a": _enabled_card("a", last_fired_iso=_utc(2026, 4, 22).isoformat()),
+        "b": _enabled_card("b", last_fired_iso=_utc(2026, 4, 28).isoformat()),
+        "c": _enabled_card("c", cadence="manual", last_fired_iso=_utc(2020, 1, 1).isoformat()),
+    }
+    silence_checker.tick(now_utc=_utc(2026, 4, 29, 18), cards=cards, multipliers=MULTS,
+                        notify_fn=lambda sev, title, body: fired.append(body))
+    assert silence_checker.is_silent("a") is True
+    assert silence_checker.is_silent("b") is False
+    assert silence_checker.is_silent("c") is False  # manual
+    assert len(fired) == 1
+    assert "a" in fired[0]
+
+
+def test_silent_set_returns_copy_not_reference():
+    silence_checker._silent_cards.add("a")
+    s = silence_checker.silent_set()
+    s.add("b")
+    assert "b" not in silence_checker._silent_cards
