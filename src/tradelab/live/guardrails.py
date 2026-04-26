@@ -141,3 +141,47 @@ def check_naked_short(card: dict, action: str, alpaca_state) -> Optional[BlockRe
         message=f"sell rejected: no open position in {target}",
         details={"symbol": target},
     )
+
+
+def _coerce_float(v) -> float:
+    """Coerce a value to float, handling None and non-numeric types gracefully."""
+    try:
+        return float(v) if v is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def check_buying_power(
+    card: dict,
+    alpaca_state,
+    qty: float,
+    last_price: float,
+    max_exposure_pct: float = 0.90,
+) -> Optional[BlockReason]:
+    """Check if (working_orders_notional + new_order_notional) exceeds buying_power cap.
+
+    Working notional is the sum of each open order's qty × (limit_price or filled_avg_price or 0).
+    New order's notional is qty × last_price. Both are checked against buying_power × max_exposure_pct.
+    """
+    bp = _coerce_float(alpaca_state.account().buying_power)
+    cap = bp * max_exposure_pct
+    working = 0.0
+    for o in alpaca_state.open_orders():
+        o_qty = _coerce_float(getattr(o, "qty", 0))
+        o_price = _coerce_float(getattr(o, "limit_price", None)) \
+            or _coerce_float(getattr(o, "filled_avg_price", None))
+        working += o_qty * o_price
+    new_notional = qty * last_price
+    if working + new_notional <= cap:
+        return None
+    return BlockReason(
+        code="insufficient_buying_power",
+        message=f"buying-power cap exceeded: working ${working:.0f} + new ${new_notional:.0f} > cap ${cap:.0f}",
+        details={
+            "buying_power": bp,
+            "max_exposure_pct": max_exposure_pct,
+            "cap": cap,
+            "working_notional": working,
+            "new_notional": new_notional,
+        },
+    )

@@ -285,3 +285,86 @@ def test_naked_short_allow_override_passes():
 def test_naked_short_symbol_match_is_case_insensitive():
     state = _AlpacaStateStub(positions=[_Position("aapl", "10")])
     assert check_naked_short(_card(symbol="AAPL"), "sell", state) is None
+
+
+# ── Buying power ────────────────────────────────────────────────────
+
+from tradelab.live.guardrails import check_buying_power
+
+
+class _Account:
+    def __init__(self, buying_power: str):
+        self.buying_power = buying_power
+
+
+class _Order:
+    def __init__(self, symbol: str, qty: str, limit_price: str | None = None,
+                 filled_avg_price: str | None = None):
+        self.symbol = symbol
+        self.qty = qty
+        self.limit_price = limit_price
+        self.filled_avg_price = filled_avg_price
+
+
+class _AlpacaStateStubBP:
+    def __init__(self, buying_power: str = "100000", open_orders=None):
+        self._account = _Account(buying_power)
+        self._orders = open_orders or []
+    def account(self):
+        return self._account
+    def open_orders(self):
+        return self._orders
+
+
+def test_buying_power_under_cap_passes():
+    state = _AlpacaStateStubBP(buying_power="100000", open_orders=[])
+    # 10 * $100 = $1k order against $100k bp * 0.9 = $90k cap -> pass
+    assert check_buying_power(_card(), state, qty=10, last_price=100.0, max_exposure_pct=0.9) is None
+
+
+def test_buying_power_over_cap_blocks():
+    state = _AlpacaStateStubBP(buying_power="100000", open_orders=[])
+    # 1000 * $100 = $100k order against $90k cap -> block
+    reason = check_buying_power(_card(), state, qty=1000, last_price=100.0, max_exposure_pct=0.9)
+    assert reason is not None
+    assert reason.code == "insufficient_buying_power"
+    assert reason.details["new_notional"] == pytest.approx(100000)
+    assert reason.details["cap"] == pytest.approx(90000)
+
+
+def test_buying_power_includes_open_orders_notional():
+    """Working orders consume the same cap as the candidate."""
+    state = _AlpacaStateStubBP(
+        buying_power="100000",
+        open_orders=[_Order("MSFT", qty="100", limit_price="500")],  # $50k working
+    )
+    # Candidate: 500 * $100 = $50k. 50k + 50k = 100k > 90k cap -> block
+    reason = check_buying_power(_card(), state, qty=500, last_price=100.0, max_exposure_pct=0.9)
+    assert reason is not None
+    assert reason.code == "insufficient_buying_power"
+    assert reason.details["working_notional"] == pytest.approx(50000)
+
+
+def test_buying_power_open_order_uses_filled_avg_when_no_limit():
+    state = _AlpacaStateStubBP(
+        buying_power="100000",
+        open_orders=[_Order("MSFT", qty="100", limit_price=None, filled_avg_price="400")],
+    )
+    # Working = 100 * 400 = 40k; cap = 90k; candidate 50k -> 90k <= 90k pass
+    assert check_buying_power(_card(), state, qty=500, last_price=100.0, max_exposure_pct=0.9) is None
+
+
+def test_buying_power_open_order_with_no_price_treated_as_zero():
+    state = _AlpacaStateStubBP(
+        buying_power="100000",
+        open_orders=[_Order("MSFT", qty="100", limit_price=None, filled_avg_price=None)],
+    )
+    # Working = 0; candidate 50k against 90k cap -> pass
+    assert check_buying_power(_card(), state, qty=500, last_price=100.0, max_exposure_pct=0.9) is None
+
+
+def test_buying_power_at_boundary_passes():
+    """Exactly at cap is allowed (>, not >=)."""
+    state = _AlpacaStateStubBP(buying_power="100000", open_orders=[])
+    # 900 * 100 = 90k; cap = 90k -> pass (not > cap)
+    assert check_buying_power(_card(), state, qty=900, last_price=100.0, max_exposure_pct=0.9) is None
