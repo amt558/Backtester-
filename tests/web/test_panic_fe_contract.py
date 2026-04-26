@@ -58,3 +58,27 @@ def test_panic_toggle_function_pinned(html_text):
 def test_panic_strip_collapsed_by_default(html_text):
     # data-expanded="false" or hidden attribute on the buttons container
     assert 'data-expanded="false"' in html_text or 'data-panic-expanded="false"' in html_text
+
+
+# ─── L1 + L2 modals ─────────────────────────────────────────────────────
+
+def test_l1_modal_present(html_text):
+    assert 'id="lt-panic-l1-modal"' in html_text
+    assert "Pause All Cards" in html_text  # title
+    # confirm word literal must appear in the modal body for instructional text
+    block = html_text[html_text.find('id="lt-panic-l1-modal"'):]
+    block = block[:block.find("</div>", block.find("</div>") + 1) + 6 + 5000]
+    assert "DISABLE" in block, "DISABLE confirm word not in L1 modal"
+
+
+def test_l2_modal_present(html_text):
+    assert 'id="lt-panic-l2-modal"' in html_text
+    block = html_text[html_text.find('id="lt-panic-l2-modal"'):html_text.find('id="lt-panic-l2-modal"') + 5000]
+    assert "PANIC" in block, "PANIC confirm word not in L2 modal"
+    assert "Also cancel non-tradelab open orders" in block
+
+
+def test_executePanic_function_pinned(html_text):
+    assert "function executePanic" in html_text or "executePanic =" in html_text
+    # Must POST to the right URL
+    assert "/tradelab/live/panic" in html_text
