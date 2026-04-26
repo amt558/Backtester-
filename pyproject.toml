@@ -27,6 +27,7 @@ dependencies = [
     "plotly>=6.0.0",
     "python-dateutil>=2.9.0",
     "watchdog>=3.0.0",
+    "plyer>=2.1.0",
 ]
 
 [project.scripts]
