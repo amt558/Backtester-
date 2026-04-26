@@ -179,7 +179,14 @@ def execute_panic(level: str, also_cancel_nontradelab: bool = False) -> PanicRes
     orders_cancelled: list[CancelAction] = []
     positions_flattened: list[FlattenAction] = []
 
-    # Step 3+4 deferred to T5/T6
+    # Step 3: L2 — cancel open orders (L2/L3 only)
+    if level in ("L2", "L3"):
+        orders_cancelled = _cancel_orders_step(
+            card_ids=set(cards_now.keys()),
+            also_cancel_nontradelab=also_cancel_nontradelab,
+        )
+
+    # Step 4 deferred to T6
 
     result = PanicResult(
         ts=ts,
@@ -198,3 +205,52 @@ def execute_panic(level: str, also_cancel_nontradelab: bool = False) -> PanicRes
     _notify_fn(Severity.CRITICAL, title, body)
 
     return result
+
+
+def _classify_order_card(client_order_id: Optional[str], card_ids: set) -> Optional[str]:
+    """Return the card_id this order belongs to, or None if not tradelab.
+    Spec rule: client_order_id.startswith(f"{cid}-") for some cid."""
+    if not client_order_id:
+        return None
+    for cid in card_ids:
+        if client_order_id.startswith(f"{cid}-"):
+            return cid
+    return None
+
+
+def _cancel_orders_step(
+    *, card_ids: set, also_cancel_nontradelab: bool
+) -> list[CancelAction]:
+    """L2 step. Returns one CancelAction per order processed (whether cancel
+    succeeded or failed). On list_open_orders failure, returns a single synthetic
+    CancelAction with ok=False so the audit log shows the issue."""
+    from tradelab.live import alpaca_client
+
+    try:
+        orders = alpaca_client.list_open_orders()
+    except Exception as e:
+        return [CancelAction(
+            ok=False,
+            error=f"list_open_orders failed: {type(e).__name__}: {e}",
+            order_id=None, client_order_id=None, card_id=None,
+        )]
+
+    actions: list[CancelAction] = []
+    for o in orders:
+        coid = o.get("client_order_id")
+        card_id = _classify_order_card(coid, card_ids)
+        if card_id is None and not also_cancel_nontradelab:
+            continue  # skip non-tradelab orders unless flag is set
+        order_id = o.get("id")
+        try:
+            alpaca_client.cancel_order_by_id(order_id)
+            actions.append(CancelAction(
+                ok=True, error=None,
+                order_id=order_id, client_order_id=coid, card_id=card_id,
+            ))
+        except Exception as e:
+            actions.append(CancelAction(
+                ok=False, error=f"{type(e).__name__}: {e}",
+                order_id=order_id, client_order_id=coid, card_id=card_id,
+            ))
+    return actions

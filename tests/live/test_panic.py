@@ -244,3 +244,114 @@ def test_l1_invalid_level_raises(tmp_panic_log, mock_card_registry, mock_notify)
     from tradelab.live.panic import execute_panic
     with pytest.raises(ValueError):
         execute_panic("L4")
+
+
+# ─── Section: execute_panic L2 ──────────────────────────────────────────
+
+@pytest.fixture
+def mock_alpaca_orders(monkeypatch):
+    """Patch alpaca_client.list_open_orders + cancel_order_by_id with mocks."""
+    from tradelab.live import alpaca_client
+    list_calls = []
+    cancel_calls = []
+
+    def fake_list():
+        return list_calls[0] if list_calls else []
+
+    def fake_cancel(order_id):
+        cancel_calls.append(order_id)
+
+    monkeypatch.setattr(alpaca_client, "list_open_orders", fake_list)
+    monkeypatch.setattr(alpaca_client, "cancel_order_by_id", fake_cancel)
+    return list_calls, cancel_calls
+
+
+def test_l2_cancels_only_tradelab_orders_by_default(
+    tmp_panic_log, mock_card_registry, mock_notify, mock_alpaca_orders
+):
+    from tradelab.live.panic import execute_panic
+    list_calls, cancel_calls = mock_alpaca_orders
+    list_calls.append([
+        {"id": "alp-1", "client_order_id": "card_a-1714142887000",
+         "symbol": "AAPL", "qty": "10", "side": "buy", "status": "new"},
+        {"id": "alp-2", "client_order_id": "manual-order-xyz",
+         "symbol": "TSLA", "qty": "5", "side": "buy", "status": "new"},
+    ])
+
+    result = execute_panic("L2")
+
+    assert cancel_calls == ["alp-1"]  # only tradelab order
+    assert len(result.orders_cancelled) == 1
+    assert result.orders_cancelled[0].ok is True
+    assert result.orders_cancelled[0].order_id == "alp-1"
+
+
+def test_l2_cancels_all_orders_when_flag_on(
+    tmp_panic_log, mock_card_registry, mock_notify, mock_alpaca_orders
+):
+    from tradelab.live.panic import execute_panic
+    list_calls, cancel_calls = mock_alpaca_orders
+    list_calls.append([
+        {"id": "alp-1", "client_order_id": "card_a-1714142887000",
+         "symbol": "AAPL", "qty": "10", "side": "buy", "status": "new"},
+        {"id": "alp-2", "client_order_id": "manual-order-xyz",
+         "symbol": "TSLA", "qty": "5", "side": "buy", "status": "new"},
+    ])
+
+    result = execute_panic("L2", also_cancel_nontradelab=True)
+
+    assert sorted(cancel_calls) == ["alp-1", "alp-2"]
+    assert len(result.orders_cancelled) == 2
+    # The manual one should record card_id=None
+    by_oid = {a.order_id: a for a in result.orders_cancelled}
+    assert by_oid["alp-2"].card_id is None
+    assert by_oid["alp-1"].card_id == "card_a"
+
+
+def test_l2_partial_failure_continues(
+    tmp_panic_log, mock_card_registry, mock_notify, monkeypatch
+):
+    from tradelab.live import alpaca_client
+    from tradelab.live.panic import execute_panic
+
+    monkeypatch.setattr(alpaca_client, "list_open_orders", lambda: [
+        {"id": "alp-1", "client_order_id": "card_a-1", "symbol": "AAPL",
+         "qty": "10", "side": "buy", "status": "new"},
+        {"id": "alp-2", "client_order_id": "card_a-2", "symbol": "AAPL",
+         "qty": "10", "side": "buy", "status": "new"},
+    ])
+
+    def fake_cancel(oid):
+        if oid == "alp-2":
+            raise Exception("simulated APIError")
+    monkeypatch.setattr(alpaca_client, "cancel_order_by_id", fake_cancel)
+
+    result = execute_panic("L2")
+
+    assert len(result.orders_cancelled) == 2
+    by_oid = {a.order_id: a for a in result.orders_cancelled}
+    assert by_oid["alp-1"].ok is True
+    assert by_oid["alp-2"].ok is False
+    assert "simulated APIError" in (by_oid["alp-2"].error or "")
+    # And the panic itself completed (audit + notify fired)
+    assert tmp_panic_log.exists()
+    assert len(mock_notify) == 1
+
+
+def test_l2_list_orders_failure_recorded_as_synthetic_action(
+    tmp_panic_log, mock_card_registry, mock_notify, monkeypatch
+):
+    from tradelab.live import alpaca_client
+    from tradelab.live.panic import execute_panic
+
+    def fake_list():
+        raise Exception("network down")
+    monkeypatch.setattr(alpaca_client, "list_open_orders", fake_list)
+
+    result = execute_panic("L2")
+
+    assert len(result.orders_cancelled) == 1
+    assert result.orders_cancelled[0].ok is False
+    assert "network down" in (result.orders_cancelled[0].error or "")
+    # L1 step still succeeded
+    assert set(result.cards_disabled) == {"card_a", "card_b"}
