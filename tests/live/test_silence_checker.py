@@ -245,6 +245,10 @@ def test_start_creates_running_thread_then_stop_joins_cleanly():
     silence_checker.start()
     try:
         assert silence_checker._thread is not None
+        # Give the OS scheduler up to 500ms to actually start the thread
+        deadline = time.monotonic() + 0.5
+        while not silence_checker._thread.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert silence_checker._thread.is_alive()
         assert silence_checker._thread.daemon is True
     finally:

@@ -11,9 +11,19 @@ still-silent card on first post-restart tick.
 """
 from __future__ import annotations
 
+import sys
+import threading
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
-from tradelab.live.trading_calendar import count_trading_days_between
+from tradelab.live import live_config, notify as _notify
+from tradelab.live.cards import CardRegistry
+from tradelab.live.notify import Severity
+from tradelab.live.trading_calendar import count_trading_days_between, is_trading_day
+
+ET = ZoneInfo("America/New_York")
 
 
 def _compute_should_be_silent(
@@ -51,16 +61,6 @@ def _compute_should_be_silent(
     return count_trading_days_between(ref, now_utc) >= multiplier
 
 
-import sys
-import threading
-from typing import Callable, Optional
-from zoneinfo import ZoneInfo
-
-from tradelab.live import notify as _notify
-from tradelab.live.notify import Severity
-
-ET = ZoneInfo("America/New_York")
-
 _silent_cards: set[str] = set()
 _silent_lock = threading.Lock()
 
@@ -77,11 +77,7 @@ def silent_set() -> set[str]:
 
 
 def is_rth(now_utc: datetime) -> bool:
-    """Regular trading hours: 9:30am–4:00pm ET on a NYSE trading day.
-
-    Imports trading_calendar lazily-by-module-load (top-of-file already).
-    """
-    from tradelab.live.trading_calendar import is_trading_day
+    """Regular trading hours: 9:30am–4:00pm ET on a NYSE trading day."""
     now_et = now_utc.astimezone(ET)
     if not is_trading_day(now_et.date()):
         return False
@@ -109,13 +105,10 @@ def tick(
         return
 
     if cards is None:
-        from tradelab.live.cards import CardRegistry
-        from pathlib import Path
         path = Path(__file__).resolve().parents[3] / "live" / "cards.json"
         registry = CardRegistry(path)
         cards = registry.all_hydrated()
     if multipliers is None:
-        from tradelab.live import live_config
         multipliers = live_config.get().get("silence", {}).get("multipliers", {})
     if notify_fn is None:
         notify_fn = _notify.notify
@@ -145,6 +138,7 @@ TICK_SECONDS = 1800  # 30 minutes (spec §8.3)
 
 _thread: Optional[threading.Thread] = None
 _stop_evt = threading.Event()
+_start_lock = threading.Lock()
 
 
 def _run_loop() -> None:
@@ -161,11 +155,12 @@ def _run_loop() -> None:
 def start() -> None:
     """Boot the periodic thread. Idempotent — repeated calls are no-ops."""
     global _thread
-    if _thread is not None and _thread.is_alive():
-        return
-    _stop_evt.clear()
-    _thread = threading.Thread(target=_run_loop, daemon=True, name="silence_checker")
-    _thread.start()
+    with _start_lock:
+        if _thread is not None and _thread.is_alive():
+            return
+        _stop_evt.clear()  # required: event may be set from a previous stop() cycle
+        _thread = threading.Thread(target=_run_loop, daemon=True, name="silence_checker")
+        _thread.start()
 
 
 def stop() -> None:
