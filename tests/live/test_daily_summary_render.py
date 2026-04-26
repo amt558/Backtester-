@@ -98,3 +98,65 @@ def test_render_anomaly_section_section_error_degrades(monkeypatch):
     assert "[error: RuntimeError]" in section
     # Other sections still rendered (no anomalies in them)
     assert counts["block"] == 0
+
+
+def test_render_snapshot_section_with_data(monkeypatch):
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 12, "enabled": 8, "disabled": 3, "silent": 1})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 14)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity", lambda d: {
+        "CRITICAL": 4, "WARNING": 2, "INFO": 11, "DEBUG": 0,
+    })
+    monkeypatch.setattr(daily_summary, "_open_positions",
+                         lambda: [{"symbol": "AMZN", "qty": "12", "side": "long"}])
+    monkeypatch.setattr(daily_summary, "_open_orders",
+                         lambda: [{"symbol": "GOOG", "qty": "10", "side": "buy", "status": "new"}])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "uptime_seconds": 30120, "ngrok_url": "abc.ngrok-free.app"})
+
+    section = daily_summary._render_snapshot_section(date(2026, 4, 27))
+
+    assert "12 total" in section and "8 enabled" in section
+    assert "14 order submissions" in section
+    assert "4 CRITICAL" in section
+    assert "AMZN" in section and "GOOG" in section
+    assert "abc.ngrok-free.app" in section
+    assert "8h" in section.lower()  # uptime humanized
+
+
+def test_render_snapshot_section_empty_alpaca(monkeypatch):
+    """When Alpaca returns empty lists, show empty-state lines, not tables."""
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 0, "enabled": 0, "disabled": 0, "silent": 0})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0})
+    monkeypatch.setattr(daily_summary, "_open_positions", lambda: [])
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "uptime_seconds": 0, "ngrok_url": "—"})
+
+    section = daily_summary._render_snapshot_section(date(2026, 4, 27))
+    assert "Open positions (0)" in section
+    assert "Open orders (0)" in section
+    # No <table> rows when empty
+    assert "<table" not in section
+
+
+def test_render_snapshot_section_alpaca_error_degrades(monkeypatch):
+    """If Alpaca raises, the positions section shows [error: ...] but rest renders."""
+    monkeypatch.setattr(daily_summary, "_card_counts",
+                         lambda: {"total": 1, "enabled": 1, "disabled": 0, "silent": 0})
+    monkeypatch.setattr(daily_summary, "_today_order_submission_count", lambda d: 0)
+    monkeypatch.setattr(daily_summary, "_today_notify_counts_by_severity",
+                         lambda d: {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0})
+    monkeypatch.setattr(daily_summary, "_open_positions",
+                         lambda: (_ for _ in ()).throw(RuntimeError("alpaca down")))
+    monkeypatch.setattr(daily_summary, "_open_orders", lambda: [])
+    monkeypatch.setattr(daily_summary, "_receiver_status",
+                         lambda: {"up": True, "uptime_seconds": 100, "ngrok_url": "x"})
+
+    section = daily_summary._render_snapshot_section(date(2026, 4, 27))
+    assert "[error: RuntimeError]" in section
+    # The rest still rendered
+    assert "1 total" in section

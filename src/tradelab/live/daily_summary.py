@@ -204,3 +204,159 @@ def _render_anomaly_section(today_et: date) -> tuple[str, dict[str, int]]:
         + "\n</ul>"
     )
     return body, counts
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Data sources for snapshot section
+# ────────────────────────────────────────────────────────────────────────────
+
+def _card_counts() -> dict:
+    """Return {total, enabled, disabled, silent} from cards.json + silence_checker."""
+    from tradelab.live.cards import CardRegistry
+    from tradelab.live import silence_checker
+
+    cards = CardRegistry().list_all()
+    total = len(cards)
+    enabled = sum(1 for c in cards if c.get("status") == "enabled")
+    disabled = sum(1 for c in cards if c.get("status") == "disabled")
+    try:
+        silent = len(silence_checker.silent_set())
+    except Exception:
+        silent = 0
+    return {"total": total, "enabled": enabled, "disabled": disabled, "silent": silent}
+
+
+def _today_order_submission_count(today_et: date) -> int:
+    entries = _jsonl_helpers.read_today_lines(ALERTS_PATH, today_et)
+    return sum(1 for e in entries if e.get("status") == "order_submitted")
+
+
+def _today_notify_counts_by_severity(today_et: date) -> dict[str, int]:
+    counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0}
+    for e in _jsonl_helpers.read_today_lines(NOTIFY_PATH, today_et):
+        sev = str(e.get("severity", "")).upper()
+        if sev in counts:
+            counts[sev] += 1
+    return counts
+
+
+def _open_positions() -> list[dict]:
+    from tradelab.live import alpaca_client
+    return alpaca_client.list_positions()
+
+
+def _open_orders() -> list[dict]:
+    from tradelab.live import alpaca_client
+    return alpaca_client.list_open_orders()
+
+
+def _receiver_status() -> dict:
+    """Best-effort: probe the receiver's /health endpoint via the receiver_status helper.
+    Returns {up, uptime_seconds, ngrok_url}. On failure: up=False."""
+    try:
+        # Reuse the existing /tradelab/receiver/status logic if present.
+        # Defer import to avoid circular ref at module-load time.
+        import urllib.request
+        import json as _json
+        with urllib.request.urlopen("http://127.0.0.1:8877/tradelab/receiver/status", timeout=2) as r:
+            data = _json.loads(r.read().decode("utf-8")).get("data", {})
+        return {
+            "up": bool(data.get("receiver_up", False)),
+            "uptime_seconds": int(data.get("receiver_uptime_seconds", 0)),
+            "ngrok_url": data.get("ngrok_url", "—") or "—",
+        }
+    except Exception:
+        return {"up": False, "uptime_seconds": 0, "ngrok_url": "—"}
+
+
+def _humanize_seconds(s: int) -> str:
+    """120 → '2m', 7320 → '2h 2m', 0 → '0m'."""
+    h, m = divmod(s // 60, 60)
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Render — snapshot section
+# ────────────────────────────────────────────────────────────────────────────
+
+def _render_snapshot_section(today_et: date) -> str:
+    parts: list[str] = [f'<h4 {_HEADER}>📊 Health snapshot (now)</h4>']
+
+    cc, err = _safe_call(_card_counts, default={"total": 0, "enabled": 0, "disabled": 0, "silent": 0})
+    if err:
+        parts.append(f'<p>[error: {err}] cards counts</p>')
+    else:
+        parts.append(
+            f'<p><strong>Cards:</strong> {cc["total"]} total · '
+            f'<span style="color:#388e3c">{cc["enabled"]} enabled</span> · '
+            f'{cc["disabled"]} disabled · '
+            f'<span style="color:#f57c00">{cc["silent"]} silent</span></p>'
+        )
+
+    osc, err = _safe_call(_today_order_submission_count, today_et, default=0)
+    nsc, err2 = _safe_call(_today_notify_counts_by_severity, today_et, default={"CRITICAL":0,"WARNING":0,"INFO":0,"DEBUG":0})
+    if err or err2:
+        parts.append(f'<p>[error: {err or err2}] today counts</p>')
+    else:
+        parts.append(
+            f'<p><strong>Today:</strong> {osc} order submissions · '
+            f'{nsc["CRITICAL"]} CRITICAL / {nsc["WARNING"]} WARNING / {nsc["INFO"]} INFO notifications</p>'
+        )
+
+    rs, err = _safe_call(_receiver_status, default={"up": False, "uptime_seconds": 0, "ngrok_url": "—"})
+    if err:
+        parts.append(f'<p>[error: {err}] receiver status</p>')
+    else:
+        up_str = f'up, {_humanize_seconds(rs["uptime_seconds"])}' if rs["up"] else "down"
+        parts.append(
+            f'<p><strong>Receiver:</strong> {up_str} · '
+            f'<strong>ngrok:</strong> <code>{rs["ngrok_url"]}</code></p>'
+        )
+
+    positions, err = _safe_call(_open_positions, default=[])
+    if err:
+        parts.append(f'<p>[error: {err}] open positions</p>')
+    else:
+        parts.append(f'<p style="margin-top:10px"><strong>Open positions ({len(positions)})</strong></p>')
+        if positions:
+            rows = "".join(
+                f'<tr><td style="border:1px solid #e0e0e0;padding:4px 8px">{p["symbol"]}</td>'
+                f'<td style="border:1px solid #e0e0e0;padding:4px 8px">{p["qty"]}</td>'
+                f'<td style="border:1px solid #e0e0e0;padding:4px 8px">{p["side"]}</td></tr>'
+                for p in positions
+            )
+            parts.append(
+                '<table style="border-collapse:collapse;font-size:12px">\n'
+                '<tr style="background:#f7f7f7">'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Symbol</th>'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Qty</th>'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Side</th></tr>'
+                f'{rows}\n</table>'
+            )
+
+    orders, err = _safe_call(_open_orders, default=[])
+    if err:
+        parts.append(f'<p>[error: {err}] open orders</p>')
+    else:
+        parts.append(f'<p style="margin-top:10px"><strong>Open orders ({len(orders)})</strong></p>')
+        if orders:
+            rows = "".join(
+                f'<tr><td style="border:1px solid #e0e0e0;padding:4px 8px">{o["symbol"]}</td>'
+                f'<td style="border:1px solid #e0e0e0;padding:4px 8px">{o["qty"]}</td>'
+                f'<td style="border:1px solid #e0e0e0;padding:4px 8px">{o["side"]}</td>'
+                f'<td style="border:1px solid #e0e0e0;padding:4px 8px">{o["status"]}</td></tr>'
+                for o in orders
+            )
+            parts.append(
+                '<table style="border-collapse:collapse;font-size:12px">\n'
+                '<tr style="background:#f7f7f7">'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Symbol</th>'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Qty</th>'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Side</th>'
+                '<th style="border:1px solid #e0e0e0;padding:4px 8px">Status</th></tr>'
+                f'{rows}\n</table>'
+            )
+
+    return "\n".join(parts)
