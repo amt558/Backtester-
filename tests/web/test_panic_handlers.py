@@ -92,3 +92,65 @@ def test_post_panic_missing_level_400():
 def test_post_panic_missing_confirm_400():
     body, status = _post("/tradelab/live/panic", {"level": "L1"})
     assert status == 400
+
+
+# ─── GET /tradelab/live/panic/last-event ───────────────────────────────
+
+def _get(path):
+    return handlers.handle_get_with_status(path)
+
+
+def test_get_last_event_returns_null_when_file_missing(monkeypatch, tmp_path):
+    from tradelab.live import panic
+    p = tmp_path / "panic_events.jsonl"
+    monkeypatch.setattr(panic, "PANIC_LOG_PATH", p)
+    body, status = _get("/tradelab/live/panic/last-event")
+    assert status == 200
+    env = json.loads(body)
+    assert env["data"] is None
+
+
+def test_get_last_event_returns_null_when_file_empty(monkeypatch, tmp_path):
+    from tradelab.live import panic
+    p = tmp_path / "panic_events.jsonl"
+    p.write_text("", encoding="utf-8")
+    monkeypatch.setattr(panic, "PANIC_LOG_PATH", p)
+    body, status = _get("/tradelab/live/panic/last-event")
+    assert status == 200
+    env = json.loads(body)
+    assert env["data"] is None
+
+
+def test_get_last_event_returns_most_recent(monkeypatch, tmp_path):
+    from tradelab.live import panic
+    p = tmp_path / "panic_events.jsonl"
+    e1 = {"ts": "2026-04-26T14:32:07-04:00", "level": "L1",
+          "cards_disabled": ["card_a"], "before_state_snapshot": [],
+          "orders_cancelled": [], "positions_flattened": []}
+    e2 = {"ts": "2026-04-26T15:01:42-04:00", "level": "L2",
+          "cards_disabled": ["card_b"], "before_state_snapshot": [],
+          "orders_cancelled": [], "positions_flattened": []}
+    p.write_text(json.dumps(e1) + "\n" + json.dumps(e2) + "\n", encoding="utf-8")
+    monkeypatch.setattr(panic, "PANIC_LOG_PATH", p)
+
+    body, status = _get("/tradelab/live/panic/last-event")
+    assert status == 200
+    env = json.loads(body)
+    assert env["data"]["ts"] == "2026-04-26T15:01:42-04:00"
+    assert env["data"]["level"] == "L2"
+
+
+def test_get_last_event_handles_corrupt_trailing_line(monkeypatch, tmp_path):
+    """If the last line is malformed JSON, return the most recent valid line."""
+    from tradelab.live import panic
+    p = tmp_path / "panic_events.jsonl"
+    e1 = {"ts": "2026-04-26T14:32:07-04:00", "level": "L1",
+          "cards_disabled": [], "before_state_snapshot": [],
+          "orders_cancelled": [], "positions_flattened": []}
+    p.write_text(json.dumps(e1) + "\nthis-is-not-json\n", encoding="utf-8")
+    monkeypatch.setattr(panic, "PANIC_LOG_PATH", p)
+
+    body, status = _get("/tradelab/live/panic/last-event")
+    assert status == 200
+    env = json.loads(body)
+    assert env["data"]["ts"] == "2026-04-26T14:32:07-04:00"

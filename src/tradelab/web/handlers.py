@@ -371,6 +371,9 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     if path == "/tradelab/live/silence-status":
         return handle_silence_status_get()
 
+    if path == "/tradelab/live/panic/last-event":
+        return handle_panic_last_event_get()
+
     return _err("not found"), 404
 
 
@@ -978,6 +981,27 @@ def handle_silence_status_get() -> Tuple[str, int]:
     """Return current silent-card set as {<card_id>: true} envelope."""
     from tradelab.live import silence_checker
     return _ok({cid: True for cid in silence_checker.silent_set()}), 200
+
+
+def handle_panic_last_event_get() -> Tuple[str, int]:
+    """GET /tradelab/live/panic/last-event — return most recent panic event
+    as JSON, or null if no events exist (or file is empty/corrupt at tail)."""
+    from tradelab.live import panic
+    if not panic.PANIC_LOG_PATH.exists():
+        return _ok(None), 200
+    try:
+        text = panic.PANIC_LOG_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return _ok(None), 200
+
+    # Iterate non-empty lines from the bottom up; return first parseable one.
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    for ln in reversed(lines):
+        try:
+            return _ok(json.loads(ln)), 200
+        except json.JSONDecodeError:
+            continue
+    return _ok(None), 200
 
 
 _PANIC_CONFIRM_WORDS = {"L1": "DISABLE", "L2": "PANIC", "L3": "FLATTEN"}
