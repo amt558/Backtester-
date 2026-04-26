@@ -365,6 +365,9 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             "cards_loaded": cards_loaded,
         }), 200
 
+    if path == "/tradelab/live/config":
+        return handle_live_config_get()
+
     return _err("not found"), 404
 
 
@@ -658,6 +661,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         deleted, failed = reg.bulk_delete([str(cid) for cid in ids])
         return _ok({"deleted": deleted, "failed": failed}), 200
 
+    if path == "/tradelab/live/config/test-notification":
+        return handle_test_notification(payload)
+
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200
 
@@ -685,6 +691,9 @@ def handle_patch_with_status(path: str, body: bytes) -> Tuple[str, int]:
         except KeyError:
             return _err("card not found"), 404
         return _ok({"updated": card_id}), 200
+
+    if path == "/tradelab/live/config":
+        return handle_live_config_patch(payload)
 
     return _err("not found"), 404
 
@@ -870,6 +879,93 @@ def _validate_patch_card_payload(payload: dict) -> Optional[str]:
         if k in payload and not isinstance(payload[k], bool):
             return f"{k} must be a bool"
     return None
+
+
+# ─── Validation for PATCH /tradelab/live/config ──────────────────────
+
+_ALLOWED_LIVE_CONFIG_TOP_LEVEL = {
+    "schema_version", "notifications", "guardrails", "silence", "email_digest",
+}
+_ALLOWED_NOTIFICATIONS_KEYS = {
+    "enabled_channels", "severity_routing", "ntfy", "smtp", "audible",
+}
+_ALLOWED_CHANNELS = {"browser", "windows_toast", "audible", "ntfy", "email"}
+_ALLOWED_SEVERITIES = {"critical", "warning", "info"}
+
+
+def _validate_live_config_payload(payload) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return "payload must be a JSON object"
+    unknown = set(payload.keys()) - _ALLOWED_LIVE_CONFIG_TOP_LEVEL
+    if unknown:
+        return f"unknown top-level field: {sorted(unknown)[0]}"
+    notif = payload.get("notifications", {})
+    if not isinstance(notif, dict):
+        return "notifications must be an object"
+    unknown = set(notif.keys()) - _ALLOWED_NOTIFICATIONS_KEYS
+    if unknown:
+        return f"unknown notifications field: {sorted(unknown)[0]}"
+    if "enabled_channels" in notif:
+        ec = notif["enabled_channels"]
+        if not isinstance(ec, list) or any(c not in _ALLOWED_CHANNELS for c in ec):
+            return f"enabled_channels must be a subset of {sorted(_ALLOWED_CHANNELS)}"
+    if "severity_routing" in notif:
+        sr = notif["severity_routing"]
+        if not isinstance(sr, dict):
+            return "severity_routing must be an object"
+        for sev, chans in sr.items():
+            if sev not in _ALLOWED_SEVERITIES:
+                return f"unknown severity: {sev}"
+            if not isinstance(chans, list) or any(c not in _ALLOWED_CHANNELS for c in chans):
+                return f"severity_routing[{sev}] must be a list of channel names"
+    if "guardrails" in payload:
+        g = payload["guardrails"]
+        if not isinstance(g, dict):
+            return "guardrails must be an object"
+        if "max_exposure_pct" in g:
+            v = g["max_exposure_pct"]
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not (0.0 < v <= 1.0):
+                return "max_exposure_pct must be a number in (0, 1]"
+    return None
+
+
+def handle_live_config_get() -> Tuple[str, int]:
+    from tradelab.live import live_config
+    return _ok(live_config.mask_passwords(live_config.get())), 200
+
+
+def handle_live_config_patch(payload) -> Tuple[str, int]:
+    err = _validate_live_config_payload(payload)
+    if err is not None:
+        return _err(err), 400
+    # Strip masked passwords (treat "******" as no-change)
+    if isinstance(payload, dict):
+        smtp = payload.get("notifications", {}).get("smtp", {})
+        if isinstance(smtp, dict) and smtp.get("password") == "******":
+            smtp.pop("password")
+    from tradelab.live import live_config
+    live_config.update(payload)
+    return _ok(live_config.mask_passwords(live_config.get())), 200
+
+
+def handle_test_notification(payload) -> Tuple[str, int]:
+    if not isinstance(payload, dict):
+        return _err("payload must be a JSON object"), 400
+    channel = payload.get("channel")
+    severity_str = payload.get("severity", "info")
+    if channel not in _ALLOWED_CHANNELS:
+        return _err(f"channel must be one of {sorted(_ALLOWED_CHANNELS)}"), 400
+    if severity_str not in _ALLOWED_SEVERITIES:
+        return _err(f"severity must be one of {sorted(_ALLOWED_SEVERITIES)}"), 400
+    from tradelab.live import notify
+    from tradelab.live.notify import Severity
+    notify.notify(
+        Severity(severity_str),
+        f"Test notification ({channel})",
+        f"Synthetic {severity_str} event from settings panel",
+        channels={channel},
+    )
+    return _ok({"channel": channel, "severity": severity_str}), 200
 
 
 # ─── Validation for /tradelab/score + /tradelab/accept (Option H 3a) ──
