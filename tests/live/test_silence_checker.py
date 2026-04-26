@@ -193,3 +193,44 @@ def test_silent_set_returns_copy_not_reference():
     s = silence_checker.silent_set()
     s.add("b")
     assert "b" not in silence_checker._silent_cards
+
+
+# ---- T5: is_rth boundary tests ---------------------------------------------
+
+def test_is_rth_weekday_noon_et_is_true():
+    # Wed Apr 22 2026 12:00 ET = 16:00 UTC
+    assert silence_checker.is_rth(_utc(2026, 4, 22, 16)) is True
+
+
+def test_is_rth_weekday_pre_open_is_false():
+    # Wed Apr 22 2026 09:00 ET = 13:00 UTC (before 9:30 open)
+    assert silence_checker.is_rth(_utc(2026, 4, 22, 13)) is False
+
+
+def test_is_rth_weekday_post_close_is_false():
+    # Wed Apr 22 2026 16:30 ET = 20:30 UTC (after 4pm close)
+    assert silence_checker.is_rth(_utc(2026, 4, 22, 20, 30)) is False
+
+
+def test_is_rth_saturday_is_false():
+    # Sat Apr 25 2026 noon ET — not a trading day
+    assert silence_checker.is_rth(_utc(2026, 4, 25, 16)) is False
+
+
+def test_is_rth_sunday_is_false():
+    assert silence_checker.is_rth(_utc(2026, 4, 26, 16)) is False
+
+
+def test_is_rth_holiday_is_false():
+    # Good Friday Apr 3 2026 — NYSE closed even though it's Friday
+    assert silence_checker.is_rth(_utc(2026, 4, 3, 16)) is False
+
+
+def test_is_rth_at_market_open_boundary_is_true():
+    # Exactly 9:30:00 ET = 13:30 UTC → True (open is inclusive)
+    assert silence_checker.is_rth(_utc(2026, 4, 22, 13, 30)) is True
+
+
+def test_is_rth_at_market_close_boundary_is_false():
+    # Exactly 16:00:00 ET = 20:00 UTC → False (close is exclusive)
+    assert silence_checker.is_rth(_utc(2026, 4, 22, 20, 0)) is False
