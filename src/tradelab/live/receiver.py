@@ -27,6 +27,10 @@ from pydantic import ValidationError
 
 from tradelab.live.alpaca_client import submit_market_order
 from tradelab.live.cards import CardRegistry
+from tradelab.live.guardrails import (
+    CardRuntimeState,
+    get_rth_window_start,
+)
 from tradelab.live.schema import AlertPayload
 
 LIVE_DATA_DIR = Path("C:/TradingScripts/tradelab/live")
@@ -120,14 +124,82 @@ def _start_cards_watcher(registry: CardRegistry, *, polling: bool = False):
 
 
 cards = CardRegistry(CARDS_PATH)
+
+_card_state: dict[str, CardRuntimeState] = {}
+
+
+def record_attempt(states: dict[str, CardRuntimeState], card_id: str, now: datetime) -> None:
+    state = states.setdefault(card_id, CardRuntimeState())
+    state.last_attempted_at = now
+
+
+def record_fire(states: dict[str, CardRuntimeState], card_id: str, now: datetime) -> None:
+    state = states.setdefault(card_id, CardRuntimeState())
+    current_window = get_rth_window_start(now)
+    if state.fire_window_start is None or state.fire_window_start < current_window:
+        state.fires_today = 1
+        state.fire_window_start = current_window
+    else:
+        state.fires_today += 1
+    state.last_fired_at = now
+
+
+def hydrate_card_state_from_alerts_log(
+    log_path: Path, now: datetime, max_lines: int = 500,
+) -> dict[str, CardRuntimeState]:
+    """Replay the last `max_lines` of alerts.jsonl to rebuild fire state.
+
+    Only `order_submitted` records contribute. fires_today counts only
+    submissions whose ts falls within the current RTH window.
+    """
+    states: dict[str, CardRuntimeState] = {}
+    if not log_path.exists():
+        return states
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()[-max_lines:]
+    except OSError:
+        return states
+    current_window = get_rth_window_start(now)
+    for line in lines:
+        try:
+            rec_obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec_obj.get("status") != "order_submitted":
+            continue
+        cid = rec_obj.get("card_id")
+        ts_str = rec_obj.get("ts")
+        if not cid or not ts_str:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        state = states.setdefault(cid, CardRuntimeState())
+        # Always update last_fired_at to the most recent fire we see
+        if state.last_fired_at is None or ts > state.last_fired_at:
+            state.last_fired_at = ts
+        if ts >= current_window:
+            if state.fire_window_start is None or state.fire_window_start < current_window:
+                state.fires_today = 1
+                state.fire_window_start = current_window
+            else:
+                state.fires_today += 1
+    return states
+
+
 app = FastAPI(title="tradelab live webhook receiver", version="0.1.0")
 
 
 @app.on_event("startup")
 def _on_startup() -> None:
-    global _cards_observer
+    global _cards_observer, _card_state
     _cards_observer = _start_cards_watcher(cards, polling=False)
     logger.info("cards.json watcher started on %s", cards.path)
+    _card_state = hydrate_card_state_from_alerts_log(
+        ALERT_LOG, datetime.now(timezone.utc),
+    )
+    logger.info("hydrated runtime state for %d cards", len(_card_state))
 
 
 @app.on_event("shutdown")
