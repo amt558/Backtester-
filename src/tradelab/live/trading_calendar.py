@@ -27,3 +27,21 @@ def is_trading_day(d: date) -> bool:
     if d.weekday() >= 5:  # Sat=5, Sun=6
         return False
     return d not in NYSE_HOLIDAYS_2026
+
+
+def count_trading_days_between(start: datetime, end: datetime) -> int:
+    """Trading days strictly after start.date() through end.date() inclusive.
+
+    Used for silence detection: 'has X trading days elapsed since last_fired_at?'
+    Same calendar day → 0. Wed → Thu = 1. Fri → Mon = 1 (Sat/Sun skipped).
+    """
+    if end <= start:
+        return 0
+    count = 0
+    d = start.date() + timedelta(days=1)
+    end_d = end.date()
+    while d <= end_d:
+        if is_trading_day(d):
+            count += 1
+        d += timedelta(days=1)
+    return count
