@@ -355,3 +355,85 @@ def test_l2_list_orders_failure_recorded_as_synthetic_action(
     assert "network down" in (result.orders_cancelled[0].error or "")
     # L1 step still succeeded
     assert set(result.cards_disabled) == {"card_a", "card_b"}
+
+
+# ─── Section: execute_panic L3 ──────────────────────────────────────────
+
+def test_l3_flattens_all_positions(
+    tmp_panic_log, mock_card_registry, mock_notify, monkeypatch
+):
+    from tradelab.live import alpaca_client
+    from tradelab.live.panic import execute_panic
+
+    monkeypatch.setattr(alpaca_client, "list_open_orders", lambda: [])
+    monkeypatch.setattr(alpaca_client, "list_positions", lambda: [
+        {"symbol": "AAPL", "qty": "10", "side": "long"},
+        {"symbol": "TSLA", "qty": "5",  "side": "short"},
+    ])
+    submit_calls = []
+    def fake_submit(symbol, side, quantity, **kw):
+        submit_calls.append((symbol, side, quantity))
+        return {"id": f"close-{symbol}", "client_order_id": None,
+                "symbol": symbol, "qty": str(quantity), "side": side,
+                "status": "new", "submitted_at": None}
+    monkeypatch.setattr(alpaca_client, "submit_market_order", fake_submit)
+
+    result = execute_panic("L3")
+
+    assert len(result.positions_flattened) == 2
+    by_sym = {a.symbol: a for a in result.positions_flattened}
+    assert by_sym["AAPL"].side == "sell"   # long → sell
+    assert by_sym["TSLA"].side == "buy"    # short → buy
+    assert by_sym["AAPL"].qty == "10"
+    assert by_sym["AAPL"].ok is True
+    assert by_sym["AAPL"].order_id == "close-AAPL"
+    # And the submit was actually called with the opposite side
+    sides_by_sym = {sym: side for sym, side, _ in submit_calls}
+    assert sides_by_sym["AAPL"] == "sell"
+    assert sides_by_sym["TSLA"] == "buy"
+
+
+def test_l3_flatten_partial_failure(
+    tmp_panic_log, mock_card_registry, mock_notify, monkeypatch
+):
+    from tradelab.live import alpaca_client
+    from tradelab.live.panic import execute_panic
+
+    monkeypatch.setattr(alpaca_client, "list_open_orders", lambda: [])
+    monkeypatch.setattr(alpaca_client, "list_positions", lambda: [
+        {"symbol": "AAPL", "qty": "10", "side": "long"},
+        {"symbol": "TSLA", "qty": "5",  "side": "short"},
+    ])
+    def fake_submit(symbol, side, quantity, **kw):
+        if symbol == "TSLA":
+            raise Exception("simulated APIError")
+        return {"id": f"close-{symbol}", "client_order_id": None,
+                "symbol": symbol, "qty": str(quantity), "side": side,
+                "status": "new", "submitted_at": None}
+    monkeypatch.setattr(alpaca_client, "submit_market_order", fake_submit)
+
+    result = execute_panic("L3")
+
+    by_sym = {a.symbol: a for a in result.positions_flattened}
+    assert by_sym["AAPL"].ok is True
+    assert by_sym["TSLA"].ok is False
+    assert "simulated APIError" in (by_sym["TSLA"].error or "")
+
+
+def test_l3_list_positions_failure_recorded_as_synthetic(
+    tmp_panic_log, mock_card_registry, mock_notify, monkeypatch
+):
+    from tradelab.live import alpaca_client
+    from tradelab.live.panic import execute_panic
+
+    monkeypatch.setattr(alpaca_client, "list_open_orders", lambda: [])
+    def fake_list_positions():
+        raise Exception("network blip")
+    monkeypatch.setattr(alpaca_client, "list_positions", fake_list_positions)
+
+    result = execute_panic("L3")
+
+    # Synthetic FlattenAction with symbol="" and ok=False
+    assert len(result.positions_flattened) == 1
+    assert result.positions_flattened[0].ok is False
+    assert "network blip" in (result.positions_flattened[0].error or "")

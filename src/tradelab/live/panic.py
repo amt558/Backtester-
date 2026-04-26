@@ -186,7 +186,9 @@ def execute_panic(level: str, also_cancel_nontradelab: bool = False) -> PanicRes
             also_cancel_nontradelab=also_cancel_nontradelab,
         )
 
-    # Step 4 deferred to T6
+    # Step 4: L3 — flatten all positions (L3 only)
+    if level == "L3":
+        positions_flattened = _flatten_positions_step()
 
     result = PanicResult(
         ts=ts,
@@ -252,5 +254,45 @@ def _cancel_orders_step(
             actions.append(CancelAction(
                 ok=False, error=f"{type(e).__name__}: {e}",
                 order_id=order_id, client_order_id=coid, card_id=card_id,
+            ))
+    return actions
+
+
+def _flatten_positions_step() -> list[FlattenAction]:
+    """L3 step. For each open position, submit a market order on the opposite
+    side to close. Returns one FlattenAction per position attempted. On
+    list_positions failure, returns a single synthetic FlattenAction.
+    Whole-account — affects positions tradelab did not open."""
+    from tradelab.live import alpaca_client
+
+    try:
+        positions = alpaca_client.list_positions()
+    except Exception as e:
+        return [FlattenAction(
+            ok=False,
+            error=f"list_positions failed: {type(e).__name__}: {e}",
+            symbol="", qty="0", side="", order_id=None,
+        )]
+
+    actions: list[FlattenAction] = []
+    for p in positions:
+        symbol = p.get("symbol", "?")
+        qty = p.get("qty", "0")
+        held_side = (p.get("side") or "long").lower()
+        # Convert held side to closing side
+        close_side = "sell" if held_side in ("long", "buy") else "buy"
+        try:
+            order = alpaca_client.submit_market_order(
+                symbol=symbol, side=close_side, quantity=float(qty),
+            )
+            actions.append(FlattenAction(
+                ok=True, error=None,
+                symbol=symbol, qty=qty, side=close_side,
+                order_id=str(order.get("id")) if order else None,
+            ))
+        except Exception as e:
+            actions.append(FlattenAction(
+                ok=False, error=f"{type(e).__name__}: {e}",
+                symbol=symbol, qty=qty, side=close_side, order_id=None,
             ))
     return actions
