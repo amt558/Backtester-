@@ -1,0 +1,5 @@
+2026-01-15 09:31:02 INFO Position added: AAPL (S4_InsideDayBreakout) - 100@$180.10 | Stop: $175.50
+2026-01-15 14:00:15 INFO Position closed: AAPL - PnL $240.00 (+1.3%) | Reason: Take Profit
+2026-01-20 09:31:08 INFO Position added: NVDA (S7_RDZMomentum) - 20@$610.00 | Stop: $595.00
+2026-01-20 14:00:22 INFO Position closed: NVDA - PnL $-100.00 (-0.8%) | Reason: Stop Loss
+2026-02-01 09:31:00 INFO Position added: AAPL (S4_InsideDayBreakout) - 100@$185.00 | Stop: $180.00
