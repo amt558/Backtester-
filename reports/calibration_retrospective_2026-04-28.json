@@ -1,0 +1,60 @@
+{
+  "generated_at": "2026-04-28T06:53:36.688715+00:00",
+  "window_months": 12,
+  "code_divergence_caveat": true,
+  "caveat_text": "Outputs compare tradelab verdicts to live PnL of (possibly) different code per recon \u00a71. Resolve before drawing strong conclusions.",
+  "attribution_quality": {
+    "attributed_count": 3,
+    "unattributed_count": 9,
+    "attribution_pct": 0.25,
+    "note": "Future fills will have native client_order_id attribution per Slice -0.5. Historical fills rely on bot.log Position added parsing."
+  },
+  "per_strategy": [
+    {
+      "strategy": "unattributed",
+      "n_trades": 9,
+      "total_pnl": -95.97285699999992,
+      "live_pf": 0.1285719846530444,
+      "wins_total": 14.159999999999911,
+      "losses_total": 110.13285699999983,
+      "signals_fragile": []
+    },
+    {
+      "strategy": "S2_PocketPivot",
+      "n_trades": 2,
+      "total_pnl": 462.02000000000135,
+      "live_pf": Infinity,
+      "wins_total": 462.02000000000135,
+      "losses_total": 0,
+      "signals_fragile": [
+        "wfe",
+        "loso"
+      ]
+    },
+    {
+      "strategy": "S12_MomentumAcceleration",
+      "n_trades": 1,
+      "total_pnl": -745.9199999999985,
+      "live_pf": 0.0,
+      "wins_total": 0,
+      "losses_total": 745.9199999999985,
+      "signals_fragile": []
+    }
+  ],
+  "per_signal_seed": {
+    "wfe": {
+      "fragile_fires": 1,
+      "accepted_despite": 1,
+      "failed_in_prod": 0,
+      "hit_rate": null,
+      "read": "insufficient sample"
+    },
+    "loso": {
+      "fragile_fires": 1,
+      "accepted_despite": 1,
+      "failed_in_prod": 0,
+      "hit_rate": null,
+      "read": "insufficient sample"
+    }
+  }
+}
