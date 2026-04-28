@@ -46,7 +46,7 @@ def classify_regime(
     """
     # --- Volatility ---
     # Composite: VIX-primary, realized-vol secondary
-    if vix < 18 and realized_vol_30d < 0.15:
+    if vix < 17 and realized_vol_30d < 0.13:
         vol = "LOW"
     elif vix > 25 or realized_vol_30d > 0.22:
         vol = "HIGH"
@@ -54,10 +54,10 @@ def classify_regime(
         vol = "MED"
 
     # --- Trend ---
-    # Both MAs + ADX >= 20 = TRENDING; neither MA + ADX < 20 = CHOPPY; else UNCLEAR
+    # Both MAs + ADX >= 20 = TRENDING; neither MA + ADX < 18 = CHOPPY; else UNCLEAR
     if spx_above_50ma and spx_above_200ma and adx >= 20:
         trend = "TRENDING"
-    elif not spx_above_50ma and adx < 20:
+    elif not spx_above_50ma and adx < 18:
         trend = "CHOPPY"
     else:
         trend = "UNCLEAR"

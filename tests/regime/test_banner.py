@@ -27,13 +27,14 @@ def test_high_vol_choppy_broad():
 
 
 def test_medium_vol_unclear_trend():
+    """SPX above 50 but below 200 → trend is UNCLEAR (not TRENDING, not CHOPPY)."""
     result = classify_regime(
         vix=20.0, realized_vol_30d=0.18,
         spx_above_50ma=True, spx_above_200ma=False, adx=18,
         breadth_pct_above_50d=55,
     )
     assert result.vol == "MED"
-    assert result.trend in ("UNCLEAR", "TRENDING", "CHOPPY")
+    assert result.trend == "UNCLEAR"  # was: assert result.trend in ("UNCLEAR", "TRENDING", "CHOPPY")
     assert result.breadth == "MIXED"
 
 
