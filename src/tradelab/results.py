@@ -127,6 +127,11 @@ class WalkForwardResult(BaseModel):
     wfe_ratio: float = 0.0   # OOS_PF / IS_PF (robustness key metric)
     oos_trades: list[Trade] = Field(default_factory=list)
     oos_equity_curve: list[dict] = Field(default_factory=list)
+    # S4: hold-out OOS gate. Backtest on a trailing window that was never
+    # touched by walk-forward training. None when the dataset was too short
+    # or the hold-out gate is disabled (hold_out_window_months: 0).
+    holdout_result: Optional[BacktestMetrics] = None
+    holdout_window_months: Optional[int] = None
     generated_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 

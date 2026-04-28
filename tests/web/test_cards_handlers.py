@@ -406,3 +406,44 @@ def test_bulk_delete_rejects_without_confirm(tmp_path: Path, monkeypatch):
     assert status == 400
     on_disk = json.loads(cards_path.read_text(encoding="utf-8-sig"))
     assert "a-v1" in on_disk
+
+
+def test_tracking_error_endpoint_returns_insufficient_for_no_live(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """If a card has tv_trades but no live fills, status is 'insufficient'."""
+    archive = tmp_path / "pine_archive" / "alpha-v1"
+    archive.mkdir(parents=True)
+    (archive / "tv_trades.csv").write_text(
+        "Trade #,Type,Signal,Date/Time,Price USD,Contracts,Profit USD,Profit %\n"
+        "1,Entry long,enter,2026-01-05 09:30:00,100.00,10,,\n"
+        "1,Exit long,exit,2026-01-05 11:00:00,103.00,10,30.00,3.00\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: tmp_path / "pine_archive")
+    # load_live_returns_for_card already returns [] (stub) — no extra monkeypatch needed.
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/alpha-v1/tracking-error"
+    )
+
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["status"] == "insufficient"
+    assert payload["n_live_trades"] == 0
+    assert payload["te"] is None
+    assert payload["ks_p"] is None
+
+
+def test_tracking_error_endpoint_404_when_no_csv(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Missing tv_trades.csv → 404."""
+    monkeypatch.setattr(handlers, "_pine_archive_root", lambda: tmp_path / "pine_archive")
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/never-existed-v1/tracking-error"
+    )
+
+    assert status == 404
+    assert json.loads(body)["error"] is not None

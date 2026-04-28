@@ -337,34 +337,211 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
                 out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
         return _ok(out), 200
 
-    if path == "/tradelab/receiver/status":
-        receiver_up = False
-        cards_loaded = None
+    m = re.match(r"^/tradelab/cards/([^/]+)/tracking-error$", path)
+    if m:
+        from ..live.tracking_error import compute_tracking_error, load_live_returns_for_card
+        card_id = m.group(1)
+        archive_root = _pine_archive_root()
+        backtest_csv = archive_root / card_id / "tv_trades.csv"
+        if not backtest_csv.exists():
+            return _err(f"no tv_trades.csv for card {card_id}"), 404
         try:
-            health = _probe_json(_receiver_health_url(), timeout=1.5)
-            receiver_up = health.get("status") == "ok"
-            cards_loaded = health.get("cards_loaded")
-        except Exception:
-            pass
+            live_returns = load_live_returns_for_card(card_id)
+            result = compute_tracking_error(backtest_csv, live_returns)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"tracking-error compute failed: {e}"), 500
 
-        ngrok_up = False
-        ngrok_url = None
+    if path == "/tradelab/portfolio-health":
+        from ..robustness.correlation import compute_pairwise_correlations
+        from ..live.cards import CardRegistry
+        archive_root = _pine_archive_root()
         try:
-            tunnels = _probe_json(_ngrok_api_url(), timeout=1.5)
-            for t in tunnels.get("tunnels", []):
-                if t.get("proto") == "https":
-                    ngrok_url = t.get("public_url")
-                    ngrok_up = bool(ngrok_url)
-                    break
-        except Exception:
-            pass
+            cards_path = _cards_path()
+            if not cards_path.exists():
+                return _ok({"pairs": [], "max_return_rho": 0.0, "max_dd_rho": 0.0, "max_entry_overlap": 0.0}), 200
+            reg = CardRegistry(cards_path)
+            all_cards = reg.all_hydrated()
+            enabled = [cid for cid, c in all_cards.items() if c.get("status") == "enabled"]
+            result = compute_pairwise_correlations(archive_root, enabled)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"portfolio-health compute failed: {e}"), 500
+
+    if path == "/tradelab/calibration-summary":
+        from ..calibration.summary import summarize_calibration
+        from ..live.cards import CardRegistry
+        from ..live.tracking_error import compute_tracking_error, load_live_returns_for_card
+        cards = list(CardRegistry(_cards_path()).all_hydrated().values())
+        archive_root = _pine_archive_root()
+        def _te_loader(card_id: str) -> dict:
+            csv_path = archive_root / card_id / "tv_trades.csv"
+            if not csv_path.exists():
+                return {"status": "insufficient", "decay_series": None}
+            try:
+                live = load_live_returns_for_card(card_id)
+                return compute_tracking_error(csv_path, live).model_dump()
+            except Exception:
+                return {"status": "insufficient", "decay_series": None}
+        try:
+            result = summarize_calibration(cards=cards, te_loader=_te_loader)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"calibration-summary failed: {e}"), 500
+
+    if path == "/tradelab/regime":
+        from ..regime.banner import fetch_regime
+        try:
+            result = fetch_regime()
+            return _ok(result.model_dump()), 200
+        except NotImplementedError:
+            return _ok({
+                "vol": "UNKNOWN", "trend": "UNKNOWN", "breadth": "UNKNOWN",
+                "vix": None, "realized_vol_30d": None,
+                "adx": None, "breadth_pct_above_50d": None,
+                "last_shift_date": None, "days_stable": None,
+            }), 200
+        except Exception as e:
+            return _err(f"regime fetch failed: {e}"), 500
+
+    m = re.match(r"^/tradelab/correlation/([^/]+)$", path)
+    if m:
+        from ..robustness.correlation import compute_candidate_vs_cohort
+        from ..live.cards import CardRegistry
+        from ..io.returns import derive_daily_returns
+        run_id = m.group(1)
+        try:
+            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+        except Exception as e:
+            return _err(f"audit lookup failed: {e}"), 500
+        if run_folder is None:
+            return _err("run not found"), 404
+        tv_csv = run_folder / "tv_trades.csv"
+        if not tv_csv.exists():
+            return _err("run has no tv_trades.csv"), 404
+        try:
+            candidate_returns_rows = derive_daily_returns(tv_csv)
+            candidate_pairs = [(r["date"], r["return_pct"]) for r in candidate_returns_rows]
+            archive_root = _pine_archive_root()
+            cards_path = _cards_path()
+            candidate_card_id: str | None = None
+            if cards_path.exists():
+                reg = CardRegistry(cards_path)
+                all_cards = reg.all_hydrated()
+                enabled = [cid for cid, c in all_cards.items() if c.get("status") == "enabled"]
+                # If this run was previously accepted, its card_id is embedded as
+                # scoring_run_id on the card. Filter it out to prevent self-correlation
+                # producing a spurious rho=1.0 that would false-positive block T6's gate.
+                for cid, card in all_cards.items():
+                    if card.get("scoring_run_id") == run_id:
+                        candidate_card_id = cid
+                        break
+            else:
+                enabled = []
+            result = compute_candidate_vs_cohort(
+                archive_root, candidate_pairs, enabled,
+                exclude_card_id=candidate_card_id,
+            )
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"correlation compute failed: {e}"), 500
+
+    m = re.match(r"^/tradelab/relative-context/([^/]+)$", path)
+    if m:
+        # T6: rank a candidate's PF / DSR / DD against the cohort of currently
+        # enabled live cards. Per-card PF and DD live in the audit DB sibling
+        # `backtest_result.json` (via audit_reader.get_run_metrics(scoring_run_id))
+        # since pine_archive/<card_id>/verdict.json only stores DSR + verdict.
+        from ..live.cards import CardRegistry
+        run_id = m.group(1)
+        try:
+            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+        except Exception as e:
+            return _err(f"audit lookup failed: {e}"), 500
+        if run_folder is None:
+            return _err("run not found"), 404
+        cand_metrics = audit_reader.get_run_metrics(run_id, db_path=_db_path()) or {}
+        cand_pf = cand_metrics.get("profit_factor")
+        cand_dd = cand_metrics.get("max_drawdown_pct")
+        # DSR lives in the candidate's robustness_result.json (top-level).
+        cand_dsr = None
+        rob_file = run_folder / "robustness_result.json"
+        if rob_file.exists():
+            try:
+                cand_dsr = json.loads(rob_file.read_text(encoding="utf-8")).get("dsr_probability")
+            except Exception:
+                cand_dsr = None
+
+        archive_root = _pine_archive_root()
+        cohort: list[dict] = []
+        try:
+            cards_path = _cards_path()
+            if cards_path.exists():
+                reg = CardRegistry(cards_path)
+                all_cards = reg.all_hydrated()
+                for cid, card in all_cards.items():
+                    if card.get("status") != "enabled":
+                        continue
+                    # Skip the candidate's own card (if it's already accepted) so
+                    # the rank doesn't compare it against itself.
+                    if card.get("scoring_run_id") == run_id:
+                        continue
+                    pf = dd = None
+                    sid = card.get("scoring_run_id")
+                    if sid:
+                        cm = audit_reader.get_run_metrics(sid, db_path=_db_path()) or {}
+                        pf = cm.get("profit_factor")
+                        dd = cm.get("max_drawdown_pct")
+                    dsr = None
+                    vfile = archive_root / cid / "verdict.json"
+                    if vfile.exists():
+                        try:
+                            dsr = json.loads(vfile.read_text(encoding="utf-8")).get("dsr_probability")
+                        except Exception:
+                            dsr = None
+                    cohort.append({
+                        "card_id": cid,
+                        "pf": pf,
+                        "dsr": dsr,
+                        "dd": dd,
+                    })
+        except Exception as e:
+            return _err(f"cohort load failed: {e}"), 500
+
+        def _rank(value, key, higher_is_better=True):
+            """Return (rank, n_with_data, median, worst). rank is 1-based.
+            None when value or all cohort values are missing."""
+            if value is None:
+                return None
+            vals = [c[key] for c in cohort if c.get(key) is not None]
+            n = len(vals)
+            if n == 0:
+                return {"rank": None, "n": 0, "median": None, "worst": None}
+            if higher_is_better:
+                better = sum(1 for v in vals if v > value)
+                worst = min(vals)
+            else:
+                # DD is negative or expressed as % drawdown; "higher is worse".
+                # We rank by abs() so smaller drawdown is better.
+                better = sum(1 for v in vals if abs(v) < abs(value))
+                worst = max(vals, key=lambda x: abs(x))
+            sorted_vals = sorted(vals)
+            mid = n // 2
+            median = (sorted_vals[mid] if n % 2 else
+                      (sorted_vals[mid - 1] + sorted_vals[mid]) / 2)
+            # rank = how many cohort members the candidate beats + 1
+            return {"rank": better + 1, "n": n + 1, "median": median, "worst": worst}
 
         return _ok({
-            "receiver_up": receiver_up,
-            "ngrok_up": ngrok_up,
-            "ngrok_url": ngrok_url,
-            "cards_loaded": cards_loaded,
+            "candidate": {"pf": cand_pf, "dsr": cand_dsr, "dd": cand_dd},
+            "pf": _rank(cand_pf, "pf", higher_is_better=True),
+            "dsr": _rank(cand_dsr, "dsr", higher_is_better=True),
+            "dd": _rank(cand_dd, "dd", higher_is_better=False),
+            "cohort_size": len(cohort),
         }), 200
+
+    if path == "/tradelab/receiver/status":
+        return _ok(probe_receiver_status()), 200
 
     if path == "/tradelab/live/config":
         return handle_live_config_get()

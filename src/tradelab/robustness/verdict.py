@@ -82,6 +82,11 @@ _FALLBACK_THRESHOLDS = {
     # trades to count as valid evidence.
     "regime_min_trades_pct": 10.0,
     "regime_min_trades_abs": 5,
+    # S4: hold-out OOS gate. Run a backtest on a trailing untouched window
+    # (default 6 months, configured under robustness.hold_out_window_months).
+    # PF >= robust threshold = robust signal; PF < fragile threshold = fragile.
+    "hold_out_robust_pf": 1.50,
+    "hold_out_fragile_pf": 1.00,
 }
 
 
@@ -222,6 +227,42 @@ def compute_verdict(
         else:
             signals.append(VerdictSignal(name="wfe", outcome="inconclusive",
                                           reason=f"WFE {wfe:.2f}"))
+
+    # --- S4: Hold-out OOS gate (Generalization, Critical) ---
+    # PF on a trailing window the walk-forward training never touched.
+    # Robust threshold passes the gate; fragile threshold flags it; in
+    # between is inconclusive. No signal is emitted when wf.holdout_result
+    # is None (gate disabled or dataset too short for a meaningful window).
+    if wf is not None and getattr(wf, "holdout_result", None) is not None:
+        ho_pf = wf.holdout_result.profit_factor
+        ho_months = wf.holdout_window_months or 0
+        if ho_pf is None or ho_pf <= 0:
+            outcome = "inconclusive"
+            reason = (
+                f"hold-out PF undefined or zero on {ho_months}mo window "
+                f"(no closed losses or no trades)"
+            )
+        elif ho_pf >= THRESHOLDS["hold_out_robust_pf"]:
+            outcome = "robust"
+            reason = (
+                f"hold-out PF {ho_pf:.2f} ≥ {THRESHOLDS['hold_out_robust_pf']:.2f} "
+                f"on {ho_months}mo untouched window"
+            )
+        elif ho_pf < THRESHOLDS["hold_out_fragile_pf"]:
+            outcome = "fragile"
+            reason = (
+                f"hold-out PF {ho_pf:.2f} < {THRESHOLDS['hold_out_fragile_pf']:.2f} "
+                f"on {ho_months}mo untouched window"
+            )
+        else:
+            outcome = "inconclusive"
+            reason = (
+                f"hold-out PF {ho_pf:.2f} between "
+                f"{THRESHOLDS['hold_out_fragile_pf']:.2f}–"
+                f"{THRESHOLDS['hold_out_robust_pf']:.2f} "
+                f"on {ho_months}mo window"
+            )
+        signals.append(VerdictSignal(name="hold_out_oos", outcome=outcome, reason=reason))
 
     # --- Regime spread (worst-regime PF / best-regime PF) ---
     # Three-tier: hard-fragile override / soft-fragile contribution /
