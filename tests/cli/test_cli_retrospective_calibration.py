@@ -62,3 +62,28 @@ def test_retrospective_calibration_runs_with_mocked_alpaca(tmp_path, monkeypatch
     data = json.loads(out.read_text())
     assert data["code_divergence_caveat"] is True
     assert "attribution_quality" in data
+
+
+def test_build_alpaca_client_reads_nested_config_with_bom(tmp_path):
+    """Real alpaca_config.json has nested alpaca block + UTF-8 BOM."""
+    from tradelab.cli_retrospective_calibration import _build_alpaca_client
+    cfg = tmp_path / "alpaca_config.json"
+    # Write with BOM to mimic PowerShell-written file
+    cfg.write_bytes(
+        b"\xef\xbb\xbf"  # UTF-8 BOM
+        + b'{"alpaca": {"api_key": "ak_test", "secret_key": "sk_test", '
+        + b'"base_url": "https://x", "paper_trading": true}}'
+    )
+    # Stub the SDK so we can inspect what got passed
+    import sys
+    from unittest.mock import MagicMock as MM
+    fake_tradeapi = MagicMock()
+    fake_tradeapi.REST = MagicMock(return_value=MM())
+
+    with patch.dict(sys.modules, {"alpaca_trade_api": fake_tradeapi}):
+        _build_alpaca_client(cfg, paper=True)
+
+    args, kwargs = fake_tradeapi.REST.call_args
+    assert kwargs["key_id"] == "ak_test"
+    assert kwargs["secret_key"] == "sk_test"
+    assert kwargs["base_url"] == "https://paper-api.alpaca.markets"

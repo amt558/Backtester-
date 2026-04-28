@@ -24,17 +24,24 @@ console = Console()
 def _build_alpaca_client(config_path: Path, paper: bool):
     """Construct an Alpaca REST client from gitignored config.
 
+    Config shape: {"alpaca": {"api_key": ..., "secret_key": ..., "base_url": ..., "paper_trading": bool}, ...}.
+    Uses utf-8-sig because the file is PowerShell-written with BOM
+    (per memory reference_powershell_utf8_bom.md).
+
     Lazy-imports alpaca_trade_api so the CLI doesn't fail to load when the SDK
     is unavailable (e.g. in test environments).
     """
-    cfg = json.loads(config_path.read_text())
+    cfg = json.loads(config_path.read_text(encoding="utf-8-sig"))
+    alpaca_cfg = cfg["alpaca"]
     import alpaca_trade_api as tradeapi
     base_url = (
         "https://paper-api.alpaca.markets" if paper
         else "https://api.alpaca.markets"
     )
     return tradeapi.REST(
-        key_id=cfg["api_key"], secret_key=cfg["secret_key"], base_url=base_url,
+        key_id=alpaca_cfg["api_key"],
+        secret_key=alpaca_cfg["secret_key"],
+        base_url=base_url,
     )
 
 
