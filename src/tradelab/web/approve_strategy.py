@@ -188,6 +188,19 @@ def accept_scored(
         if csv_src.exists():
             _shutil.copy2(csv_src, archive_dir / "tv_trades.csv")
 
+        # S1: persist daily-returns series for correlation + tracking-error engines
+        if csv_src.exists():
+            import logging as _logging
+            from ..io.returns import derive_daily_returns, write_returns_csv
+            _returns_log = _logging.getLogger(__name__)
+            try:
+                returns_rows = derive_daily_returns(archive_dir / "tv_trades.csv")
+                write_returns_csv(archive_dir / "returns.csv", returns_rows)
+            except Exception as e:
+                # Don't block Accept on returns-derivation failure;
+                # backfill script can re-derive later.
+                _returns_log.warning("returns.csv derivation failed for %s: %s", card_id, e)
+
         created_at = _datetime.now(_timezone.utc).isoformat(timespec="seconds")
         verdict_snapshot = {
             "card_id":          card_id,

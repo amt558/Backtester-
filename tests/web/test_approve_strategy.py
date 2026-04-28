@@ -218,3 +218,29 @@ def test_accept_scored_rolls_back_pine_archive_on_registry_failure(
     # Pine archive dir must have been cleaned up
     archive_root = tmp_path / "pine_archive"
     assert not archive_root.exists() or not any(archive_root.iterdir())
+
+
+def test_accept_scored_writes_returns_csv(tmp_path: Path, smoke_csv_text: str) -> None:
+    """After accept_scored, pine_archive/<card_id>/returns.csv exists with at least 1 row."""
+    import csv as _csv
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    result = approve_strategy.accept_scored(
+        base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+        report_folder=scored["report_folder"],
+        verdict=scored["verdict"],
+        dsr_probability=scored["dsr_probability"],
+        scoring_run_id=scored["scoring_run_id"],
+        registry=registry,
+        pine_archive_root=tmp_path / "pine_archive",
+        reports_root=tmp_path / "reports",
+    )
+    archive = Path(result["pine_archive_path"])
+    returns_csv = archive / "returns.csv"
+    assert returns_csv.exists(), "returns.csv was not written at Accept"
+    rows = list(_csv.DictReader(returns_csv.read_text(encoding="utf-8").splitlines()))
+    assert len(rows) >= 1, "returns.csv should have at least 1 data row"
+    assert "date" in rows[0] and "return_pct" in rows[0]
