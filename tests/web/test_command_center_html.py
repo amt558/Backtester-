@@ -350,3 +350,81 @@ def test_amber_silent_pill_css_has_visible_content(html: str) -> None:
     assert 'content: "● silent"' in html or "content: '● silent'" in html, (
         "amber pill ::after must set content to '● silent' (otherwise pill renders empty)"
     )
+
+
+# ── Slice 0.5: canary integrity panel + accept-block ───────────────
+
+
+def test_canary_panel_dom_present(html: str) -> None:
+    """The Research tab must contain the canary panel container so the
+    JS has a render target to mount the 4 cells into."""
+    assert 'id="canary-panel"' in html, (
+        "Slice 0.5 canary panel container missing — researchLoadAll() will "
+        "have nowhere to render run_canary_check() output."
+    )
+    assert 'id="canary-grid"' in html, (
+        "Slice 0.5 canary-grid render target missing — renderCanaryGrid() "
+        "needs this element to inject the 4 canary cells into."
+    )
+
+
+def test_canary_accepts_blocked_css_rule_present(html: str) -> None:
+    """body.accepts-blocked must disable every .accept button. This is the
+    actual safety mechanism — if any canary is MISMATCH the user must NOT
+    be able to push a freshly-evaluated strategy live until the engine is
+    investigated. Visually-only opacity isn't enough; pointer-events:none
+    is what stops the click from firing."""
+    assert "body.accepts-blocked" in html, (
+        "Slice 0.5 accepts-blocked CSS rule missing — without it, a "
+        "MISMATCH canary won't actually disable Accept buttons; the panel "
+        "will go red but the safety gate is open."
+    )
+    # Both opacity and pointer-events must be in the rule body or its block.
+    # Match the rule and require pointer-events:none somewhere in its body.
+    m = re.search(
+        r"body\.accepts-blocked[^{]*\{[^}]*pointer-events\s*:\s*none[^}]*\}",
+        html,
+        re.DOTALL,
+    )
+    assert m, (
+        "body.accepts-blocked must set pointer-events:none on accept buttons "
+        "(opacity alone leaves them clickable)."
+    )
+
+
+def test_load_canary_status_function_defined(html: str) -> None:
+    """loadCanaryStatus must exist exactly once and must fetch the
+    canary-status endpoint. Pin both the function name (researchLoadAll
+    references it) and the URL (the backend route it calls)."""
+    pattern = re.compile(r"(?:async\s+)?function\s+loadCanaryStatus\s*\(", re.MULTILINE)
+    assert len(pattern.findall(html)) == 1, "loadCanaryStatus must be defined exactly once"
+    assert "/tradelab/canary-status" in html, (
+        "loadCanaryStatus must call the /tradelab/canary-status endpoint"
+    )
+
+
+def test_render_canary_grid_function_defined(html: str) -> None:
+    """renderCanaryGrid must exist exactly once and must toggle the
+    accepts-blocked class on body. The toggle is the actual safety
+    behavior — a silent rename here disables the gate."""
+    pattern = re.compile(r"(?:async\s+)?function\s+renderCanaryGrid\s*\(", re.MULTILINE)
+    assert len(pattern.findall(html)) == 1, "renderCanaryGrid must be defined exactly once"
+    # Make sure the accepts-blocked class is referenced from JS, not just CSS.
+    assert "accepts-blocked" in html
+    # Must do both add and remove (toggle), otherwise once blocked it stays
+    # blocked even after the engine is investigated and canaries return MATCH.
+    assert "classList.add('accepts-blocked')" in html or 'classList.add("accepts-blocked")' in html
+    assert "classList.remove('accepts-blocked')" in html or 'classList.remove("accepts-blocked")' in html
+
+
+def test_canary_panel_wired_into_research_load(html: str) -> None:
+    """researchLoadAll must call loadCanaryStatus so the panel populates
+    when the Research tab activates. Without this wiring the panel renders
+    skeleton-only forever and the safety gate never engages."""
+    idx = html.find("async function researchLoadAll")
+    assert idx >= 0, "researchLoadAll function not found"
+    chunk = html[idx:idx + 2000]
+    assert "loadCanaryStatus(" in chunk, (
+        "researchLoadAll must invoke loadCanaryStatus() so the canary panel "
+        "populates when the Research tab activates."
+    )
