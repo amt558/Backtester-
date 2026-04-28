@@ -65,3 +65,52 @@ def test_get_run_metrics_returns_empty_when_run_missing(fake_audit_db: Path):
         "does-not-exist", db_path=fake_audit_db
     )
     assert metrics == {}
+
+
+def test_resolve_run_folder_distinguishes_missing_run(fake_audit_db: Path):
+    lookup = audit_reader.resolve_run_folder(
+        "does-not-exist", db_path=fake_audit_db
+    )
+    assert lookup.status == "no_run"
+    assert lookup.folder is None
+
+
+def test_resolve_run_folder_distinguishes_null_report_path(fake_audit_db: Path):
+    # Default fixture rows all have report_card_html_path = NULL
+    lookup = audit_reader.resolve_run_folder("run-002", db_path=fake_audit_db)
+    assert lookup.status == "no_folder"
+    assert lookup.folder is None
+
+
+def test_resolve_run_folder_returns_ok_when_path_present(
+    fake_audit_db: Path, fake_run_folder: Path
+):
+    import sqlite3
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-003'",
+        (str(fake_run_folder),),
+    )
+    conn.commit(); conn.close()
+
+    lookup = audit_reader.resolve_run_folder("run-003", db_path=fake_audit_db)
+    assert lookup.status == "ok"
+    assert lookup.folder == fake_run_folder
+
+
+def test_resolve_run_folder_treats_missing_db_as_no_run(tmp_path: Path):
+    lookup = audit_reader.resolve_run_folder(
+        "anything", db_path=tmp_path / "nope.db"
+    )
+    assert lookup.status == "no_run"
+    assert lookup.folder is None
+
+
+def test_get_run_folder_remains_backward_compat(fake_audit_db: Path):
+    # NULL report path collapses to None for legacy callers.
+    assert audit_reader.get_run_folder("run-002", db_path=fake_audit_db) is None
+    # Missing run also collapses to None.
+    assert (
+        audit_reader.get_run_folder("does-not-exist", db_path=fake_audit_db)
+        is None
+    )

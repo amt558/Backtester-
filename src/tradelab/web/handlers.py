@@ -239,11 +239,13 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
 
     m = re.match(r"^/tradelab/runs/([^/]+)/folder$", path)
     if m:
-        folder = audit_reader.get_run_folder(m.group(1), db_path=_db_path())
-        if folder is None:
+        lookup = audit_reader.resolve_run_folder(m.group(1), db_path=_db_path())
+        if lookup.status == "no_run":
             return _err("run not found"), 404
+        if lookup.status == "no_folder":
+            return _err("run has no report folder"), 404
         # Return path relative to tradelab root (used as iframe prefix)
-        return _ok({"folder": str(folder).replace("\\", "/")}), 200
+        return _ok({"folder": str(lookup.folder).replace("\\", "/")}), 200
 
     if path == "/tradelab/data-freshness":
         return _ok(freshness.get_freshness(cache_root=_cache_root())), 200
@@ -344,7 +346,19 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         archive_root = _pine_archive_root()
         backtest_csv = archive_root / card_id / "tv_trades.csv"
         if not backtest_csv.exists():
-            return _err(f"no tv_trades.csv for card {card_id}"), 404
+            # Expected for non-Pine cards (e.g. legacy tradelab strategies in
+            # the Research-tab health grid). 200 + insufficient lets the FE
+            # render the same "n=0" placeholder it renders for empty live
+            # returns, without filling devtools with 404s.
+            return _ok({
+                "status": "insufficient",
+                "n_live_trades": 0,
+                "n_backtest_trades": 0,
+                "te": None,
+                "decay_series": None,
+                "ks_p_value": None,
+                "ks_outcome": None,
+            }), 200
         try:
             live_returns = load_live_returns_for_card(card_id)
             result = compute_tracking_error(backtest_csv, live_returns)
@@ -411,14 +425,24 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         from ..io.returns import derive_daily_returns
         run_id = m.group(1)
         try:
-            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+            lookup = audit_reader.resolve_run_folder(run_id, db_path=_db_path())
         except Exception as e:
             return _err(f"audit lookup failed: {e}"), 500
-        if run_folder is None:
+        if lookup.status == "no_run":
             return _err("run not found"), 404
+        # Empty result (200) for runs that exist but lack a tv_trades.csv —
+        # CLI runs without --report (no folder) or pre-T6 runs that never
+        # auto-froze a backtest CSV. FE renders Corr column as "—".
+        empty = {
+            "pairs": [], "max_return_rho": 0.0,
+            "max_dd_rho": 0.0, "max_entry_overlap": 0.0,
+        }
+        if lookup.status == "no_folder":
+            return _ok(empty), 200
+        run_folder = lookup.folder
         tv_csv = run_folder / "tv_trades.csv"
         if not tv_csv.exists():
-            return _err("run has no tv_trades.csv"), 404
+            return _ok(empty), 200
         try:
             candidate_returns_rows = derive_daily_returns(tv_csv)
             candidate_pairs = [(r["date"], r["return_pct"]) for r in candidate_returns_rows]
@@ -455,11 +479,21 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         from ..live.cards import CardRegistry
         run_id = m.group(1)
         try:
-            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+            lookup = audit_reader.resolve_run_folder(run_id, db_path=_db_path())
         except Exception as e:
             return _err(f"audit lookup failed: {e}"), 500
-        if run_folder is None:
+        if lookup.status == "no_run":
             return _err("run not found"), 404
+        if lookup.status == "no_folder":
+            # Run exists but has no report folder (CLI run sans --report).
+            # Return empty candidate/ranks with cohort_size=0 so the FE
+            # renders "cohort sparse" rather than logging a 404.
+            return _ok({
+                "candidate": {"pf": None, "dsr": None, "dd": None},
+                "pf": None, "dsr": None, "dd": None,
+                "cohort_size": 0,
+            }), 200
+        run_folder = lookup.folder
         cand_metrics = audit_reader.get_run_metrics(run_id, db_path=_db_path()) or {}
         cand_pf = cand_metrics.get("profit_factor")
         cand_dd = cand_metrics.get("max_drawdown_pct")

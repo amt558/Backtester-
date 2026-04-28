@@ -105,6 +105,90 @@ def test_handle_runs_folder_lookup(fake_audit_db, fake_run_folder, monkeypatch):
     assert json.loads(body)["data"]["folder"].endswith("s4_inside_day_breakout_2026-04-20_120000")
 
 
+def test_handle_runs_folder_distinguishes_no_run_from_no_folder(
+    fake_audit_db, monkeypatch
+):
+    """Run in DB with NULL report_card_html_path must not say 'run not found'."""
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+
+    # run-002 exists in fixture but report_card_html_path is NULL
+    body, status = handlers.handle_get_with_status("/tradelab/runs/run-002/folder")
+    assert status == 404
+    assert json.loads(body)["error"] == "run has no report folder"
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/does-not-exist/folder"
+    )
+    assert status == 404
+    assert json.loads(body)["error"] == "run not found"
+
+
+def test_handle_correlation_returns_empty_for_no_folder(
+    fake_audit_db, monkeypatch
+):
+    """Run in DB but null report path → 200 with empty pairs (expected miss,
+    not an error). Browser would otherwise log every Pipeline 404 to console.
+    """
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/correlation/run-002"
+    )
+    assert status == 200
+    data = json.loads(body)["data"]
+    assert data["pairs"] == []
+    assert data["max_return_rho"] == 0.0
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/correlation/does-not-exist"
+    )
+    assert status == 404
+    assert json.loads(body)["error"] == "run not found"
+
+
+def test_handle_relative_context_returns_empty_for_no_folder(
+    fake_audit_db, monkeypatch
+):
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/relative-context/run-002"
+    )
+    assert status == 200
+    data = json.loads(body)["data"]
+    assert data["cohort_size"] == 0
+    assert data["candidate"]["pf"] is None
+
+
+def test_handle_tracking_error_returns_insufficient_for_missing_csv(
+    fake_tradelab_root, monkeypatch
+):
+    """Non-Pine cards (e.g. tradelab strategy IDs in the Research-tab health
+    grid) have no pine_archive entry. Return 200 + insufficient instead of
+    404 so devtools stays clean."""
+    monkeypatch.setattr(handlers, "_db_path", lambda: Path("nope.db"))
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+    monkeypatch.setattr(
+        handlers, "_pine_archive_root", lambda: fake_tradelab_root / "pine_archive"
+    )
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/cards/S2_PocketPivot/tracking-error"
+    )
+    assert status == 200
+    data = json.loads(body)["data"]
+    assert data["status"] == "insufficient"
+    assert data["n_live_trades"] == 0
+    assert data["te"] is None
+
+
 def test_handle_save_variant_happy_path(fake_tradelab_root, monkeypatch):
     # Prepare a base strategy file
     strategies_dir = fake_tradelab_root / "src" / "tradelab" / "strategies"

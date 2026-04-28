@@ -435,15 +435,21 @@ def test_tracking_error_endpoint_returns_insufficient_for_no_live(
     assert payload["ks_p"] is None
 
 
-def test_tracking_error_endpoint_404_when_no_csv(
+def test_tracking_error_endpoint_returns_insufficient_when_no_csv(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Missing tv_trades.csv → 404."""
+    """Missing tv_trades.csv → 200 + insufficient. Was 404, but the
+    Research-tab health grid renders TE rows for non-Pine cards (e.g.
+    legacy tradelab strategy IDs) that will never have a Pine archive
+    entry — returning 404 floods devtools for an expected miss.
+    """
     monkeypatch.setattr(handlers, "_pine_archive_root", lambda: tmp_path / "pine_archive")
 
     body, status = handlers.handle_get_with_status(
         "/tradelab/cards/never-existed-v1/tracking-error"
     )
 
-    assert status == 404
-    assert json.loads(body)["error"] is not None
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["status"] == "insufficient"
+    assert payload["n_live_trades"] == 0

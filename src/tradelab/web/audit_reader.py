@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 _DEFAULT_DB = Path("data") / "tradelab_history.db"
 
@@ -141,11 +141,24 @@ def get_run_metrics(run_id: str, db_path: Optional[Path] = None) -> dict:
     return data.get("metrics", {}) or {}
 
 
-def get_run_folder(run_id: str, db_path: Optional[Path] = None) -> Optional[Path]:
-    """Return the run's reports folder (for iframe src construction)."""
+class RunFolderLookup(NamedTuple):
+    status: str  # "ok" | "no_run" | "no_folder"
+    folder: Optional[Path]
+
+
+def resolve_run_folder(
+    run_id: str, db_path: Optional[Path] = None
+) -> RunFolderLookup:
+    """Three-way lookup distinguishing missing run from missing folder.
+
+    - status="ok": run exists in DB and report_card_html_path resolves to a folder
+    - status="no_run": run_id not in runs table (or DB doesn't exist)
+    - status="no_folder": run is in DB but report_card_html_path is NULL
+      (e.g. CLI runs invoked without --report)
+    """
     db = _resolve_db(db_path)
     if not db.exists():
-        return None
+        return RunFolderLookup("no_run", None)
     conn = sqlite3.connect(str(db))
     try:
         row = conn.execute(
@@ -154,10 +167,21 @@ def get_run_folder(run_id: str, db_path: Optional[Path] = None) -> Optional[Path
         ).fetchone()
     finally:
         conn.close()
-    if not row or not row[0]:
-        return None
+    if row is None:
+        return RunFolderLookup("no_run", None)
+    if not row[0]:
+        return RunFolderLookup("no_folder", None)
     p = Path(row[0])
-    return p if p.is_dir() else p.parent
+    return RunFolderLookup("ok", p if p.is_dir() else p.parent)
+
+
+def get_run_folder(run_id: str, db_path: Optional[Path] = None) -> Optional[Path]:
+    """Return the run's reports folder (for iframe src construction).
+
+    Collapses 'run not in DB' and 'run has null report path' into None.
+    Use resolve_run_folder() when callers need to distinguish.
+    """
+    return resolve_run_folder(run_id, db_path).folder
 
 
 def _pf_from_report_path(report_path_str: Optional[str]) -> Optional[float]:
