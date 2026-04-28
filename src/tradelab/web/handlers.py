@@ -337,6 +337,21 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
                 out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
         return _ok(out), 200
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/tracking-error$", path)
+    if m:
+        from ..live.tracking_error import compute_tracking_error, load_live_returns_for_card
+        card_id = m.group(1)
+        archive_root = _pine_archive_root()
+        backtest_csv = archive_root / card_id / "tv_trades.csv"
+        if not backtest_csv.exists():
+            return _err(f"no tv_trades.csv for card {card_id}"), 404
+        try:
+            live_returns = load_live_returns_for_card(card_id)
+            result = compute_tracking_error(backtest_csv, live_returns)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"tracking-error compute failed: {e}"), 500
+
     if path == "/tradelab/receiver/status":
         receiver_up = False
         cards_loaded = None

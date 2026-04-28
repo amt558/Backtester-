@@ -48,17 +48,17 @@ def _parse_date(stamp: str) -> str:
     return s
 
 
-def derive_daily_returns(tv_trades_csv: Path) -> list[dict]:
-    """Return [{date: 'YYYY-MM-DD', return_pct: float}, ...] sorted by date.
+def _iter_exit_rows(tv_trades_csv: Path):
+    """Yield (date_str, profit_pct) for every Exit row in the CSV.
 
-    Groups exits by trade-exit date; sums their Profit % values per day.
-    Entry rows (no profit value) are ignored.
-    Returns an empty list if the file contains no closed trades.
+    Resolves column name aliases and raises MalformedTVCSVError if required
+    columns are absent.  Entry rows (no profit value) and rows with unparseable
+    profit fields are silently skipped.
     """
     text = tv_trades_csv.read_text(encoding="utf-8-sig")  # handle BOM from PS-written files
     reader = csv.DictReader(io.StringIO(text))
     if reader.fieldnames is None:
-        return []
+        return
 
     fieldnames = list(reader.fieldnames)
     date_col = _find_col(fieldnames, _DATE_COLS)
@@ -77,7 +77,6 @@ def derive_daily_returns(tv_trades_csv: Path) -> list[dict]:
             f"tv_trades.csv is missing required column(s): {'; '.join(missing)}"
         )
 
-    by_date: dict[str, float] = {}
     for row in reader:
         row_type = (row.get(type_col) or "").strip()
         # Only Exit rows carry a Profit % value.
@@ -93,8 +92,29 @@ def derive_daily_returns(tv_trades_csv: Path) -> list[dict]:
         date_raw = (row.get(date_col) or "").strip()
         if not date_raw:
             continue
-        key = _parse_date(date_raw)
-        by_date[key] = by_date.get(key, 0.0) + profit_pct
+        yield _parse_date(date_raw), profit_pct
+
+
+def read_trade_profit_pcts(tv_trades_csv: Path) -> list[float]:
+    """Return per-exit-row profit_pct values, in CSV order, for tracking-error analysis.
+
+    Reuses the same column resolution + parsing as derive_daily_returns; raises
+    MalformedTVCSVError if required columns are absent.  Returns an empty list
+    if the file contains no closed trades.
+    """
+    return [profit_pct for _, profit_pct in _iter_exit_rows(tv_trades_csv)]
+
+
+def derive_daily_returns(tv_trades_csv: Path) -> list[dict]:
+    """Return [{date: 'YYYY-MM-DD', return_pct: float}, ...] sorted by date.
+
+    Groups exits by trade-exit date; sums their Profit % values per day.
+    Entry rows (no profit value) are ignored.
+    Returns an empty list if the file contains no closed trades.
+    """
+    by_date: dict[str, float] = {}
+    for date_key, profit_pct in _iter_exit_rows(tv_trades_csv):
+        by_date[date_key] = by_date.get(date_key, 0.0) + profit_pct
 
     return [{"date": d, "return_pct": round(by_date[d], 4)} for d in sorted(by_date)]
 

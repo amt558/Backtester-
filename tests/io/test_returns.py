@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import csv
 import pytest
-from tradelab.io.returns import derive_daily_returns, write_returns_csv, MalformedTVCSVError
+from tradelab.io.returns import (
+    derive_daily_returns,
+    read_trade_profit_pcts,
+    write_returns_csv,
+    MalformedTVCSVError,
+)
 
 
 def _write_tv_trades(tmp_path: Path) -> Path:
@@ -108,3 +113,26 @@ def test_derive_daily_returns_raises_on_missing_profit_column(tmp_path: Path) ->
     )
     with pytest.raises(MalformedTVCSVError, match="profit-pct column"):
         derive_daily_returns(p)
+
+
+def test_read_trade_profit_pcts_returns_per_trade_list(tmp_path: Path) -> None:
+    """read_trade_profit_pcts returns one value per exit row, NOT day-aggregated."""
+    csv_path = _write_tv_trades(tmp_path)
+    pcts = read_trade_profit_pcts(csv_path)
+    # _write_tv_trades has 3 exits: +3.00, -1.90, +4.67 (in CSV order)
+    assert len(pcts) == 3
+    assert pcts[0] == pytest.approx(3.00, abs=0.001)
+    assert pcts[1] == pytest.approx(-1.90, abs=0.001)
+    assert pcts[2] == pytest.approx(4.67, abs=0.001)
+
+
+def test_read_trade_profit_pcts_raises_on_missing_column(tmp_path: Path) -> None:
+    """read_trade_profit_pcts propagates MalformedTVCSVError like derive_daily_returns."""
+    p = tmp_path / "tv_trades.csv"
+    p.write_text(
+        "Trade #,Type,Signal,Date/Time,Price USD,Profit USD\n"
+        "1,Exit long,exit,2026-01-05 11:00,103.00,30.00\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MalformedTVCSVError, match="profit-pct column"):
+        read_trade_profit_pcts(p)
