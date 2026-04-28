@@ -405,16 +405,23 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
 
     if path == "/tradelab/regime":
         from ..regime.banner import fetch_regime
+        unknown_payload = {
+            "vol": "UNKNOWN", "trend": "UNKNOWN", "breadth": "UNKNOWN",
+            "vix": None, "realized_vol_30d": None,
+            "adx": None, "breadth_pct_above_50d": None,
+            "last_shift_date": None, "days_stable": None,
+        }
         try:
             result = fetch_regime()
             return _ok(result.model_dump()), 200
         except NotImplementedError:
-            return _ok({
-                "vol": "UNKNOWN", "trend": "UNKNOWN", "breadth": "UNKNOWN",
-                "vix": None, "realized_vol_30d": None,
-                "adx": None, "breadth_pct_above_50d": None,
-                "last_shift_date": None, "days_stable": None,
-            }), 200
+            # Legacy fallback for when fetch_regime was a stub.
+            return _ok(unknown_payload), 200
+        except ValueError as e:
+            # Insufficient SPY history (Alpaca data plan limit) or malformed
+            # bars. Render UNKNOWN rather than 500 — the banner is a hint,
+            # not a hard requirement, and a 500 would flood the console.
+            return _ok({**unknown_payload, "_note": str(e)}), 200
         except Exception as e:
             return _err(f"regime fetch failed: {e}"), 500
 

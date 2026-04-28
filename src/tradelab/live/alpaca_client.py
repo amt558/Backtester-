@@ -64,6 +64,7 @@ def submit_market_order(
 
 from alpaca.trading.requests import GetOrdersRequest
 from alpaca.trading.enums import QueryOrderStatus
+from alpaca.common.enums import Sort
 
 
 def list_open_orders() -> list[dict]:
@@ -82,6 +83,42 @@ def list_open_orders() -> list[dict]:
             "symbol": o.symbol,
             "qty": str(o.qty),
             "side": o.side.value if hasattr(o.side, "value") else str(o.side),
+            "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+        }
+        for o in orders
+    ]
+
+
+def list_closed_orders(days: int = 90) -> list[dict]:
+    """List filled/closed orders from the last ``days`` days.
+
+    Returns list of dicts with: id, client_order_id, symbol, side, qty,
+    filled_qty, filled_avg_price, filled_at, status. Results are returned
+    oldest-first (``direction=Sort.ASC``) for chronological pairing by
+    callers. ``filled_qty`` lets consumers correctly scale partial fills
+    when pairing buys with sells.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    client = get_client()
+    after = datetime.now(timezone.utc) - timedelta(days=days)
+    req = GetOrdersRequest(
+        status=QueryOrderStatus.CLOSED,
+        after=after,
+        limit=500,
+        direction=Sort.ASC,
+    )
+    orders = client.get_orders(filter=req)
+    return [
+        {
+            "id": str(o.id),
+            "client_order_id": o.client_order_id,
+            "symbol": o.symbol,
+            "side": o.side.value if hasattr(o.side, "value") else str(o.side),
+            "qty": float(o.qty) if o.qty else 0.0,
+            "filled_qty": float(o.filled_qty) if getattr(o, "filled_qty", None) else 0.0,
+            "filled_avg_price": float(o.filled_avg_price) if o.filled_avg_price else None,
+            "filled_at": o.filled_at.isoformat() if o.filled_at else None,
             "status": o.status.value if hasattr(o.status, "value") else str(o.status),
         }
         for o in orders
