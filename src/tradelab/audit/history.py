@@ -19,6 +19,10 @@ Schema (table `runs`):
   dsr_probability      REAL   [0,1]
   report_card_markdown TEXT   full report text
   report_card_html_path TEXT  filesystem reference (may be relative)
+  signal_values_json   TEXT   full signal vector at evaluation time (Slice 0)
+  thresholds_json      TEXT   active thresholds at evaluation time (Slice 0)
+  accepted_bool        INTEGER TRUE/FALSE/NULL for live approval decision (Slice 0)
+  reject_reason        TEXT   free text from Reject modal or override reason (Slice 0)
 """
 from __future__ import annotations
 
@@ -30,24 +34,12 @@ from pathlib import Path
 from typing import Optional
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS runs (
-    run_id               TEXT PRIMARY KEY,
-    timestamp_utc        TEXT NOT NULL,
-    strategy_name        TEXT NOT NULL,
-    strategy_version     TEXT,
-    tradelab_version     TEXT,
-    tradelab_git_commit  TEXT,
-    input_data_hash      TEXT,
-    config_hash          TEXT,
-    verdict              TEXT,
-    dsr_probability      REAL,
-    report_card_markdown TEXT,
-    report_card_html_path TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs(strategy_name);
-CREATE INDEX IF NOT EXISTS idx_runs_timestamp ON runs(timestamp_utc);
-"""
+_NEW_COLUMNS = (
+    ("signal_values_json", "TEXT"),
+    ("thresholds_json", "TEXT"),
+    ("accepted_bool", "INTEGER"),
+    ("reject_reason", "TEXT"),
+)
 
 DEFAULT_DB_PATH = Path("data") / "tradelab_history.db"
 
@@ -66,12 +58,48 @@ class HistoryRow:
     dsr_probability: Optional[float] = None
     report_card_markdown: Optional[str] = None
     report_card_html_path: Optional[str] = None
+    signal_values_json: Optional[str] = None
+    thresholds_json: Optional[str] = None
+    accepted_bool: Optional[int] = None
+    reject_reason: Optional[str] = None
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
-    conn.executescript(_SCHEMA)
+
+    # First, create the table if it doesn't exist (without indexes on new columns)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS runs (
+        run_id               TEXT PRIMARY KEY,
+        timestamp_utc        TEXT NOT NULL,
+        strategy_name        TEXT NOT NULL,
+        strategy_version     TEXT,
+        tradelab_version     TEXT,
+        tradelab_git_commit  TEXT,
+        input_data_hash      TEXT,
+        config_hash          TEXT,
+        verdict              TEXT,
+        dsr_probability      REAL,
+        report_card_markdown TEXT,
+        report_card_html_path TEXT
+    )
+    """)
+
+    # Legacy DB migration: add missing columns idempotently
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    for col, sqltype in _NEW_COLUMNS:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {sqltype}")
+
+    # Create indexes (idempotent with IF NOT EXISTS)
+    conn.executescript("""
+    CREATE INDEX IF NOT EXISTS idx_runs_strategy ON runs(strategy_name);
+    CREATE INDEX IF NOT EXISTS idx_runs_timestamp ON runs(timestamp_utc);
+    CREATE INDEX IF NOT EXISTS idx_runs_accepted ON runs(accepted_bool);
+    """)
+
+    conn.commit()
     return conn
 
 
@@ -87,6 +115,10 @@ def record_run(
     strategy_version: Optional[str] = None,
     tradelab_version: Optional[str] = None,
     tradelab_git_commit: Optional[str] = None,
+    signal_values: Optional[dict] = None,
+    thresholds: Optional[dict] = None,
+    accepted: Optional[bool] = None,
+    reject_reason: Optional[str] = None,
     db_path: Path = DEFAULT_DB_PATH,
 ) -> str:
     """
@@ -95,12 +127,20 @@ def record_run(
     Any field may be None (schema-level NULLs), but at minimum strategy_name
     is required. Other fields are populated from determinism helpers when
     the caller doesn't supply them.
+
+    New optional kwargs (Slice 0):
+      signal_values: dict of full signal vector at evaluation time
+      thresholds: dict of active thresholds at evaluation time
+      accepted: whether user accepted to live (True/False/None=undecided)
+      reject_reason: free text from Reject modal (or override reason)
     """
+    import json
     from ..determinism import env_fingerprint, git_commit_hash, tradelab_version as _tl_ver
 
     env = env_fingerprint()
     run_id = str(uuid.uuid4())
     ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    accepted_bool = None if accepted is None else (1 if accepted else 0)
 
     conn = _connect(db_path)
     try:
@@ -111,8 +151,9 @@ def record_run(
                 tradelab_version, tradelab_git_commit,
                 input_data_hash, config_hash,
                 verdict, dsr_probability,
-                report_card_markdown, report_card_html_path
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                report_card_markdown, report_card_html_path,
+                signal_values_json, thresholds_json, accepted_bool, reject_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id, ts, strategy_name, strategy_version,
@@ -121,6 +162,10 @@ def record_run(
                 input_data_hash, config_hash,
                 verdict, dsr_probability,
                 report_card_markdown, str(report_card_html_path) if report_card_html_path else None,
+                json.dumps(signal_values) if signal_values is not None else None,
+                json.dumps(thresholds) if thresholds is not None else None,
+                accepted_bool,
+                reject_reason,
             ),
         )
         conn.commit()
@@ -143,6 +188,10 @@ def _row_to_dataclass(row) -> HistoryRow:
         dsr_probability=row[9],
         report_card_markdown=row[10],
         report_card_html_path=row[11],
+        signal_values_json=row[12],
+        thresholds_json=row[13],
+        accepted_bool=row[14],
+        reject_reason=row[15],
     )
 
 
