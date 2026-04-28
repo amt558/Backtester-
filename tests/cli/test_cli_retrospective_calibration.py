@@ -65,25 +65,74 @@ def test_retrospective_calibration_runs_with_mocked_alpaca(tmp_path, monkeypatch
 
 
 def test_build_alpaca_client_reads_nested_config_with_bom(tmp_path):
-    """Real alpaca_config.json has nested alpaca block + UTF-8 BOM."""
-    from tradelab.cli_retrospective_calibration import _build_alpaca_client
+    """Real alpaca_config.json has nested alpaca block + UTF-8 BOM.
+    Builder constructs alpaca-py TradingClient (not the deprecated old SDK)."""
+    from tradelab.cli_retrospective_calibration import (
+        _build_alpaca_client, _AlpacaPyListOrdersAdapter,
+    )
     cfg = tmp_path / "alpaca_config.json"
-    # Write with BOM to mimic PowerShell-written file
     cfg.write_bytes(
-        b"\xef\xbb\xbf"  # UTF-8 BOM
+        b"\xef\xbb\xbf"
         + b'{"alpaca": {"api_key": "ak_test", "secret_key": "sk_test", '
         + b'"base_url": "https://x", "paper_trading": true}}'
     )
-    # Stub the SDK so we can inspect what got passed
-    import sys
-    from unittest.mock import MagicMock as MM
-    fake_tradeapi = MagicMock()
-    fake_tradeapi.REST = MagicMock(return_value=MM())
+    from unittest.mock import patch, MagicMock
+    with patch("alpaca.trading.client.TradingClient") as fake_client_cls:
+        fake_client_cls.return_value = MagicMock()
+        adapter = _build_alpaca_client(cfg, paper=True)
+    args, kwargs = fake_client_cls.call_args
+    # alpaca-py's TradingClient takes positional (api_key, secret) + paper kwarg
+    assert args[0] == "ak_test"
+    assert args[1] == "sk_test"
+    assert kwargs["paper"] is True
+    assert isinstance(adapter, _AlpacaPyListOrdersAdapter)
 
-    with patch.dict(sys.modules, {"alpaca_trade_api": fake_tradeapi}):
-        _build_alpaca_client(cfg, paper=True)
 
-    args, kwargs = fake_tradeapi.REST.call_args
-    assert kwargs["key_id"] == "ak_test"
-    assert kwargs["secret_key"] == "sk_test"
-    assert kwargs["base_url"] == "https://paper-api.alpaca.markets"
+def test_alpaca_py_adapter_translates_list_orders():
+    """Adapter must convert alpaca-py Order objects to old-SDK dict shape."""
+    from tradelab.cli_retrospective_calibration import _AlpacaPyListOrdersAdapter
+    from unittest.mock import MagicMock
+    from datetime import datetime, timezone
+
+    fake_client = MagicMock()
+    fake_order = MagicMock()
+    fake_order.id = "order_abc"
+    fake_order.symbol = "AAPL"
+    fake_order.qty = 100
+    fake_order.side = MagicMock(value="buy")
+    fake_order.filled_qty = 100
+    fake_order.filled_avg_price = 180.10
+    fake_order.filled_at = datetime(2026, 1, 15, 14, 31, 0, tzinfo=timezone.utc)
+    fake_order.client_order_id = "S4_InsideDayBreakout-AAPL-123"
+    fake_order.status = MagicMock(value="filled")
+    fake_client.get_orders.return_value = [fake_order]
+
+    adapter = _AlpacaPyListOrdersAdapter(fake_client)
+    out = adapter.list_orders(
+        status="filled", after="2026-01-01T00:00:00Z", limit=500, direction="desc",
+    )
+    assert len(out) == 1
+    assert out[0]["symbol"] == "AAPL"
+    assert out[0]["status"] == "filled"
+    assert out[0]["filled_qty"] == "100"
+    assert out[0]["filled_avg_price"] == "180.1"
+    assert out[0]["client_order_id"] == "S4_InsideDayBreakout-AAPL-123"
+    assert out[0]["side"] == "buy"
+
+
+def test_alpaca_py_adapter_filters_non_filled():
+    """Adapter must drop CLOSED-but-not-filled orders (canceled, expired, etc.)."""
+    from tradelab.cli_retrospective_calibration import _AlpacaPyListOrdersAdapter
+    from unittest.mock import MagicMock
+
+    fake_client = MagicMock()
+    canceled = MagicMock()
+    canceled.id = "x"; canceled.symbol = "TSLA"; canceled.qty = 10
+    canceled.side = MagicMock(value="buy"); canceled.filled_qty = 0
+    canceled.filled_avg_price = None; canceled.filled_at = None
+    canceled.client_order_id = "c"; canceled.status = MagicMock(value="canceled")
+    fake_client.get_orders.return_value = [canceled]
+
+    adapter = _AlpacaPyListOrdersAdapter(fake_client)
+    out = adapter.list_orders(status="filled", after="2026-01-01T00:00:00Z")
+    assert out == []
