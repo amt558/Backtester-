@@ -352,6 +352,53 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except Exception as e:
             return _err(f"tracking-error compute failed: {e}"), 500
 
+    if path == "/tradelab/portfolio-health":
+        from ..robustness.correlation import compute_pairwise_correlations
+        from ..live.cards import CardRegistry
+        archive_root = _pine_archive_root()
+        try:
+            cards_path = _cards_path()
+            if not cards_path.exists():
+                return _ok({"pairs": [], "max_return_rho": 0.0, "max_dd_rho": 0.0, "max_entry_overlap": 0.0}), 200
+            reg = CardRegistry(cards_path)
+            all_cards = reg.all_hydrated()
+            enabled = [cid for cid, c in all_cards.items() if c.get("status") == "enabled"]
+            result = compute_pairwise_correlations(archive_root, enabled)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"portfolio-health compute failed: {e}"), 500
+
+    m = re.match(r"^/tradelab/correlation/([^/]+)$", path)
+    if m:
+        from ..robustness.correlation import compute_candidate_vs_cohort
+        from ..live.cards import CardRegistry
+        from ..io.returns import derive_daily_returns
+        run_id = m.group(1)
+        try:
+            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+        except Exception as e:
+            return _err(f"audit lookup failed: {e}"), 500
+        if run_folder is None:
+            return _err("run not found"), 404
+        tv_csv = run_folder / "tv_trades.csv"
+        if not tv_csv.exists():
+            return _err("run has no tv_trades.csv"), 404
+        try:
+            candidate_returns_rows = derive_daily_returns(tv_csv)
+            candidate_pairs = [(r["date"], r["return_pct"]) for r in candidate_returns_rows]
+            archive_root = _pine_archive_root()
+            cards_path = _cards_path()
+            if cards_path.exists():
+                reg = CardRegistry(cards_path)
+                all_cards = reg.all_hydrated()
+                enabled = [cid for cid, c in all_cards.items() if c.get("status") == "enabled"]
+            else:
+                enabled = []
+            result = compute_candidate_vs_cohort(archive_root, candidate_pairs, enabled)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"correlation compute failed: {e}"), 500
+
     if path == "/tradelab/receiver/status":
         receiver_up = False
         cards_loaded = None
