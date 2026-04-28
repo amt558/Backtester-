@@ -368,6 +368,21 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except Exception as e:
             return _err(f"portfolio-health compute failed: {e}"), 500
 
+    if path == "/tradelab/regime":
+        from ..regime.banner import fetch_regime
+        try:
+            result = fetch_regime()
+            return _ok(result.model_dump()), 200
+        except NotImplementedError:
+            return _ok({
+                "vol": "UNKNOWN", "trend": "UNKNOWN", "breadth": "UNKNOWN",
+                "vix": None, "realized_vol_30d": None,
+                "adx": None, "breadth_pct_above_50d": None,
+                "last_shift_date": None, "days_stable": None,
+            }), 200
+        except Exception as e:
+            return _err(f"regime fetch failed: {e}"), 500
+
     m = re.match(r"^/tradelab/correlation/([^/]+)$", path)
     if m:
         from ..robustness.correlation import compute_candidate_vs_cohort
