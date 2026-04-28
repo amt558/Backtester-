@@ -46,9 +46,48 @@ class RetrospectiveResult:
 
 
 def load_predicted_verdict(report_path: Path) -> dict:
-    """Read robustness_result.json; return verdict + per-signal vector."""
+    """Read robustness_result.json; return the raw dict.
+
+    Real shape (2026-04-28):
+        {
+          "strategy": "s2_pocket_pivot",
+          "dsr_probability": 0.42,
+          "monte_carlo": {...}, "param_landscape": {...},
+          "entry_delay": {...}, "loso": {...}, "noise_injection": {...},
+          "verdict": {
+            "verdict": "ROBUST" | "INCONCLUSIVE" | "FRAGILE",
+            "signals": [
+              {"name": "baseline_pf", "outcome": "inconclusive", "reason": "..."},
+              ...
+            ]
+          }
+        }
+    """
     with open(report_path) as f:
         return json.load(f)
+
+
+def extract_fragile_signal_names(report: dict) -> list[str]:
+    """From a robustness report, return the names of signals with outcome='fragile'.
+
+    Handles the real on-disk shape (verdict is a dict containing signals list).
+    Backwards-compatible with the legacy fixture shape (signals dict with 'verdict' key).
+    """
+    # Real shape: verdict.signals is a list of {name, outcome, reason}
+    verdict_block = report.get("verdict")
+    if isinstance(verdict_block, dict) and isinstance(verdict_block.get("signals"), list):
+        return [
+            s["name"] for s in verdict_block["signals"]
+            if isinstance(s, dict) and s.get("outcome") == "fragile"
+        ]
+    # Legacy/fixture shape: signals is a dict {name: {verdict: "FRAGILE"}}
+    legacy_signals = report.get("signals")
+    if isinstance(legacy_signals, dict):
+        return [
+            name for name, sig in legacy_signals.items()
+            if isinstance(sig, dict) and sig.get("verdict") == "FRAGILE"
+        ]
+    return []
 
 
 def compute_per_strategy_outcomes(attributed_trades: list[dict]) -> list[dict]:
@@ -158,10 +197,7 @@ def run_retrospective_calibration(
         strategy = rv.get("strategy")
         if not strategy:
             continue
-        fragile_by_strategy[strategy] = [
-            name for name, sig in rv.get("signals", {}).items()
-            if sig.get("verdict") == "FRAGILE"
-        ]
+        fragile_by_strategy[strategy] = extract_fragile_signal_names(rv)
 
     enriched = []
     for row in per_strategy:

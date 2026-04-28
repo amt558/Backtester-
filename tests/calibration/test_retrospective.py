@@ -222,3 +222,99 @@ def test_run_retrospective_bridges_camel_log_to_snake_reports(tmp_path):
     seed = data["per_signal_seed"]
     assert "entry_delay" in seed
     assert seed["entry_delay"]["fragile_fires"] == 1
+
+
+def test_extract_fragile_signal_names_real_shape():
+    """Real robustness_result.json: verdict is a dict with signals list,
+    each signal has lowercase outcome string."""
+    from tradelab.calibration.retrospective import extract_fragile_signal_names
+    report = {
+        "strategy": "s2_pocket_pivot",
+        "verdict": {
+            "verdict": "FRAGILE",
+            "signals": [
+                {"name": "baseline_pf", "outcome": "fragile", "reason": "PF 0.78"},
+                {"name": "dsr", "outcome": "fragile", "reason": "DSR 0.001"},
+                {"name": "mc_max_dd", "outcome": "robust", "reason": "..."},
+                {"name": "wfe", "outcome": "fragile", "reason": "WFE 0.00"},
+                {"name": "noise_injection", "outcome": "fragile", "reason": "57%"},
+                {"name": "loso", "outcome": "robust", "reason": "..."},
+            ],
+        },
+    }
+    out = extract_fragile_signal_names(report)
+    assert sorted(out) == sorted(["baseline_pf", "dsr", "wfe", "noise_injection"])
+
+
+def test_extract_fragile_signal_names_legacy_shape():
+    """Backwards compat with the test-fixture shape (dict of signal dicts)."""
+    from tradelab.calibration.retrospective import extract_fragile_signal_names
+    report = {
+        "strategy": "fixture",
+        "signals": {
+            "baseline_pf": {"value": 1.05, "verdict": "FRAGILE"},
+            "dsr": {"value": 0.55, "verdict": "INCONCLUSIVE"},
+            "entry_delay": {"value": 0.66, "verdict": "FRAGILE"},
+        },
+    }
+    out = extract_fragile_signal_names(report)
+    assert sorted(out) == sorted(["baseline_pf", "entry_delay"])
+
+
+def test_extract_fragile_signal_names_missing_or_empty():
+    from tradelab.calibration.retrospective import extract_fragile_signal_names
+    assert extract_fragile_signal_names({}) == []
+    assert extract_fragile_signal_names({"verdict": "ROBUST"}) == []  # verdict is bare string
+    assert extract_fragile_signal_names({"verdict": {"signals": []}}) == []
+
+
+def test_run_retrospective_uses_real_shape_in_real_report(tmp_path):
+    """End-to-end: orchestrator must extract fragile signals from real shape."""
+    from tradelab.calibration.retrospective import run_retrospective_calibration
+    from unittest.mock import MagicMock
+
+    fake_api = MagicMock()
+    fake_api.list_orders.side_effect = [[
+        {"id": "1", "symbol": "AAPL", "side": "buy", "qty": "100",
+         "filled_qty": "100", "filled_avg_price": "180.00",
+         "filled_at": "2026-01-15T14:31:00Z", "client_order_id": "x1",
+         "status": "filled"},
+        {"id": "2", "symbol": "AAPL", "side": "sell", "qty": "100",
+         "filled_qty": "100", "filled_avg_price": "175.00",
+         "filled_at": "2026-01-15T19:00:00Z", "client_order_id": "x2",
+         "status": "filled"},
+    ], []]
+
+    log = tmp_path / "bot.log"
+    log.write_text(
+        "2026-01-15 09:31:02 INFO Position added: AAPL (S4_InsideDayBreakout) - 100@$180.00 | Stop: $175.00\n"
+    )
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    rep_dir = reports / "s4_inside_day_breakout_2026-04-27"
+    rep_dir.mkdir()
+    (rep_dir / "robustness_result.json").write_text(json.dumps({
+        "strategy": "s4_inside_day_breakout",
+        "verdict": {
+            "verdict": "FRAGILE",
+            "signals": [
+                {"name": "baseline_pf", "outcome": "fragile", "reason": "..."},
+                {"name": "entry_delay", "outcome": "fragile", "reason": "..."},
+                {"name": "loso", "outcome": "fragile", "reason": "..."},
+                {"name": "param_landscape", "outcome": "robust", "reason": "..."},
+            ],
+        },
+    }))
+
+    out = tmp_path / "retro.json"
+    run_retrospective_calibration(
+        alpaca_api=fake_api, bot_log_path=log,
+        reports_dir=reports, output_path=out, window_months=12,
+    )
+    data = json.loads(out.read_text())
+    s4 = next((r for r in data["per_strategy"] if r["strategy"] == "S4_InsideDayBreakout"), None)
+    assert s4 is not None
+    assert sorted(s4["signals_fragile"]) == sorted(["baseline_pf", "entry_delay", "loso"])
+    seed = data["per_signal_seed"]
+    assert "entry_delay" in seed
+    assert seed["entry_delay"]["fragile_fires"] == 1
