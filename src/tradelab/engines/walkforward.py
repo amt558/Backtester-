@@ -44,10 +44,18 @@ def compute_splits(
     train_months: int,
     test_months: int,
     step_months: int,
+    wf_end: Optional[str] = None,
 ) -> list[dict]:
-    """Generate train/test window tuples, stepping forward by step_months."""
+    """Generate train/test window tuples, stepping forward by step_months.
+
+    ``wf_end`` (if provided) caps the range available to the walk-forward
+    loop to ``[data_start, wf_end]``. When a hold-out tail is reserved,
+    callers pass ``data_end - holdout_months`` so that no WF test window
+    can extend into the untouched hold-out period.
+    """
     start = pd.Timestamp(data_start) + relativedelta(months=warmup_months)
-    end = pd.Timestamp(data_end)
+    # Use wf_end when supplied (hold-out reserved); otherwise fall back to data_end.
+    end = pd.Timestamp(wf_end) if wf_end else pd.Timestamp(data_end)
 
     splits = []
     cur = start
@@ -189,9 +197,22 @@ def run_walkforward(
     n_trials_per_window = n_trials_per_window or cfg.walkforward.n_trials_per_window
     seed = seed if seed is not None else cfg.optuna.seed
 
+    # --- Reserve the hold-out tail BEFORE building WF splits ---
+    # The hold-out window is the trailing holdout_months of [data_start, data_end].
+    # WF windows must be confined to [data_start, data_end - holdout_months] so
+    # they cannot train or test on the held-out period. We compute wf_end here
+    # (not in the S4 block below) so that compute_splits can honour the cap.
+    _holdout_months_cfg = getattr(cfg.robustness, "hold_out_window_months", 6) or 0
+    if _holdout_months_cfg > 0 and data_end:
+        _wf_end_ts = pd.Timestamp(data_end) - relativedelta(months=_holdout_months_cfg)
+        wf_end: Optional[str] = _wf_end_ts.strftime("%Y-%m-%d")
+    else:
+        wf_end = None  # no hold-out: WF may use full data range
+
     splits = compute_splits(
         data_start, data_end,
         warmup_months, train_months, test_months, step_months,
+        wf_end=wf_end,
     )
 
     wf_windows: list[WalkForwardWindow] = []
@@ -347,12 +368,15 @@ def run_walkforward(
     ]
 
     # --- S4: HOLD-OUT OOS GATE ---
-    # Run a backtest with the strategy's baseline params on a trailing
-    # untouched window. The point of this gate is to test whether the
-    # strategy survives a chunk of data that the walk-forward training
-    # never saw. This is a separate signal from WFE (which compares
-    # IS-vs-OOS within the WF range).
-    holdout_months = getattr(cfg.robustness, "hold_out_window_months", 6) or 0
+    # Design:
+    #   The hold-out is the TRAILING holdout_months of [data_start, data_end].
+    #   Walk-forward training/testing is restricted to the PREFIX
+    #   [data_start, data_end - holdout_months] (enforced via wf_end above).
+    #   This ensures the hold-out window is genuinely untouched by any
+    #   optimization step. Without the wf_end cap, the last WF test windows
+    #   slide into the trailing period and the "untouched" promise is broken,
+    #   producing false-positive ROBUST verdicts.
+    holdout_months = _holdout_months_cfg  # already read above; reuse here
     holdout_metrics: Optional[BacktestMetrics] = None
     if holdout_months > 0:
         ho_start, ho_end = _slice_holdout_window(data_start, data_end, holdout_months)
