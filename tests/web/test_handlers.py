@@ -57,6 +57,17 @@ def test_handle_unknown_route_returns_404_shape():
     assert data["error"] == "not found"
 
 
+def test_handle_relative_context_unknown_run_returns_404(monkeypatch):
+    """T6: /tradelab/relative-context/<run_id> with unknown run_id → 404."""
+    monkeypatch.setattr(handlers, "_db_path", lambda: Path("nope.db"))
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/relative-context/no-such-run"
+    )
+    assert status == 404
+    data = json.loads(body)
+    assert data["error"] == "run not found"
+
+
 def test_handle_new_strategy_test_action(fake_tradelab_root: Path, monkeypatch):
     monkeypatch.setattr(handlers, "_db_path", lambda: Path("nope.db"))
     monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))

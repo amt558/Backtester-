@@ -410,6 +410,100 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except Exception as e:
             return _err(f"correlation compute failed: {e}"), 500
 
+    m = re.match(r"^/tradelab/relative-context/([^/]+)$", path)
+    if m:
+        # T6: rank a candidate's PF / DSR / DD against the cohort of currently
+        # enabled live cards. Per-card PF and DD live in the audit DB sibling
+        # `backtest_result.json` (via audit_reader.get_run_metrics(scoring_run_id))
+        # since pine_archive/<card_id>/verdict.json only stores DSR + verdict.
+        from ..live.cards import CardRegistry
+        run_id = m.group(1)
+        try:
+            run_folder = audit_reader.get_run_folder(run_id, db_path=_db_path())
+        except Exception as e:
+            return _err(f"audit lookup failed: {e}"), 500
+        if run_folder is None:
+            return _err("run not found"), 404
+        cand_metrics = audit_reader.get_run_metrics(run_id, db_path=_db_path()) or {}
+        cand_pf = cand_metrics.get("profit_factor")
+        cand_dd = cand_metrics.get("max_drawdown_pct")
+        # DSR lives in the candidate's robustness_result.json (top-level).
+        cand_dsr = None
+        rob_file = run_folder / "robustness_result.json"
+        if rob_file.exists():
+            try:
+                cand_dsr = json.loads(rob_file.read_text(encoding="utf-8")).get("dsr_probability")
+            except Exception:
+                cand_dsr = None
+
+        archive_root = _pine_archive_root()
+        cohort: list[dict] = []
+        try:
+            cards_path = _cards_path()
+            if cards_path.exists():
+                reg = CardRegistry(cards_path)
+                all_cards = reg.all_hydrated()
+                for cid, card in all_cards.items():
+                    if card.get("status") != "enabled":
+                        continue
+                    # Skip the candidate's own card (if it's already accepted) so
+                    # the rank doesn't compare it against itself.
+                    if card.get("scoring_run_id") == run_id:
+                        continue
+                    pf = dd = None
+                    sid = card.get("scoring_run_id")
+                    if sid:
+                        cm = audit_reader.get_run_metrics(sid, db_path=_db_path()) or {}
+                        pf = cm.get("profit_factor")
+                        dd = cm.get("max_drawdown_pct")
+                    dsr = None
+                    vfile = archive_root / cid / "verdict.json"
+                    if vfile.exists():
+                        try:
+                            dsr = json.loads(vfile.read_text(encoding="utf-8")).get("dsr_probability")
+                        except Exception:
+                            dsr = None
+                    cohort.append({
+                        "card_id": cid,
+                        "pf": pf,
+                        "dsr": dsr,
+                        "dd": dd,
+                    })
+        except Exception as e:
+            return _err(f"cohort load failed: {e}"), 500
+
+        def _rank(value, key, higher_is_better=True):
+            """Return (rank, n_with_data, median, worst). rank is 1-based.
+            None when value or all cohort values are missing."""
+            if value is None:
+                return None
+            vals = [c[key] for c in cohort if c.get(key) is not None]
+            n = len(vals)
+            if n == 0:
+                return {"rank": None, "n": 0, "median": None, "worst": None}
+            if higher_is_better:
+                better = sum(1 for v in vals if v > value)
+                worst = min(vals)
+            else:
+                # DD is negative or expressed as % drawdown; "higher is worse".
+                # We rank by abs() so smaller drawdown is better.
+                better = sum(1 for v in vals if abs(v) < abs(value))
+                worst = max(vals, key=lambda x: abs(x))
+            sorted_vals = sorted(vals)
+            mid = n // 2
+            median = (sorted_vals[mid] if n % 2 else
+                      (sorted_vals[mid - 1] + sorted_vals[mid]) / 2)
+            # rank = how many cohort members the candidate beats + 1
+            return {"rank": better + 1, "n": n + 1, "median": median, "worst": worst}
+
+        return _ok({
+            "candidate": {"pf": cand_pf, "dsr": cand_dsr, "dd": cand_dd},
+            "pf": _rank(cand_pf, "pf", higher_is_better=True),
+            "dsr": _rank(cand_dsr, "dsr", higher_is_better=True),
+            "dd": _rank(cand_dd, "dd", higher_is_better=False),
+            "cohort_size": len(cohort),
+        }), 200
+
     if path == "/tradelab/receiver/status":
         return _ok(probe_receiver_status()), 200
 
