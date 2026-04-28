@@ -1,0 +1,16 @@
+{
+  "strategy": "S4_InsideDayBreakout",
+  "verdict": "FRAGILE",
+  "dsr_probability": 0.42,
+  "signals": {
+    "baseline_pf": {"value": 1.05, "verdict": "FRAGILE"},
+    "dsr": {"value": 0.55, "verdict": "INCONCLUSIVE"},
+    "entry_delay": {"value": 0.66, "verdict": "FRAGILE"},
+    "loso": {"value": 3.42, "verdict": "FRAGILE"},
+    "param_landscape": {"value": 0.10, "verdict": "ROBUST"},
+    "mc_max_dd": {"value": 0.08, "verdict": "INCONCLUSIVE"},
+    "wfe": {"value": 0.65, "verdict": "INCONCLUSIVE"},
+    "noise_injection": {"value": 0.25, "verdict": "INCONCLUSIVE"},
+    "regime_spread": {"value": 0.50, "verdict": "INCONCLUSIVE"}
+  }
+}
