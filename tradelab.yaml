@@ -54,6 +54,9 @@ robustness:
     regime_spread_hard_fragile: 0.2
     regime_min_trades_pct: 10.0
     regime_min_trades_abs: 5
+    hold_out_robust_pf: 1.5
+    hold_out_fragile_pf: 1.0
+  hold_out_window_months: 6  # set to 0 to disable hold-out gate entirely
 strategies:
   s2_pocket_pivot:
     module: tradelab.strategies.s2_pocket_pivot

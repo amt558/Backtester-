@@ -82,6 +82,9 @@ class RobustnessThresholds(BaseModel):
     # signals from tiny-sample regime buckets.
     regime_min_trades_pct: float = 10.0
     regime_min_trades_abs: int = 5
+    # S4: hold-out OOS gate thresholds (PF on the trailing untouched window).
+    hold_out_robust_pf: float = 1.50
+    hold_out_fragile_pf: float = 1.00
 
 
 class RobustnessConfig(BaseModel):
@@ -90,6 +93,9 @@ class RobustnessConfig(BaseModel):
     param_sensitivity_pct: float = 10.0
     entry_delay_bars: list[int] = Field(default_factory=lambda: [-2, -1, 0, 1, 2])
     thresholds: RobustnessThresholds = Field(default_factory=RobustnessThresholds)
+    # S4: hold-out OOS gate window length in months. Set to 0 to disable
+    # the hold-out gate entirely (no `hold_out_oos` signal will be emitted).
+    hold_out_window_months: int = 6
 
 
 class StrategyEntry(BaseModel):

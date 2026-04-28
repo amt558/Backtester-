@@ -16,6 +16,7 @@ uses window-end close for end-of-window liquidation rather than end-of-data.
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -141,6 +142,25 @@ def _optimize_train_window(
         start=train_start, end=train_end, spy_close=spy_close,
     )
     return dict(study.best_params), train_result.metrics
+
+
+def _slice_holdout_window(
+    data_start: str, data_end: str, holdout_months: int,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return (start, end) date strings for the trailing `holdout_months`-month window.
+
+    Returns (None, None) if the requested window is longer than the entire
+    dataset range (data_end - data_start), in which case the hold-out gate
+    is skipped — better to have no signal than a misleading one.
+    """
+    if not data_start or not data_end or holdout_months <= 0:
+        return None, None
+    start_ts = pd.Timestamp(data_start)
+    end_ts = pd.Timestamp(data_end)
+    holdout_start = end_ts - relativedelta(months=holdout_months)
+    if holdout_start < start_ts:
+        return None, None
+    return holdout_start.strftime("%Y-%m-%d"), end_ts.strftime("%Y-%m-%d")
 
 
 def run_walkforward(
@@ -326,6 +346,29 @@ def run_walkforward(
         for i, t in enumerate(sorted_trades)
     ]
 
+    # --- S4: HOLD-OUT OOS GATE ---
+    # Run a backtest with the strategy's baseline params on a trailing
+    # untouched window. The point of this gate is to test whether the
+    # strategy survives a chunk of data that the walk-forward training
+    # never saw. This is a separate signal from WFE (which compares
+    # IS-vs-OOS within the WF range).
+    holdout_months = getattr(cfg.robustness, "hold_out_window_months", 6) or 0
+    holdout_metrics: Optional[BacktestMetrics] = None
+    if holdout_months > 0:
+        ho_start, ho_end = _slice_holdout_window(data_start, data_end, holdout_months)
+        if ho_start is not None and ho_end is not None:
+            try:
+                holdout_result = run_backtest(
+                    strategy, ticker_data,
+                    start=ho_start, end=ho_end, spy_close=spy_close,
+                )
+                holdout_metrics = holdout_result.metrics
+            except Exception as _e:
+                logging.getLogger(__name__).warning(
+                    "hold-out backtest failed for %s: %s", strategy.name, _e,
+                )
+                holdout_metrics = None
+
     result = WalkForwardResult(
         strategy=strategy.name,
         n_windows=len(wf_windows),
@@ -334,6 +377,8 @@ def run_walkforward(
         wfe_ratio=round(wfe, 3),
         oos_trades=sorted_trades,
         oos_equity_curve=oos_equity_curve,
+        holdout_result=holdout_metrics,
+        holdout_window_months=holdout_months if holdout_metrics is not None else None,
     )
 
     if verbose:
