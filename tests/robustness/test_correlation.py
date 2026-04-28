@@ -82,3 +82,34 @@ def test_candidate_vs_cohort_basic(tmp_path: Path) -> None:
     # Both series are constant 1.0 -> std=0 -> return_rho should be 0.0 (not nan)
     # Implementation choice: when std=0, return_rho is treated as 0.0
     assert result.pairs[0].return_rho == 0.0
+
+
+def test_candidate_vs_cohort_excludes_self(tmp_path: Path) -> None:
+    """When candidate IS one of the cohort cards, filter it out via exclude_card_id."""
+    same = [(f"2026-01-{i:02d}", float(i % 5 - 2)) for i in range(1, 32)]
+    _write_returns(tmp_path, "self-card", same)
+    _write_returns(tmp_path, "other-card", [(f"2026-01-{i:02d}", 0.5) for i in range(1, 32)])
+    result = compute_candidate_vs_cohort(
+        archive_root=tmp_path / "pine_archive",
+        candidate_returns=same,
+        cohort_card_ids=["self-card", "other-card"],
+        exclude_card_id="self-card",
+    )
+    # Only one pair: candidate vs other-card (NOT vs self)
+    assert len(result.pairs) == 1
+    assert result.pairs[0].b == "other-card"
+    # max should reflect the non-self pair
+    assert result.max_return_rho < 1.0
+
+
+def test_candidate_vs_cohort_no_exclude(tmp_path: Path) -> None:
+    """When exclude_card_id is None, all cohort cards are paired (existing behavior)."""
+    same = [(f"2026-01-{i:02d}", float(i % 5 - 2)) for i in range(1, 32)]
+    _write_returns(tmp_path, "card-a", same)
+    _write_returns(tmp_path, "card-b", same)
+    result = compute_candidate_vs_cohort(
+        archive_root=tmp_path / "pine_archive",
+        candidate_returns=same,
+        cohort_card_ids=["card-a", "card-b"],
+    )
+    assert len(result.pairs) == 2  # both included

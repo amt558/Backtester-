@@ -177,6 +177,8 @@ def compute_candidate_vs_cohort(
     archive_root: Path,
     candidate_returns: Sequence[tuple[str, float]],
     cohort_card_ids: Sequence[str],
+    *,
+    exclude_card_id: str | None = None,
 ) -> PortfolioHealthResult:
     """Compute correlation between a candidate (in-memory) and each cohort card.
 
@@ -187,11 +189,17 @@ def compute_candidate_vs_cohort(
         archive_root:     Path to pine_archive/ directory.
         candidate_returns: List of (date, return_pct) tuples for the candidate run.
         cohort_card_ids:  Card IDs of the live portfolio to correlate against.
+        exclude_card_id:  If provided, remove this card_id from the cohort before
+                          pairing. Use when the candidate run belongs to an already-
+                          enabled card — avoids self-correlation that would pollute
+                          max_return_rho with a spurious 1.0.
 
     Returns:
         PortfolioHealthResult where pair.a == "candidate" for every PairResult.
     """
     archive_root = Path(archive_root)
+    if exclude_card_id is not None:
+        cohort_card_ids = [c for c in cohort_card_ids if c != exclude_card_id]
     candidate_series: dict[str, float] = {d: r for d, r in candidate_returns}
 
     pairs: list[PairResult] = []

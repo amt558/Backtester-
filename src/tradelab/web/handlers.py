@@ -388,45 +388,30 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             candidate_pairs = [(r["date"], r["return_pct"]) for r in candidate_returns_rows]
             archive_root = _pine_archive_root()
             cards_path = _cards_path()
+            candidate_card_id: str | None = None
             if cards_path.exists():
                 reg = CardRegistry(cards_path)
                 all_cards = reg.all_hydrated()
                 enabled = [cid for cid, c in all_cards.items() if c.get("status") == "enabled"]
+                # If this run was previously accepted, its card_id is embedded as
+                # scoring_run_id on the card. Filter it out to prevent self-correlation
+                # producing a spurious rho=1.0 that would false-positive block T6's gate.
+                for cid, card in all_cards.items():
+                    if card.get("scoring_run_id") == run_id:
+                        candidate_card_id = cid
+                        break
             else:
                 enabled = []
-            result = compute_candidate_vs_cohort(archive_root, candidate_pairs, enabled)
+            result = compute_candidate_vs_cohort(
+                archive_root, candidate_pairs, enabled,
+                exclude_card_id=candidate_card_id,
+            )
             return _ok(result.model_dump()), 200
         except Exception as e:
             return _err(f"correlation compute failed: {e}"), 500
 
     if path == "/tradelab/receiver/status":
-        receiver_up = False
-        cards_loaded = None
-        try:
-            health = _probe_json(_receiver_health_url(), timeout=1.5)
-            receiver_up = health.get("status") == "ok"
-            cards_loaded = health.get("cards_loaded")
-        except Exception:
-            pass
-
-        ngrok_up = False
-        ngrok_url = None
-        try:
-            tunnels = _probe_json(_ngrok_api_url(), timeout=1.5)
-            for t in tunnels.get("tunnels", []):
-                if t.get("proto") == "https":
-                    ngrok_url = t.get("public_url")
-                    ngrok_up = bool(ngrok_url)
-                    break
-        except Exception:
-            pass
-
-        return _ok({
-            "receiver_up": receiver_up,
-            "ngrok_up": ngrok_up,
-            "ngrok_url": ngrok_url,
-            "cards_loaded": cards_loaded,
-        }), 200
+        return _ok(probe_receiver_status()), 200
 
     if path == "/tradelab/live/config":
         return handle_live_config_get()
