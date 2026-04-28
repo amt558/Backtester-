@@ -23,6 +23,15 @@ _PROFIT_PCT_COLS = ("Profit %", "Net P&L %", "P&L %")
 _TYPE_COL = "Type"
 
 
+class MalformedTVCSVError(ValueError):
+    """Raised when a tv_trades.csv is missing required columns in the header.
+
+    Distinct from an empty result (header valid, no usable exit rows), which
+    returns [] without raising.  Callers (e.g. backfill_returns) should treat
+    this as a hard failure rather than a silent skip.
+    """
+
+
 def _find_col(fieldnames: list[str], candidates: tuple[str, ...]) -> str | None:
     """Return the first candidate present in fieldnames, or None."""
     for c in candidates:
@@ -56,8 +65,17 @@ def derive_daily_returns(tv_trades_csv: Path) -> list[dict]:
     profit_col = _find_col(fieldnames, _PROFIT_PCT_COLS)
     type_col = _TYPE_COL if _TYPE_COL in fieldnames else None
 
-    if date_col is None or profit_col is None or type_col is None:
-        return []
+    missing: list[str] = []
+    if date_col is None:
+        missing.append(f"date column (expected one of: {_DATE_COLS})")
+    if profit_col is None:
+        missing.append(f"profit-pct column (expected one of: {_PROFIT_PCT_COLS})")
+    if type_col is None:
+        missing.append(f"'{_TYPE_COL}' column")
+    if missing:
+        raise MalformedTVCSVError(
+            f"tv_trades.csv is missing required column(s): {'; '.join(missing)}"
+        )
 
     by_date: dict[str, float] = {}
     for row in reader:

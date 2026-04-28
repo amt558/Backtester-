@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import csv
 import pytest
-from tradelab.io.returns import derive_daily_returns, write_returns_csv
+from tradelab.io.returns import derive_daily_returns, write_returns_csv, MalformedTVCSVError
 
 
 def _write_tv_trades(tmp_path: Path) -> Path:
@@ -69,3 +69,42 @@ def test_derive_returns_empty_csv_returns_empty_list(tmp_path: Path) -> None:
     p = tmp_path / "tv_trades.csv"
     p.write_text("Trade #,Type,Signal,Date/Time,Price USD,Contracts,Profit USD,Profit %\n", encoding="utf-8")
     assert derive_daily_returns(p) == []
+
+
+def test_derive_daily_returns_raises_on_missing_type_column(tmp_path: Path) -> None:
+    """Missing Type column → MalformedTVCSVError, not silent []."""
+    p = tmp_path / "tv_trades.csv"
+    # Valid date + profit columns, but no Type column.
+    p.write_text(
+        "Trade #,Signal,Date/Time,Price USD,Profit %\n"
+        "1,enter,2026-01-05 11:00,103.00,3.00\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MalformedTVCSVError, match="Type"):
+        derive_daily_returns(p)
+
+
+def test_derive_daily_returns_raises_on_missing_date_column(tmp_path: Path) -> None:
+    """Missing date column → MalformedTVCSVError, not silent []."""
+    p = tmp_path / "tv_trades.csv"
+    # Type and profit columns present, but no recognised date column.
+    p.write_text(
+        "Trade #,Type,Signal,Timestamp,Price USD,Profit %\n"
+        "1,Exit long,exit,2026-01-05 11:00,103.00,3.00\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MalformedTVCSVError, match="date column"):
+        derive_daily_returns(p)
+
+
+def test_derive_daily_returns_raises_on_missing_profit_column(tmp_path: Path) -> None:
+    """Missing profit-pct column → MalformedTVCSVError, not silent []."""
+    p = tmp_path / "tv_trades.csv"
+    # Type and date columns present, but no recognised profit-pct column.
+    p.write_text(
+        "Trade #,Type,Signal,Date/Time,Price USD,Profit USD\n"
+        "1,Exit long,exit,2026-01-05 11:00,103.00,30.00\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(MalformedTVCSVError, match="profit-pct column"):
+        derive_daily_returns(p)
