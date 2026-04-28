@@ -7,6 +7,7 @@ post-Slice-0.5 will have native attribution via client_order_id.
 """
 from __future__ import annotations
 import json
+import re as _re_norm
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,26 @@ from typing import Optional
 
 from .alpaca_trade_history import fetch_filled_orders, pair_buy_sell_into_trades
 from .bot_log_attribution import parse_position_added_lines, attribute_trade
+
+
+def normalize_strategy_name(name: str) -> str:
+    """Convert bot's CamelCase strategy name to tradelab's snake_case form.
+
+    Bot.log uses 'S2_PocketPivot', tradelab reports use 's2_pocket_pivot'.
+    Without normalization, fragile_by_strategy lookup misses.
+
+    Examples:
+        'S2_PocketPivot' -> 's2_pocket_pivot'
+        'S12_MomentumAcceleration' -> 's12_momentum_acceleration'
+        'S7_RDZMomentum' -> 's7_rdz_momentum'    (multi-cap acronym kept together)
+        'S10_RSNewHighs' -> 's10_rs_new_highs'
+        's4_inside_day_breakout' -> 's4_inside_day_breakout'   (idempotent)
+    """
+    # Step 1: split runs-of-caps before a Cap+lower (RDZMomentum → RDZ_Momentum)
+    s = _re_norm.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', name)
+    # Step 2: split lowercase/digit before uppercase (PocketPivot → Pocket_Pivot)
+    s = _re_norm.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s)
+    return s.lower()
 
 
 @dataclass
@@ -142,10 +163,15 @@ def run_retrospective_calibration(
             if sig.get("verdict") == "FRAGILE"
         ]
 
-    enriched = [
-        {**row, "signals_fragile": fragile_by_strategy.get(row["strategy"], [])}
-        for row in per_strategy
-    ]
+    enriched = []
+    for row in per_strategy:
+        raw_name = row["strategy"]
+        sigs = (
+            fragile_by_strategy.get(raw_name)
+            or fragile_by_strategy.get(normalize_strategy_name(raw_name))
+            or []
+        )
+        enriched.append({**row, "signals_fragile": sigs})
     per_signal = compute_per_signal_seed_hit_rates(enriched)
 
     total = attributed_count + unattributed_count

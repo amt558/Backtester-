@@ -148,3 +148,77 @@ def test_run_retrospective_handles_missing_bot_log(tmp_path):
     # All trades should be unattributed when log is missing
     assert data["attribution_quality"]["attributed_count"] == 0
     assert data["attribution_quality"]["attribution_pct"] == 0.0
+
+
+def test_normalize_strategy_name_camel_to_snake():
+    from tradelab.calibration.retrospective import normalize_strategy_name
+    assert normalize_strategy_name("S2_PocketPivot") == "s2_pocket_pivot"
+    assert normalize_strategy_name("S12_MomentumAcceleration") == "s12_momentum_acceleration"
+    assert normalize_strategy_name("S4_InsideDayBreakout") == "s4_inside_day_breakout"
+
+
+def test_normalize_strategy_name_keeps_multi_cap_acronyms():
+    from tradelab.calibration.retrospective import normalize_strategy_name
+    # RDZ and RS should stay together as 'rdz' and 'rs', not split as 'r_d_z' / 'r_s'
+    assert normalize_strategy_name("S7_RDZMomentum") == "s7_rdz_momentum"
+    assert normalize_strategy_name("S10_RSNewHighs") == "s10_rs_new_highs"
+
+
+def test_normalize_strategy_name_idempotent_on_snake_case():
+    from tradelab.calibration.retrospective import normalize_strategy_name
+    assert normalize_strategy_name("s2_pocket_pivot") == "s2_pocket_pivot"
+
+
+def test_run_retrospective_bridges_camel_log_to_snake_reports(tmp_path):
+    """Retrospective must match bot's 'S2_PocketPivot' to tradelab's 's2_pocket_pivot'."""
+    from tradelab.calibration.retrospective import run_retrospective_calibration
+    from unittest.mock import MagicMock
+
+    # Synthetic Alpaca data: one buy + sell pair on AAPL
+    fake_api = MagicMock()
+    fake_api.list_orders.side_effect = [[
+        {"id": "1", "symbol": "AAPL", "side": "buy", "qty": "100",
+         "filled_qty": "100", "filled_avg_price": "180.00",
+         "filled_at": "2026-01-15T14:31:00Z", "client_order_id": "x1",
+         "status": "filled"},
+        {"id": "2", "symbol": "AAPL", "side": "sell", "qty": "100",
+         "filled_qty": "100", "filled_avg_price": "175.00",  # loss
+         "filled_at": "2026-01-15T19:00:00Z", "client_order_id": "x2",
+         "status": "filled"},
+    ], []]
+
+    # Bot log uses CamelCase
+    log = tmp_path / "bot.log"
+    log.write_text(
+        "2026-01-15 09:31:02 INFO Position added: AAPL (S4_InsideDayBreakout) - 100@$180.00 | Stop: $175.00\n"
+    )
+
+    # tradelab report uses snake_case
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "s4_inside_day_breakout_2026-04-19").mkdir()
+    (reports / "s4_inside_day_breakout_2026-04-19" / "robustness_result.json").write_text(json.dumps({
+        "strategy": "s4_inside_day_breakout",
+        "verdict": "FRAGILE",
+        "signals": {
+            "baseline_pf": {"value": 1.05, "verdict": "FRAGILE"},
+            "entry_delay": {"value": 0.66, "verdict": "FRAGILE"},
+        },
+    }))
+
+    out = tmp_path / "retrospective.json"
+    run_retrospective_calibration(
+        alpaca_api=fake_api, bot_log_path=log,
+        reports_dir=reports, output_path=out, window_months=12,
+    )
+    data = json.loads(out.read_text())
+    # The trade was attributed to S4_InsideDayBreakout, signals from s4_inside_day_breakout
+    s4 = next((r for r in data["per_strategy"] if r["strategy"] == "S4_InsideDayBreakout"), None)
+    assert s4 is not None, f"no S4 row in {data['per_strategy']}"
+    # Naming-bridge worked: signals_fragile pulled from snake_case report
+    assert "baseline_pf" in s4["signals_fragile"]
+    assert "entry_delay" in s4["signals_fragile"]
+    # Hit rates should now show entry_delay + baseline_pf
+    seed = data["per_signal_seed"]
+    assert "entry_delay" in seed
+    assert seed["entry_delay"]["fragile_fires"] == 1
