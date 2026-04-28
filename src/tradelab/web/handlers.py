@@ -20,6 +20,7 @@ from typing import Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from tradelab.audit import archive
+from tradelab.canaries.runtime import run_canary_check
 from tradelab.web import audit_reader, cards_view, freshness, new_strategy, ranges, whatif
 
 
@@ -373,6 +374,13 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
 
     if path == "/tradelab/live/panic/last-event":
         return handle_panic_last_event_get()
+
+    if path == "/tradelab/canary-status":
+        # Engine integrity status query — reads latest verdict per canary
+        # from the audit DB. Unenveloped shape (matches /tradelab/runs):
+        # {"all_match": bool, "canaries": [...], "last_run_at": iso}.
+        status = run_canary_check(db_path=_db_path())
+        return json.dumps(status.to_dict()), 200
 
     return _err("not found"), 404
 
