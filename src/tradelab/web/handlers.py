@@ -368,6 +368,27 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except Exception as e:
             return _err(f"portfolio-health compute failed: {e}"), 500
 
+    if path == "/tradelab/calibration-summary":
+        from ..calibration.summary import summarize_calibration
+        from ..live.cards import CardRegistry
+        from ..live.tracking_error import compute_tracking_error, load_live_returns_for_card
+        cards = list(CardRegistry(_cards_path()).all_hydrated().values())
+        archive_root = _pine_archive_root()
+        def _te_loader(card_id: str) -> dict:
+            csv_path = archive_root / card_id / "tv_trades.csv"
+            if not csv_path.exists():
+                return {"status": "insufficient", "decay_series": None}
+            try:
+                live = load_live_returns_for_card(card_id)
+                return compute_tracking_error(csv_path, live).model_dump()
+            except Exception:
+                return {"status": "insufficient", "decay_series": None}
+        try:
+            result = summarize_calibration(cards=cards, te_loader=_te_loader)
+            return _ok(result.model_dump()), 200
+        except Exception as e:
+            return _err(f"calibration-summary failed: {e}"), 500
+
     if path == "/tradelab/regime":
         from ..regime.banner import fetch_regime
         try:
