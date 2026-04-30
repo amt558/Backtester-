@@ -139,7 +139,19 @@ import secrets as _secrets
 import shutil as _shutil
 from datetime import datetime as _datetime, timezone as _timezone
 
-from tradelab.live.cards import CardRegistry as _CardRegistry
+from tradelab.live.cards import CardExistsError as _CardExistsError, CardRegistry as _CardRegistry
+
+
+class ActivationGateFailed(Exception):
+    """Raised when accept_scored is called with activate=True but the verdict
+    isn't ROBUST. The Research-v3 Activate flow refuses to enable a card whose
+    latest scoring verdict failed the robustness gate."""
+
+
+# Public alias: the duplicate-card 409 path goes through registry.create's
+# existing CardExistsError. Re-export under the activation-flow name so Task 5's
+# handler import (and any future v3 caller) can use either name.
+AlreadyActivated = _CardExistsError
 
 
 def accept_scored(
@@ -154,14 +166,20 @@ def accept_scored(
     registry: _CardRegistry,
     pine_archive_root: Path = Path("pine_archive"),
     reports_root: Path = Path("reports"),
+    activate: bool = False,
 ) -> dict:
     """Promote a scored report folder to an immutable card + pine_archive record.
+
+    When activate=True, the card is created with status="enabled" and stamped
+    with activated_at + activated_verdict. The ROBUST verdict gate is enforced
+    before any disk side effects.
 
     Raises:
       FileNotFoundError: report_folder doesn't exist or is outside reports_root.
       ValueError: report_folder has no strategy.pine.
       FileExistsError: target pine_archive dir already exists.
       CardExistsError: registry refuses duplicate (caller re-computes version).
+      ActivationGateFailed: activate=True but verdict isn't ROBUST.
     """
     # Paranoid path check — report_folder must live under reports_root.
     rf = Path(report_folder).resolve()
@@ -180,6 +198,14 @@ def accept_scored(
     if not pine_src.exists():
         raise ValueError(
             "report folder has no strategy.pine — re-score with Pine source"
+        )
+
+    # Gate before any side effects when activating.
+    normalized_verdict = (verdict or "").strip().upper()
+    if activate and normalized_verdict != "ROBUST":
+        raise ActivationGateFailed(
+            f"Activation requires ROBUST verdict; got "
+            f"{normalized_verdict or 'unknown'}"
         )
 
     version = registry.next_version_for(base_name)
@@ -229,7 +255,7 @@ def accept_scored(
             "card_id":           card_id,
             "secret":            secret,
             "symbol":            symbol,
-            "status":            "disabled",
+            "status":            "enabled" if activate else "disabled",
             "quantity":          None,
             "created_at":        created_at,
             "base_name":         base_name,
@@ -241,14 +267,20 @@ def accept_scored(
             "pine_archive_path": str(archive_dir).replace("\\", "/"),
             "scoring_run_id":    scoring_run_id,
         }
+        if activate:
+            card["activated_at"] = created_at
+            card["activated_verdict"] = normalized_verdict
         registry.create(card_id, card)
     except Exception:
         # Rollback the pine archive dir so a retry can re-create it cleanly.
         _shutil.rmtree(archive_dir, ignore_errors=True)
         raise
 
-    return {
+    result = {
         "card_id":           card_id,
         "secret":            secret,
         "pine_archive_path": str(archive_dir).replace("\\", "/"),
     }
+    if activate:
+        result["activated_at"] = created_at
+    return result

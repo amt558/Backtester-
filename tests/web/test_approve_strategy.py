@@ -271,6 +271,148 @@ def test_accept_scored_continues_when_returns_derivation_fails(
     assert any("smoke-amzn-v1" in r.message for r in caplog.records if r.levelno >= logging.WARNING)
 
 
+def test_accept_scored_activate_robust_sets_status_enabled(
+    tmp_path: Path, smoke_csv_text: str,
+) -> None:
+    """activate=True with ROBUST verdict promotes the card to status=enabled
+    and stamps activated_at + activated_verdict."""
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    result = approve_strategy.accept_scored(
+        base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+        report_folder=scored["report_folder"],
+        verdict="ROBUST",
+        dsr_probability=scored["dsr_probability"],
+        scoring_run_id=scored["scoring_run_id"],
+        registry=registry,
+        pine_archive_root=tmp_path / "pine_archive",
+        reports_root=tmp_path / "reports",
+        activate=True,
+    )
+
+    card = registry.get(result["card_id"])
+    assert card is not None
+    assert card["status"] == "enabled"
+    assert card["activated_verdict"] == "ROBUST"
+    assert card["activated_at"] == card["created_at"]
+    assert "activated_at" in result
+
+
+def test_accept_scored_activate_fragile_raises_gate_failed(
+    tmp_path: Path, smoke_csv_text: str,
+) -> None:
+    """activate=True with non-ROBUST verdict refuses with ActivationGateFailed."""
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    with pytest.raises(approve_strategy.ActivationGateFailed, match="ROBUST"):
+        approve_strategy.accept_scored(
+            base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+            report_folder=scored["report_folder"],
+            verdict="FRAGILE",
+            dsr_probability=scored["dsr_probability"],
+            scoring_run_id=scored["scoring_run_id"],
+            registry=registry,
+            pine_archive_root=tmp_path / "pine_archive",
+            reports_root=tmp_path / "reports",
+            activate=True,
+        )
+
+    # No card was created and no pine archive directory was left behind.
+    assert registry.get("smoke-amzn-v1") is None
+    archive_root = tmp_path / "pine_archive"
+    assert not archive_root.exists() or not any(archive_root.iterdir())
+
+
+def test_accept_scored_activate_inconclusive_raises_gate_failed(
+    tmp_path: Path, smoke_csv_text: str,
+) -> None:
+    """INCONCLUSIVE is not ROBUST — gate refuses."""
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    with pytest.raises(approve_strategy.ActivationGateFailed):
+        approve_strategy.accept_scored(
+            base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+            report_folder=scored["report_folder"],
+            verdict="INCONCLUSIVE",
+            dsr_probability=scored["dsr_probability"],
+            scoring_run_id=scored["scoring_run_id"],
+            registry=registry,
+            pine_archive_root=tmp_path / "pine_archive",
+            reports_root=tmp_path / "reports",
+            activate=True,
+        )
+
+
+def test_accept_scored_activate_robust_is_case_insensitive(
+    tmp_path: Path, smoke_csv_text: str,
+) -> None:
+    """Gate compares case-insensitively so callers passing 'robust' still pass."""
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    result = approve_strategy.accept_scored(
+        base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+        report_folder=scored["report_folder"],
+        verdict="robust",  # lowercase
+        dsr_probability=scored["dsr_probability"],
+        scoring_run_id=scored["scoring_run_id"],
+        registry=registry,
+        pine_archive_root=tmp_path / "pine_archive",
+        reports_root=tmp_path / "reports",
+        activate=True,
+    )
+    card = registry.get(result["card_id"])
+    assert card["status"] == "enabled"
+    assert card["activated_verdict"] == "ROBUST"
+
+
+def test_accept_scored_default_no_activate_keeps_disabled(
+    tmp_path: Path, smoke_csv_text: str,
+) -> None:
+    """Backward compat: omitting activate (default False) writes status=disabled
+    and does NOT stamp activated_* fields."""
+    from tradelab.live.cards import CardRegistry
+
+    scored = _score_once(smoke_csv_text, tmp_path, "smoke-amzn")
+    registry = CardRegistry(tmp_path / "cards.json")
+
+    result = approve_strategy.accept_scored(
+        base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+        report_folder=scored["report_folder"],
+        verdict="ROBUST",  # ROBUST verdict but activate=False
+        dsr_probability=scored["dsr_probability"],
+        scoring_run_id=scored["scoring_run_id"],
+        registry=registry,
+        pine_archive_root=tmp_path / "pine_archive",
+        reports_root=tmp_path / "reports",
+    )
+    card = registry.get(result["card_id"])
+    assert card["status"] == "disabled"
+    assert "activated_at" not in card
+    assert "activated_verdict" not in card
+    assert "activated_at" not in result
+
+
+def test_already_activated_aliases_card_exists_error() -> None:
+    """AlreadyActivated must be the same class as CardExistsError so the
+    existing /tradelab/accept handler's CardExistsError branch keeps catching
+    duplicates raised by registry.create."""
+    from tradelab.live.cards import CardExistsError
+
+    assert approve_strategy.AlreadyActivated is CardExistsError
+
+
 def test_accept_scored_writes_returns_csv(tmp_path: Path, smoke_csv_text: str) -> None:
     """After accept_scored, pine_archive/<card_id>/returns.csv exists with at least 1 row."""
     import csv as _csv
