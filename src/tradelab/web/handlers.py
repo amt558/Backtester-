@@ -1656,6 +1656,7 @@ def _qs_metrics_response(run_id: str, folder: Path) -> tuple[str, int]:
 
     monthly = qs_metrics.monthly_returns_matrix(returns).fillna(0.0).values.tolist()
     rolling = qs_metrics.rolling_sharpe(returns).dropna().tolist()
+    drawdown = qs_metrics.drawdown_series(returns).tolist()
     metrics = audit_reader.get_run_metrics(run_id, db_path=_db_path()) or {}
     payload = {
         "sharpe":           qs_metrics.sharpe(returns),
@@ -1664,10 +1665,14 @@ def _qs_metrics_response(run_id: str, folder: Path) -> tuple[str, int]:
         "max_drawdown":     qs_metrics.max_drawdown(returns),
         "monthly_returns":  monthly,
         "rolling_sharpe":   rolling,
+        "drawdown_series":  drawdown,
         "total_return":     float((1.0 + returns).prod() - 1.0),
         "trades":           metrics.get("total_trades", metrics.get("trades", 0)),
         "win_rate":         metrics.get("win_rate", 0.0),
         "profit_factor":    metrics.get("profit_factor", 0.0),
+        "avg_win_pct":      metrics.get("avg_win_pct", 0.0),
+        "avg_loss_pct":     metrics.get("avg_loss_pct", 0.0),
+        "avg_bars_held":    metrics.get("avg_bars_held", 0.0),
     }
     return json.dumps(payload), 200
 

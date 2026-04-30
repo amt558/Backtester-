@@ -5,7 +5,7 @@ import pytest
 
 from tradelab.web.qs_metrics import (
     sharpe, sortino, cagr, max_drawdown,
-    monthly_returns_matrix, rolling_sharpe,
+    monthly_returns_matrix, rolling_sharpe, drawdown_series,
 )
 
 
@@ -62,3 +62,25 @@ def test_empty_series_returns_zero():
     assert sortino(empty) == 0.0
     assert cagr(empty) == 0.0
     assert max_drawdown(empty) == 0.0
+
+
+def test_drawdown_series_aligns_with_input(daily_returns_3y):
+    dd = drawdown_series(daily_returns_3y)
+    assert len(dd) == len(daily_returns_3y)
+    # Drawdown is always 0 (at a fresh peak) or negative
+    assert (dd <= 1e-12).all()
+    # Min should match scalar max_drawdown
+    assert float(dd.min()) == pytest.approx(max_drawdown(daily_returns_3y), abs=1e-9)
+
+
+def test_drawdown_series_starts_at_zero(daily_returns_3y):
+    dd = drawdown_series(daily_returns_3y)
+    # First bar is always at peak (no prior history) -> 0 drawdown
+    assert dd.iloc[0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_drawdown_series_empty_returns_empty():
+    empty = pd.Series([], dtype=float)
+    dd = drawdown_series(empty)
+    assert len(dd) == 0
+    assert isinstance(dd, pd.Series)

@@ -339,12 +339,18 @@ def test_get_qs_metrics_happy_returns_metric_keys(
     payload = json.loads(body)
     for key in (
         "sharpe", "sortino", "cagr", "max_drawdown",
-        "monthly_returns", "rolling_sharpe",
+        "monthly_returns", "rolling_sharpe", "drawdown_series",
         "total_return", "trades", "win_rate", "profit_factor",
+        "avg_win_pct", "avg_loss_pct", "avg_bars_held",
     ):
         assert key in payload, f"missing key {key!r}"
     assert isinstance(payload["monthly_returns"], list)
     assert isinstance(payload["rolling_sharpe"], list)
+    assert isinstance(payload["drawdown_series"], list)
+    # drawdown_series should be aligned with the equity curve (same length as
+    # daily returns derived from it). Values are <= 0 (always at peak or below).
+    if payload["drawdown_series"]:
+        assert all(v <= 1e-9 for v in payload["drawdown_series"])
 
 
 def test_get_qs_metrics_run_with_no_equity_curve_returns_404(

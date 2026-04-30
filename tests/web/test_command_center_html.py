@@ -1055,3 +1055,141 @@ def test_v3_task11_clicking_actions_does_not_toggle_expand(html: str) -> None:
     # least .activate (existing) and .close-btn (Task 11 new).
     assert ".activate" in body
     assert "close-btn" in body
+
+
+# ─── Task 12: QuantStats sub-grid + 3 inline SVG charts ────────────────
+
+
+def test_v3_task12_load_qs_helper_exists(html: str) -> None:
+    """The expanded tile populates its QuantStats tab via this loader.
+    Without it, every tile shows the empty placeholder forever."""
+    assert "function loadQsForExpandedTile" in html, (
+        "Missing function loadQsForExpandedTile (Task 12 entry point)"
+    )
+
+
+def test_v3_task12_load_qs_calls_qs_metrics_endpoint(html: str) -> None:
+    """The loader must hit /tradelab/runs/<id>/qs-metrics — the BE route is
+    already wired (Task 5). Don't accidentally point at /metrics or /tearsheet."""
+    idx = html.find("function loadQsForExpandedTile")
+    assert idx > 0
+    body = html[idx:idx + 2000]
+    assert "/qs-metrics" in body, (
+        "loadQsForExpandedTile must fetch from /tradelab/runs/<id>/qs-metrics"
+    )
+    # Must encode the runId — defensive against a run id with a slash or %.
+    assert "encodeURIComponent" in body
+
+
+def test_v3_task12_load_qs_handles_null_run_id(html: str) -> None:
+    """A strategy with no scored run yet should show an empty-state, not a
+    fetch error. The plan spec calls for `<div class="empty">No run data...`."""
+    idx = html.find("function loadQsForExpandedTile")
+    assert idx > 0
+    body = html[idx:idx + 2000]
+    # Some explicit null/empty branch before the fetch.
+    assert ("if (!runId)" in body) or ("if (runId == null)" in body) or ("runId == null" in body), (
+        "loadQsForExpandedTile must check for missing runId before fetching"
+    )
+    assert 'class="empty"' in body or "class='empty'" in body, (
+        "Missing empty-state markup for runId=null path"
+    )
+
+
+def test_v3_task12_qs_grid_helper_renders_eight_cells(html: str) -> None:
+    """The QS sub-grid has 8 stat cells per the plan: Total return, Sharpe,
+    Sortino, CAGR, Avg win, Avg loss, Trades, Avg hold."""
+    idx = html.find("function qsGridHtml")
+    assert idx > 0, "Missing function qsGridHtml"
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 3000)
+    body = html[idx:end]
+    for label in (
+        "Total return", "Sharpe", "Sortino", "CAGR",
+        "Avg win", "Avg loss", "Trades", "Avg hold",
+    ):
+        assert label in body, f"qsGridHtml missing the {label!r} stat cell"
+
+
+def test_v3_task12_qs_grid_uses_qs_stat_class(html: str) -> None:
+    """Each stat cell carries .qs-stat for styling. The grid wrapper carries
+    .qs-grid. Without these classes the CSS layout breaks."""
+    idx = html.find("function qsGridHtml")
+    assert idx > 0
+    body = html[idx:idx + 3000]
+    assert "qs-stat" in body, "qs-stat class missing from cell template"
+    assert "qs-grid" in body, "qs-grid class missing from grid wrapper"
+
+
+def test_v3_task12_three_chart_helpers_exist(html: str) -> None:
+    """Three inline SVG chart helpers per plan: drawdown, monthly heatmap,
+    rolling sharpe. Pure SVG (no Chart.js — see reference_command_center_arch_lock.md)."""
+    for fn_name in ("function drawdownSvg", "function monthlyHeatmap", "function rollingSharpeSvg"):
+        assert fn_name in html, f"Missing {fn_name}"
+
+
+def test_v3_task12_chart_helpers_emit_inline_svg(html: str) -> None:
+    """Charts must be inline SVG, not Canvas / Chart.js / d3. The architectural
+    lock on command_center.html forbids new build-step deps."""
+    for fn_name in ("function drawdownSvg", "function rollingSharpeSvg"):
+        idx = html.find(fn_name)
+        assert idx > 0
+        body = html[idx:idx + 2000]
+        assert "<svg" in body, f"{fn_name} must emit inline <svg> markup"
+        assert "viewBox" in body, f"{fn_name} svg must declare a viewBox for responsive scaling"
+
+
+def test_v3_task12_monthly_heatmap_uses_grid_class(html: str) -> None:
+    """The heatmap is a CSS grid of colored cells (red/green by sign)."""
+    idx = html.find("function monthlyHeatmap")
+    assert idx > 0
+    body = html[idx:idx + 2000]
+    assert "heatmap-grid" in body, "monthlyHeatmap must wrap cells in .heatmap-grid"
+    assert "heatmap-cell" in body, "monthlyHeatmap must use .heatmap-cell per cell"
+
+
+def test_v3_task12_expand_calls_loader(html: str) -> None:
+    """expandTile must invoke loadQsForExpandedTile after writing innerHTML so
+    the QuantStats tab populates. Without this, the user sees the empty
+    placeholder until clicking Factors and back."""
+    idx = html.find("function expandTile")
+    assert idx > 0
+    body = html[idx:idx + 1500]
+    assert "loadQsForExpandedTile" in body, (
+        "expandTile must call loadQsForExpandedTile(tile, runId) after render"
+    )
+
+
+def test_v3_task12_placeholder_text_replaced(html: str) -> None:
+    """Once the loader is wired, the literal placeholder string from Task 11
+    should no longer appear in the source — that text was a TODO marker."""
+    assert "QuantStats sub-grid loads in Task 12." not in html, (
+        "Task 11 placeholder text still present — Task 12 loader not wired"
+    )
+
+
+def test_v3_task12_tab_strip_click_swaps_tabs(html: str) -> None:
+    """Clicking the Factors tab should hide .tab-qs and show .tab-factors,
+    and vice versa. The wireResearchLiveCardsClick handler owns this logic."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 6000]
+    # Either explicit class swap on tab-content elements, or hidden attribute toggle.
+    has_qs_swap = ("tab-qs" in body) and ("tab-factors" in body)
+    assert has_qs_swap, (
+        "Tab strip handler must reference both .tab-qs and .tab-factors "
+        "to swap visibility"
+    )
+
+
+def test_v3_task12_qs_grid_css_present(html: str) -> None:
+    """CSS rules must exist for the new grid + chart layout — without them
+    the markup renders as a plain stack of unstyled divs."""
+    for selector in (".qs-grid", ".qs-stat", ".qs-charts", ".qs-chart"):
+        assert selector in html, f"Missing CSS rule for {selector}"
+
+
+def test_v3_task12_heatmap_css_present(html: str) -> None:
+    """The heatmap is a fixed-shape CSS grid; the .heatmap-grid rule defines it."""
+    for selector in (".heatmap-grid", ".heatmap-cell"):
+        assert selector in html, f"Missing CSS rule for {selector}"

@@ -71,3 +71,16 @@ def rolling_sharpe(returns: pd.Series, window: int = 30) -> pd.Series:
     mean = returns.rolling(window).mean()
     std = returns.rolling(window).std(ddof=0)
     return np.sqrt(ANNUAL_TRADING_DAYS) * mean / std
+
+
+def drawdown_series(returns: pd.Series) -> pd.Series:
+    """Per-bar peak-to-trough drawdown as a fraction (e.g. -0.12 = -12%).
+
+    Aligned to the input index. Always 0 (peak) or negative (below peak).
+    Used by the Research v3 expanded-tile drawdown SVG chart.
+    """
+    if returns.empty:
+        return returns.copy()
+    equity = (1.0 + returns).cumprod()
+    peak = equity.cummax()
+    return (equity - peak) / peak
