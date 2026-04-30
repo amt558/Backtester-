@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -1480,43 +1479,12 @@ def _validate_accept_payload(payload: dict) -> Optional[str]:
 
 def handle_delete_with_status(path: str) -> tuple[str, int]:
     """DELETE dispatcher with explicit status."""
-    # Hard-delete (Research v3): atomic DB row + folder removal + JSONL audit.
-    # Distinct from the soft-archive route below (which keeps the runs row
-    # and supports /unarchive).
-    m = re.match(r"^/tradelab/runs/([^/]+)/permanent$", path)
-    if m:
-        return _delete_run_permanent(m.group(1))
-
     m = re.match(r"^/tradelab/runs/([^/]+)$", path)
     if m:
         run_id = m.group(1)
         return _delete_run(run_id)
 
     return _err("not found"), 404
-
-
-def _delete_run_permanent(run_id: str) -> tuple[str, int]:
-    """Hard-delete via run_deletion.delete_run_atomic. Broadcasts run_deleted."""
-    from tradelab.web import run_deletion
-    try:
-        manifest = run_deletion.delete_run_atomic(run_id, db_path=_db_path())
-    except run_deletion.RunNotFound:
-        return _err("run not found"), 404
-    except Exception as e:
-        print(f"[handlers] /tradelab/runs/{run_id}/permanent: "
-              f"{type(e).__name__}: {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        return _err("permanent delete failed: internal error"), 500
-    try:
-        from tradelab.web import get_broadcaster
-        get_broadcaster().broadcast({
-            "type":     "run_deleted",
-            "run_id":   manifest["run_id"],
-            "strategy": manifest["strategy"],
-        })
-    except Exception:
-        pass
-    return json.dumps(manifest), 200
 
 
 def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, int]:
@@ -1600,42 +1568,44 @@ def _qs_metrics_response(run_id: str, folder: Path) -> tuple[str, int]:
 
 
 def _delete_run(run_id: str) -> tuple[str, int]:
-    """Soft-archive a run: insert into archived_runs + remove report folder."""
+    """Hard-delete a run: DB row + report folder + JSONL audit log entry.
+
+    Idempotent: if the run is already gone (or the DB hasn't been created
+    yet) returns 204 — callers shouldn't have to distinguish "deleted now"
+    from "already deleted" for stale FE state. On success, broadcasts a
+    run_deleted SSE event for FE pipeline reconciliation (Task 16 dispatches
+    on event.type).
+
+    Behavior change (2026-04-30, Research v3): replaced the prior
+    soft-archive flow (which kept the runs row and inserted into
+    archived_runs). The /unarchive route + archive primitives still exist
+    for any legacy archived rows; nothing new lands there.
+    """
     db = _db_path()
     if not db.exists():
-        return _err("run not found"), 404
+        return "", 204  # idempotent: nothing to delete
 
-    conn = sqlite3.connect(str(db))
+    from tradelab.web import run_deletion
     try:
-        row = conn.execute(
-            "SELECT report_card_html_path FROM runs WHERE run_id = ?", (run_id,)
-        ).fetchone()
-    finally:
-        conn.close()
+        manifest = run_deletion.delete_run_atomic(run_id, db_path=db)
+    except run_deletion.RunNotFound:
+        return "", 204  # idempotent
+    except OSError as e:
+        return _err(f"folder removal failed: {e}"), 409
+    except Exception as e:
+        print(f"[handlers] _delete_run({run_id}): "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return _err("delete failed: internal error"), 500
 
-    if row is None:
-        return _err("run not found"), 404
-
-    # Resolve the run's report folder. We only act on paths that resolve to
-    # a real file (folder = its parent) or a real directory. A stale path
-    # whose parent happens to exist is intentionally ignored — falling back
-    # to `parent` could rmtree a directory holding other runs' artifacts
-    # (e.g. _reports_root() itself on an idempotent second delete).
-    report_path_str = row[0]
-    folder: Path | None = None
-    if report_path_str:
-        p = Path(report_path_str)
-        if p.is_file():
-            folder = p.parent
-        elif p.is_dir():
-            folder = p
-
-    if folder and folder.exists():
-        try:
-            shutil.rmtree(folder)
-        except OSError as e:
-            return _err(f"folder removal failed: {e}"), 409
-
-    archive.archive_run(run_id, reason="user_delete", db_path=db)
+    try:
+        from tradelab.web import get_broadcaster
+        get_broadcaster().broadcast({
+            "type":     "run_deleted",
+            "run_id":   manifest["run_id"],
+            "strategy": manifest["strategy"],
+        })
+    except Exception:
+        pass
 
     return "", 204

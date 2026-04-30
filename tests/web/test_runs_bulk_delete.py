@@ -42,6 +42,7 @@ def test_bulk_delete_all_success(tmp_path: Path, monkeypatch) -> None:
         folders.append(f)
         _seed_run(db, f"run-{i}", str(f))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.chdir(tmp_path)  # cwd-relative deletions.log
 
     body, status = handlers.handle_post_with_status(
         "/tradelab/runs/bulk-delete",
@@ -55,12 +56,20 @@ def test_bulk_delete_all_success(tmp_path: Path, monkeypatch) -> None:
         assert not f.exists()
 
 
-def test_bulk_delete_unknown_id_lands_in_failed(tmp_path: Path, monkeypatch) -> None:
+def test_bulk_delete_unknown_id_treated_as_success_idempotent(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Under hard-delete-with-idempotency (Research v3, 2026-04-30), the
+    single-row DELETE returns 204 for unknown ids, so bulk-delete reports
+    them as deleted. The prior soft-archive contract returned 404 → failed,
+    but with stale FE state that produced spurious "run not found" errors
+    on resources the user already knew were gone."""
     db = tmp_path / "history.db"
     f = tmp_path / "reports" / "r0"
     f.mkdir(parents=True)
     _seed_run(db, "run-0", str(f))
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.chdir(tmp_path)
 
     body, status = handlers.handle_post_with_status(
         "/tradelab/runs/bulk-delete",
@@ -68,13 +77,14 @@ def test_bulk_delete_unknown_id_lands_in_failed(tmp_path: Path, monkeypatch) -> 
     )
     assert status == 200
     payload = json.loads(body)
-    assert payload["deleted"] == ["run-0"]
-    assert payload["failed"] == [{"id": "run-missing", "reason": "run not found"}]
+    assert sorted(payload["deleted"]) == ["run-0", "run-missing"]
+    assert payload["failed"] == []
 
 
 def test_bulk_delete_empty_request(tmp_path: Path, monkeypatch) -> None:
     db = tmp_path / "history.db"
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.chdir(tmp_path)
 
     body, status = handlers.handle_post_with_status(
         "/tradelab/runs/bulk-delete",
