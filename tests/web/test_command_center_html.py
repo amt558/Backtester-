@@ -492,3 +492,80 @@ def test_v3_body_class_toggle_in_switch_tab(html: str) -> None:
     assert "tabName === 'research'" in chunk or "tabName==='research'" in chunk, (
         "switchTab must gate the research-v3 body class on tabName === 'research'"
     )
+
+
+# ─── Action bar (Task 8) ───────────────────────────────────────────────
+
+
+def test_action_bar_preserves_protected_button_ids(html: str) -> None:
+    """Existing v2 click handlers bind to the camelCase button IDs. Renaming
+    them (which the plan body suggested) would break Refresh Data, New
+    Strategy, and Score modal triggers. Buttons keep IDs; CSS class flips
+    to ab-btn / ab-btn primary."""
+    for btn_id in ("preflightRefreshBtn", "preflightNewStrategyBtn", "scoreNewStrategyBtn"):
+        assert f'id="{btn_id}"' in html, f"protected button ID {btn_id!r} missing"
+
+
+def test_action_bar_preserves_preflight_chip_ids(html: str) -> None:
+    """Preflight chip IDs are read by researchLoadPreflight() and the
+    PREFLIGHT_KEYS table. Note: the plan body wrote preflight-strategies
+    (plural) but the actual existing ID is preflight-strategy (singular).
+    Singular wins; that's the one the JS handler keys off."""
+    for chip_id in (
+        "preflight-universe", "preflight-cache", "preflight-strategy", "preflight-tdapi",
+    ):
+        assert f'id="{chip_id}"' in html, f"protected preflight chip ID {chip_id!r} missing"
+
+
+def test_action_bar_uses_v3_classes_on_protected_buttons(html: str) -> None:
+    """Protected buttons MUST use v3 .ab-btn class so the editorial styling
+    applies. Refresh Data is the primary action so it gets .ab-btn.primary."""
+    refresh_idx = html.find('id="preflightRefreshBtn"')
+    assert refresh_idx > 0
+    refresh_tag = html[refresh_idx - 200:refresh_idx + 200]
+    assert "ab-btn primary" in refresh_tag, (
+        "preflightRefreshBtn must carry the v3 .ab-btn.primary class"
+    )
+    for btn_id in ("preflightNewStrategyBtn", "scoreNewStrategyBtn"):
+        idx = html.find(f'id="{btn_id}"')
+        tag = html[idx - 200:idx + 200]
+        assert "ab-btn" in tag, f"{btn_id} missing .ab-btn class"
+
+
+def test_action_bar_has_calibration_trust_chip(html: str) -> None:
+    """New chip carrying the 0..1 trust score derived from
+    /tradelab/calibration-summary."""
+    assert 'id="calibration-trust"' in html
+    # Helper that fills the chip must exist.
+    assert "function updateCalibrationTrustChip" in html, (
+        "updateCalibrationTrustChip function missing — chip never populates"
+    )
+    # And it must be invoked from loadCalibrationSummary so it actually fires.
+    cs_idx = html.find("async function loadCalibrationSummary")
+    assert cs_idx > 0
+    chunk = html[cs_idx:cs_idx + 2500]
+    assert "updateCalibrationTrustChip(" in chunk, (
+        "loadCalibrationSummary must invoke updateCalibrationTrustChip"
+    )
+
+
+def test_action_bar_has_canary_status_icon(html: str) -> None:
+    """⚠ icon hidden by default; renderCanaryGrid toggles it visible when
+    any canary status === 'MISMATCH'. Hidden attribute must be present at
+    page load (no flash of warning before data resolves)."""
+    icon_idx = html.find('id="canary-status-icon"')
+    assert icon_idx > 0
+    icon_tag = html[icon_idx - 200:icon_idx + 200]
+    assert "hidden" in icon_tag, "canary-status-icon must start hidden"
+    assert "canary-icon" in icon_tag, "canary-status-icon must carry .canary-icon class"
+    # And renderCanaryGrid must toggle it. Read until the next function so
+    # we don't accidentally exclude code at the end of the function.
+    rg_idx = html.find("function renderCanaryGrid")
+    assert rg_idx > 0
+    end = html.find("\n    function ", rg_idx + 30)
+    if end < 0:
+        end = rg_idx + 6000
+    chunk = html[rg_idx:end]
+    assert "canary-status-icon" in chunk, (
+        "renderCanaryGrid must reference the new icon to toggle visibility"
+    )
