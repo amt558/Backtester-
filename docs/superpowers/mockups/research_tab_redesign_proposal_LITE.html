@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Research Tab — Validation Redesign LITE (Adjustments 1+2 Applied)</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --panel-3: #232838;
+    --border: #2a2f3e;
+    --border-2: #353b4d;
+    --text: #e4e6eb;
+    --text-dim: #9aa0ac;
+    --text-faint: #6b7280;
+    --accent: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --new: #a78bfa;
+    --gate: #06b6d4;
+    --dropped: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+  body { padding: 24px 32px 80px; max-width: 1480px; margin: 0 auto; }
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+  h3 { font-size: 13px; color: var(--text-dim); letter-spacing: 0.03em; text-transform: uppercase; }
+
+  .page-header { padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  .page-header .subtitle { color: var(--text-dim); font-size: 13px; margin-top: 6px; }
+
+  .version-banner { background: linear-gradient(135deg, rgba(245, 158, 11, 0.1), rgba(239, 68, 68, 0.05)); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; }
+  .version-banner h3 { color: var(--amber); margin-bottom: 6px; }
+  .version-banner .label { font-size: 11px; color: var(--amber); text-transform: uppercase; letter-spacing: 0.06em; }
+  .version-banner .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 10px; font-size: 12px; }
+  .version-banner .col { padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+  .version-banner .col strong { color: var(--text); }
+  .version-banner .col ul { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; color: var(--text-dim); }
+  .version-banner .col.dropped { opacity: 0.85; }
+  .version-banner .col.dropped strong { color: var(--dropped); }
+
+  .new-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(167, 139, 250, 0.15); color: var(--new); border: 1px solid rgba(167, 139, 250, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+  .gate-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(6, 182, 212, 0.15); color: var(--gate); border: 1px solid rgba(6, 182, 212, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; }
+  .dropped-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(107, 114, 128, 0.15); color: var(--dropped); border: 1px dashed rgba(107, 114, 128, 0.5); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+
+  .legend { display: flex; gap: 20px; padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; font-size: 12px; color: var(--text-dim); margin-bottom: 24px; flex-wrap: wrap; }
+  .legend strong { color: var(--text); }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .panel-header .title { display: flex; align-items: center; gap: 8px; }
+  .panel-header .actions { display: flex; gap: 8px; font-size: 12px; color: var(--text-dim); }
+
+  /* Regime banner — SCALED DOWN: no per-strategy fit cell */
+  .regime-banner { background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(59, 130, 246, 0.08)); border-left: 3px solid var(--accent); }
+  .regime-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .regime-cell .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .regime-cell .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .regime-cell .meta { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  /* Calibration banner */
+  .calibration { background: rgba(245, 158, 11, 0.06); border-left: 3px solid var(--amber); }
+  .calibration .stat-row { display: flex; gap: 24px; align-items: center; margin-top: 4px; }
+  .calibration .stat { display: flex; flex-direction: column; }
+  .calibration .stat .num { font-size: 20px; font-weight: 600; color: var(--amber); }
+  .calibration .stat .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .calibration .recommend { margin-left: auto; padding: 6px 12px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; font-size: 12px; color: var(--amber); }
+
+  /* Live cards row */
+  .cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .strategy-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .strategy-card .card-name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .strategy-card .card-name .stale { font-size: 10px; color: var(--text-faint); margin-left: 6px; font-weight: 400; }
+  .strategy-card .verdict-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .verdict-pill { display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; border-radius: 4px; }
+  .verdict-pill.robust { background: rgba(34, 197, 94, 0.15); color: var(--accent); border: 1px solid rgba(34, 197, 94, 0.3); }
+  .verdict-pill.fragile { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .strategy-card .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 11px; margin: 6px 0; }
+  .strategy-card .metrics .k { color: var(--text-dim); }
+  .strategy-card .metrics .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .strategy-card .health-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px dashed var(--border-2); border-bottom: 1px dashed var(--border-2); margin: 8px 0; font-size: 11px; }
+  .strategy-card .health-row .lbl { color: var(--text-faint); text-transform: uppercase; font-size: 9px; letter-spacing: 0.05em; }
+  .te-bar { display: inline-flex; gap: 2px; }
+  .te-bar span { width: 8px; height: 12px; background: var(--border-2); border-radius: 1px; }
+  .te-bar.green span:nth-child(-n+4) { background: var(--accent); }
+  .te-bar.amber span:nth-child(-n+3) { background: var(--amber); }
+  .te-bar.red span:nth-child(-n+1) { background: var(--red); }
+  .ks-tag { font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; font-variant-numeric: tabular-nums; }
+  .ks-tag.ok { background: rgba(34, 197, 94, 0.15); color: var(--accent); }
+  .ks-tag.warn { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+  .ks-tag.fail { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+  .review-tag { display: inline-block; padding: 2px 6px; font-size: 9px; font-weight: 600; background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 3px; letter-spacing: 0.05em; }
+  .strategy-card .actions-row { display: flex; gap: 4px; margin-top: 6px; }
+  .strategy-card .actions-row button { flex: 1; padding: 4px 0; background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 4px; color: var(--text); font-size: 11px; cursor: pointer; }
+  .strategy-card .actions-row button:hover { background: var(--border-2); }
+
+  .sparkline { height: 18px; width: 100%; }
+  .sparkline path { fill: none; stroke-width: 1.5; }
+  .sparkline .stable { stroke: var(--text-dim); }
+  .sparkline .declining { stroke: var(--amber); }
+  .sparkline .dying { stroke: var(--red); }
+
+  /* Portfolio health */
+  .portfolio-health { background: var(--panel); border-left: 3px solid var(--blue); }
+  .ph-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .ph-cell { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .ph-cell .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ph-cell .value { font-size: 18px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .ph-cell .value.warn { color: var(--amber); }
+  .ph-cell .value.ok { color: var(--accent); }
+  .ph-cell .detail { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  /* Pipeline */
+  table.pipeline { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.pipeline th { text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
+  table.pipeline td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  table.pipeline tr:hover td { background: rgba(255, 255, 255, 0.02); }
+  th.new-col, td.new-col { background: rgba(167, 139, 250, 0.04); }
+  .gate-cell.pass { color: var(--accent); }
+  .gate-cell.fail { color: var(--red); }
+  .gate-cell.na { color: var(--text-faint); }
+  .corr-cell { font-weight: 600; }
+  .corr-cell.ok { color: var(--accent); }
+  .corr-cell.warn { color: var(--amber); }
+  .corr-cell.fail { color: var(--red); }
+
+  .row-actions { display: flex; gap: 4px; }
+  .row-actions button { padding: 2px 8px; background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); font-size: 10px; cursor: pointer; }
+
+  /* Score modal mockup */
+  .modal-mockup { margin-top: 32px; }
+  .modal-frame { background: var(--panel); border: 1px solid var(--border-2); border-radius: 12px; max-width: 760px; margin: 0 auto; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); overflow: hidden; }
+  .modal-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .modal-header .title { font-size: 16px; font-weight: 600; }
+  .modal-header .meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .modal-body { padding: 20px 24px; }
+
+  .holdout-gate { margin-bottom: 20px; padding: 14px 16px; border-radius: 8px; border: 2px solid; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .holdout-gate.pass { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.4); }
+  .holdout-gate.fail { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.4); }
+  .holdout-gate .left { display: flex; align-items: center; gap: 12px; }
+  .holdout-gate .icon { font-size: 24px; line-height: 1; }
+  .holdout-gate .icon.pass { color: var(--accent); }
+  .holdout-gate .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+  .holdout-gate .verdict-text { font-size: 16px; font-weight: 600; }
+  .holdout-gate .verdict-text.pass { color: var(--accent); }
+  .holdout-gate .detail { text-align: right; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  .diagnostics-section { margin-bottom: 20px; }
+  .diag-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .diag-cell { padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .diag-cell .name { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .diag-cell .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .diag-cell .val.pass { color: var(--accent); }
+  .diag-cell.cat-edge { border-left: 2px solid var(--blue); }
+  .diag-cell.cat-stability { border-left: 2px solid var(--amber); }
+  .diag-cell.cat-generalization { border-left: 2px solid var(--accent); }
+
+  .relative-context { margin-bottom: 16px; padding: 10px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+  .relative-context .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .relative-context .row .anchor { color: var(--text-dim); }
+  .relative-context .row .anchor strong { color: var(--text); }
+  .relative-context .rank { color: var(--accent); font-weight: 600; }
+
+  /* Dropped section placeholder */
+  .dropped-placeholder { margin-bottom: 16px; padding: 14px; background: rgba(107, 114, 128, 0.05); border: 1px dashed var(--border-2); border-radius: 6px; text-align: center; font-size: 11px; color: var(--text-faint); }
+  .dropped-placeholder strong { color: var(--dropped); }
+
+  .portfolio-fit { margin-bottom: 16px; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .portfolio-fit .fit-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; padding: 4px 0; font-size: 12px; align-items: center; }
+  .portfolio-fit .fit-row .name { color: var(--text-dim); }
+  .portfolio-fit .fit-row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .portfolio-fit .legend-row { display: flex; gap: 16px; font-size: 10px; color: var(--text-faint); padding-bottom: 6px; border-bottom: 1px dashed var(--border-2); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .portfolio-fit .legend-row span { font-weight: 600; }
+
+  .override-panel { margin-bottom: 16px; padding: 8px 12px; background: var(--panel-2); border: 1px dashed var(--border-2); border-radius: 6px; font-size: 11px; color: var(--text-faint); }
+
+  .modal-actions { display: flex; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--panel-2); }
+  .modal-actions .spacer { flex: 1; }
+  .modal-actions button { padding: 8px 18px; font-size: 13px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-2); }
+  .modal-actions .reject { background: var(--panel-3); color: var(--text); }
+  .modal-actions .accept { background: var(--accent); color: #062c14; border-color: var(--accent); }
+
+  .annotation { padding: 12px 16px; background: rgba(167, 139, 250, 0.06); border-left: 3px solid var(--new); border-radius: 0 6px 6px 0; font-size: 12px; color: var(--text-dim); margin: 16px 0; line-height: 1.6; }
+  .annotation strong { color: var(--new); }
+  .annotation code { font-family: 'Cascadia Code', 'Consolas', monospace; background: rgba(255, 255, 255, 0.04); padding: 1px 4px; border-radius: 3px; color: var(--text); font-size: 11px; }
+
+  .annotation.dropped { background: rgba(107, 114, 128, 0.05); border-left-color: var(--dropped); }
+  .annotation.dropped strong { color: var(--dropped); }
+
+  details { margin: 16px 0; }
+  details summary { cursor: pointer; font-size: 12px; color: var(--text-dim); padding: 6px 0; }
+  details summary:hover { color: var(--text); }
+
+  .section-divider { display: flex; align-items: center; gap: 12px; margin: 32px 0 16px; }
+  .section-divider .line { flex: 1; height: 1px; background: var(--border); }
+  .section-divider .label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Research — Validation Redesign <span style="color: var(--amber);">LITE</span></h1>
+  <p class="subtitle">
+    Adjustments 1 + 2 applied. Per-strategy regime bucketing dropped. K-S divergence shown but auto-disable is warn-only.
+    Compare to <code style="background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-family: 'Cascadia Code', 'Consolas', monospace;">research_tab_redesign_proposal.html</code>.
+  </p>
+</div>
+
+<!-- VERSION COMPARISON BANNER -->
+<div class="version-banner">
+  <h3>FULL vs LITE — what's different on this page</h3>
+  <div class="compare-grid">
+    <div class="col">
+      <strong>STILL HERE (unchanged from FULL)</strong>
+      <ul>
+        <li>Hold-out gate (top of Score modal + Pipeline column)</li>
+        <li>Calibration banner</li>
+        <li>Multi-dim correlation: return ρ + DD ρ + entry-time</li>
+        <li>Decay sparkline + K-S p-value on Live cards</li>
+        <li>Relative context section in Score modal</li>
+        <li>Portfolio Health summary</li>
+        <li>Override log + verdict freshness</li>
+        <li>Current regime banner (top of page)</li>
+      </ul>
+    </div>
+    <div class="col dropped">
+      <strong>DROPPED / SOFTENED in LITE</strong>
+      <ul>
+        <li><strong>Per-strategy regime bucketing</strong> — no regime-fit tag on Live cards, no regime-fit column on Pipeline, no Regime Performance table in Score modal</li>
+        <li><strong>K-S auto-disable</strong> — replaced with "REVIEW" badge + severity=warning notify; cards never auto-flip to disabled</li>
+        <li><strong>"Strategies favored now: 7/10"</strong> cell on regime banner — depends on per-strategy bucketing, removed</li>
+      </ul>
+      <p style="margin: 8px 0 0; color: var(--text-dim); font-size: 11px;"><strong style="color: var(--text);">Saved:</strong> ~1 day build time. Statistical risk reduced. Lost: ability to glance-check regime fit per strategy + autonomous response to live divergence.</p>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><strong>Existing:</strong> already shipped or in your gameplan</span>
+  <span><span class="new-pill" style="cursor:default;">NEW</span> proposed alpha addition</span>
+  <span><span class="gate-pill">GATE</span> hard pre-Accept gate</span>
+  <span><span class="dropped-pill" style="cursor:default;">DROPPED</span> in FULL but removed in LITE</span>
+</div>
+
+<!-- =================== REGIME BANNER (SCALED DOWN) =================== -->
+<section class="panel regime-banner">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Market Regime</h2>
+      <span class="new-pill" title="Awareness only — banner shows current regime to frame all decisions on this page. Per-strategy bucketing was dropped in LITE; backtests no longer compute per-regime PF.">NEW (banner only)</span>
+    </div>
+    <div class="actions">stable 12 days · last shift 2026-04-15</div>
+  </div>
+  <div class="regime-grid">
+    <div class="regime-cell">
+      <div class="label">Volatility</div>
+      <div class="value" style="color: var(--accent);">LOW</div>
+      <div class="meta">VIX 12.4 · 30d realized 9.1%</div>
+    </div>
+    <div class="regime-cell">
+      <div class="label">Trend</div>
+      <div class="value" style="color: var(--accent);">TRENDING</div>
+      <div class="meta">SPX above 50/200 MA · ADX 28</div>
+    </div>
+    <div class="regime-cell">
+      <div class="label">Breadth</div>
+      <div class="value" style="color: var(--amber);">NARROW</div>
+      <div class="meta">42% of S&P 500 above 50d</div>
+    </div>
+  </div>
+  <div class="annotation dropped" style="margin-top: 12px; margin-bottom: 0;">
+    <strong>What FULL had here that LITE doesn't:</strong> a fourth cell ("Strategies favored now: 7 of 10") that required per-strategy regime bucketing.
+    Removed because the underlying bucketed PF on 2y of backtest data has thin sample sizes (~20-40 trades per regime per strategy) and statistical significance is weak.
+    The banner remains as contextual awareness — you'll know what regime we're in, but the system won't tell you which of your 10 cards historically thrived here.
+  </div>
+</section>
+
+<!-- =================== CALIBRATION (UNCHANGED) =================== -->
+<section class="panel calibration">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Verdict Calibration</h2>
+      <span class="new-pill" title="Becomes proportionally MORE important in LITE since it's now your main feedback signal — without per-strategy regime fit, calibration is the only thing watching whether your overall verdict bar is correct.">NEW</span>
+    </div>
+    <div class="actions">last 8 accepted cards · 90d window</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat"><div class="num">3 / 8</div><div class="label">Tracking error tripped within 30d</div></div>
+    <div class="stat"><div class="num">2 / 8</div><div class="label">Auto-disabled within 60d</div></div>
+    <div class="stat"><div class="num">+0.38</div><div class="label">Median PF gap (research → live)</div></div>
+    <div class="recommend">▶ Tighten <code>hold_out_robust_pf</code> from 1.5 → 1.7</div>
+  </div>
+</section>
+
+<!-- =================== LIVE STRATEGIES (LITE: no regime-fit tag) =================== -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Live Strategies</h2>
+      <span style="font-size: 11px; color: var(--text-faint); margin-left: 8px;">6 enabled · health refreshed 1m ago</span>
+    </div>
+  </div>
+
+  <div class="cards-row">
+    <!-- Card 1 -->
+    <div class="strategy-card">
+      <div class="card-name">viprasol-amzn-v1 <span class="stale">verdict 14d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill robust">ROBUST</span>
+        <span class="dropped-pill" style="cursor:default;" title="In FULL this said '→ regime-fit: STRONG'. Dropped in LITE.">no regime-fit</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.62</span>
+        <span class="k">WR</span><span class="v">58%</span>
+        <span class="k">DD</span><span class="v">-12.1%</span>
+        <span class="k">DSR</span><span class="v">0.83</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar green"><span></span><span></span><span></span><span></span><span></span></span>
+        <span style="color: var(--accent); font-size: 10px;">0.93</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="stable" d="M0,8 L10,9 L20,7 L30,8 L40,9 L50,8 L60,9 L70,8 L80,7 L90,8 L100,9"/>
+        </svg>
+        <span style="color: var(--text-dim); font-size: 10px;">flat</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <span></span>
+        <span class="ks-tag ok">p=0.31</span>
+      </div>
+      <div class="actions-row">
+        <button>Sig</button><button>Q</button><button>Rb</button>
+      </div>
+    </div>
+
+    <!-- Card 2 -->
+    <div class="strategy-card">
+      <div class="card-name">bos-scalp-mu-v2 <span class="stale">verdict 30d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill robust">ROBUST</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.45</span>
+        <span class="k">WR</span><span class="v">52%</span>
+        <span class="k">DD</span><span class="v">-8.7%</span>
+        <span class="k">DSR</span><span class="v">0.71</span>
+      </div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar green"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--accent); font-size: 10px;">0.97</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="stable" d="M0,9 L10,8 L20,8 L30,7 L40,8 L50,7 L60,7 L70,6 L80,7 L90,6 L100,5"/></svg><span style="color: var(--accent); font-size: 10px;">+slope</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag ok">p=0.42</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+
+    <!-- Card 3: warning, decaying — but in LITE, K-S fail does NOT auto-disable -->
+    <div class="strategy-card" style="border-color: rgba(245, 158, 11, 0.4);">
+      <div class="card-name">momentum-spy-v3 <span class="stale">verdict 67d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill robust">ROBUST</span>
+        <span class="review-tag" title="In LITE, K-S fail surfaces a REVIEW prompt instead of auto-disabling. You decide.">REVIEW NEEDED</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.51</span>
+        <span class="k">WR</span><span class="v">49%</span>
+        <span class="k">DD</span><span class="v">-15.3%</span>
+        <span class="k">DSR</span><span class="v">0.62</span>
+      </div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar amber"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--amber); font-size: 10px;">0.71</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="declining" d="M0,5 L10,5 L20,6 L30,6 L40,7 L50,8 L60,9 L70,10 L80,11 L90,12 L100,13"/></svg><span style="color: var(--amber); font-size: 10px;">−slope</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag warn">p=0.04 ⚠</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+
+    <div class="strategy-card">
+      <div class="card-name">vwap-revert-tsla</div>
+      <div class="verdict-row"><span class="verdict-pill robust">ROBUST</span></div>
+      <div class="metrics"><span class="k">PF</span><span class="v">1.38</span><span class="k">WR</span><span class="v">61%</span><span class="k">DD</span><span class="v">-9.4%</span><span class="k">DSR</span><span class="v">0.69</span></div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar green"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--accent); font-size: 10px;">0.88</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="stable" d="M0,7 L10,8 L20,7 L30,8 L40,7 L50,8 L60,7 L70,8 L80,7 L90,8 L100,7"/></svg><span style="color: var(--text-dim); font-size: 10px;">flat</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag ok">p=0.27</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+
+    <!-- Card 5: dying, K-S fail — in LITE, REVIEW NEEDED, NOT auto-disabled -->
+    <div class="strategy-card" style="border-color: rgba(239, 68, 68, 0.4);">
+      <div class="card-name">atr-breakout-nvda</div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="review-tag" style="color: var(--red); border-color: rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.15);" title="In FULL this would auto-disable. In LITE you decide — check the divergence and either disable manually or override.">REVIEW URGENT</span>
+      </div>
+      <div class="metrics"><span class="k">PF</span><span class="v">1.18</span><span class="k">WR</span><span class="v">44%</span><span class="k">DD</span><span class="v">-21.8%</span><span class="k">DSR</span><span class="v">0.41</span></div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar red"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--red); font-size: 10px;">0.43</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="dying" d="M0,3 L10,4 L20,5 L30,7 L40,8 L50,10 L60,11 L70,13 L80,14 L90,15 L100,16"/></svg><span style="color: var(--red); font-size: 10px;">dying</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag fail">p=0.001 ✗</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button style="background: var(--red); color: white;">Disable</button></div>
+    </div>
+
+    <div class="strategy-card">
+      <div class="card-name">gap-fade-qqq</div>
+      <div class="verdict-row"><span class="verdict-pill robust">ROBUST</span></div>
+      <div class="metrics"><span class="k">PF</span><span class="v">1.71</span><span class="k">WR</span><span class="v">63%</span><span class="k">DD</span><span class="v">-7.2%</span><span class="k">DSR</span><span class="v">0.91</span></div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar green"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--accent); font-size: 10px;">1.04</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="stable" d="M0,9 L10,8 L20,8 L30,9 L40,8 L50,7 L60,8 L70,7 L80,7 L90,8 L100,7"/></svg><span style="color: var(--text-dim); font-size: 10px;">flat</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag ok">p=0.51</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+  </div>
+
+  <div class="annotation dropped">
+    <strong>LITE behavior change on Live cards:</strong>
+    K-S divergence is still computed and shown, but a failure (p&lt;0.01) shows a <strong style="color: var(--red);">"REVIEW URGENT"</strong> badge instead of auto-flipping the card to disabled.
+    Notify fires at <code>severity=warning</code> instead of <code>severity=critical</code>.
+    The Disable button on the card stays clickable so you can act manually after looking at the data.
+    <br/><br/>
+    <strong>Why this matters:</strong> K-S on 30 trades is a noisy statistic; auto-disabling on a single bad p-value can mute a card during a regime transition that would self-correct.
+    Trade-off: a card that's truly broken stays live for as long as it takes you to notice the REVIEW badge.
+  </div>
+</section>
+
+<!-- =================== PORTFOLIO HEALTH (UNCHANGED) =================== -->
+<section class="panel portfolio-health">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Portfolio Health</h2>
+      <span class="new-pill">NEW</span>
+    </div>
+    <div class="actions"><a href="#" style="color: var(--blue); text-decoration: none;">▶ Open heatmap</a></div>
+  </div>
+  <div class="ph-grid">
+    <div class="ph-cell">
+      <div class="label">Return correlation (max)</div>
+      <div class="value ok">0.41</div>
+      <div class="detail">viprasol×bos-scalp · threshold 0.70</div>
+    </div>
+    <div class="ph-cell">
+      <div class="label">Drawdown correlation (max) <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></div>
+      <div class="value warn">0.78</div>
+      <div class="detail" style="color: var(--amber);">viprasol×momentum · they lose together</div>
+    </div>
+    <div class="ph-cell">
+      <div class="label">Entry-time overlap <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></div>
+      <div class="value warn">47%</div>
+      <div class="detail" style="color: var(--amber);">3 strategies fire 09:30–10:00 window</div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== PIPELINE (LITE: no regime-fit column) =================== -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Research Pipeline</h2>
+      <span style="font-size: 11px; color: var(--text-faint); margin-left: 8px;">12 of 312 runs</span>
+    </div>
+    <div class="actions">
+      <span>Filter:</span><span style="color: var(--text);">Strategy ▾ · Verdict ▾ · Date ▾</span>
+    </div>
+  </div>
+  <table class="pipeline">
+    <thead>
+      <tr>
+        <th>Strategy</th>
+        <th>Verdict</th>
+        <th class="new-col">Hold-out <span class="gate-pill">GATE</span></th>
+        <th>PF</th>
+        <th>WR</th>
+        <th>DD</th>
+        <th class="new-col">Corr <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></th>
+        <th>Trades</th>
+        <th>Date</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>test_a5</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.78</td>
+        <td>1.62</td><td>57%</td><td>-11%</td>
+        <td class="new-col"><span class="corr-cell ok">0.31</span></td>
+        <td>82</td><td>04-26</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>scalp_3</strong></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span></td>
+        <td class="new-col gate-cell fail">✗ PF 0.91</td>
+        <td>1.31</td><td>48%</td><td>-18%</td>
+        <td class="new-col"><span class="corr-cell ok">0.22</span></td>
+        <td>120</td><td>04-25</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>mean_revert_v2</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.62</td>
+        <td>1.55</td><td>61%</td><td>-9%</td>
+        <td class="new-col"><span class="corr-cell fail">0.84</span></td>
+        <td>98</td><td>04-25</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr style="background: rgba(239, 68, 68, 0.04);">
+        <td><strong>regime_rotor</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell fail">✗ PF 1.05</td>
+        <td>1.49</td><td>54%</td><td>-13%</td>
+        <td class="new-col"><span class="corr-cell ok">0.18</span></td>
+        <td>72</td><td>04-24</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>vwap_pullback</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.71</td>
+        <td>1.68</td><td>59%</td><td>-8%</td>
+        <td class="new-col"><span class="corr-cell warn">0.62</span></td>
+        <td>104</td><td>04-23</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="annotation dropped">
+    <strong>LITE Pipeline drop:</strong> the FULL version had a <strong style="color: var(--text);">Regime fit</strong> column between Corr and Trades, tagging each candidate STRONG / WEAK / POOR based on per-regime PF in the current regime.
+    Removed in LITE. You'll see correlation and hold-out gate info, but you won't see "this candidate would have lost in current conditions" until you open the Score modal — and even there, it's only via the Hold-out gate, not regime decomposition.
+  </div>
+</section>
+
+<!-- =================== SCORE MODAL (LITE: no Regime Performance section) =================== -->
+<div class="section-divider">
+  <div class="line"></div>
+  <span class="label">Score modal — LITE version</span>
+  <div class="line"></div>
+</div>
+
+<div class="modal-mockup">
+  <div class="modal-frame">
+    <div class="modal-header">
+      <div>
+        <div class="title">test_a5 · run #2026-04-26-1423</div>
+        <div class="meta">SPY 5m · 2y backtest · Robustness gauntlet</div>
+      </div>
+      <span class="verdict-pill robust">ROBUST</span>
+    </div>
+
+    <div class="modal-body">
+
+      <div class="holdout-gate pass">
+        <div class="left">
+          <div class="icon pass">●</div>
+          <div>
+            <div class="label">Hold-out OOS Gate <span class="gate-pill">GATE</span></div>
+            <div class="verdict-text pass">PASS</div>
+          </div>
+        </div>
+        <div class="detail">
+          PF <strong style="color: var(--accent); font-size: 14px;">1.78</strong> on untouched 6mo window<br/>
+          threshold ≥ 1.50 · 23 trades
+        </div>
+      </div>
+
+      <div class="diagnostics-section">
+        <h3>Diagnostics (9 robustness signals)</h3>
+        <div class="diag-grid">
+          <div class="diag-cell cat-edge"><span class="name">DSR</span><span class="val pass">0.83 ✓</span></div>
+          <div class="diag-cell cat-edge"><span class="name">PF (OOS)</span><span class="val pass">1.62 ✓</span></div>
+          <div class="diag-cell cat-edge"><span class="name">Sharpe</span><span class="val pass">1.41 ✓</span></div>
+          <div class="diag-cell cat-stability"><span class="name">CSCV</span><span class="val pass">P 22 ✓</span></div>
+          <div class="diag-cell cat-stability"><span class="name">MC drawdown</span><span class="val pass">P95 -16% ✓</span></div>
+          <div class="diag-cell cat-stability"><span class="name">Returns shuffle</span><span class="val pass">+8σ ✓</span></div>
+          <div class="diag-cell cat-generalization"><span class="name">WFE</span><span class="val pass">0.71 ✓</span></div>
+          <div class="diag-cell cat-generalization"><span class="name">Jackknife</span><span class="val pass">σ 0.12 ✓</span></div>
+          <div class="diag-cell cat-generalization"><span class="name">Noise band</span><span class="val pass">passes ✓</span></div>
+        </div>
+      </div>
+
+      <div class="relative-context">
+        <h3 style="margin-bottom: 6px;">Relative context <span class="new-pill" style="cursor:default;">NEW</span></h3>
+        <div class="row"><span class="anchor">Hold-out PF <strong>1.78</strong></span><span class="rank">#2 of 7 · live median 1.45 · worst 1.22</span></div>
+        <div class="row"><span class="anchor">DSR <strong>0.83</strong></span><span class="rank">#1 of 7 · live median 0.71 · worst 0.41</span></div>
+        <div class="row"><span class="anchor">DD <strong>-11%</strong></span><span class="rank">#3 of 7 · live median -10.1% · worst -21.8%</span></div>
+      </div>
+
+      <!-- DROPPED in LITE: Regime Performance table -->
+      <div class="dropped-placeholder">
+        <strong>[Regime Performance table — DROPPED in LITE]</strong><br/>
+        FULL version showed per-regime PF (low-vol trending / low-vol ranging / high-vol trending / high-vol ranging) with bars and current-regime tag.<br/>
+        Removed because per-regime trade samples were thin (~9-42 trades per bucket). Current regime banner at top of page provides framing instead.
+      </div>
+
+      <div class="portfolio-fit">
+        <h3 style="margin-bottom: 8px;">Portfolio fit <span class="gate-pill">GATE</span></h3>
+        <div class="legend-row">
+          <span style="flex: 1;">Live card</span>
+          <span style="width: 60px; text-align: right;">Return ρ</span>
+          <span style="width: 60px; text-align: right;">DD ρ <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+          <span style="width: 60px; text-align: right;">Entry overlap <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        </div>
+        <div class="fit-row"><span class="name">viprasol-amzn-v1</span><span class="val" style="color: var(--accent);">0.31</span><span class="val" style="color: var(--accent);">0.28</span><span class="val" style="color: var(--accent);">12%</span></div>
+        <div class="fit-row"><span class="name">bos-scalp-mu-v2</span><span class="val" style="color: var(--accent);">0.22</span><span class="val" style="color: var(--accent);">0.34</span><span class="val" style="color: var(--accent);">8%</span></div>
+        <div class="fit-row"><span class="name">momentum-spy-v3</span><span class="val" style="color: var(--amber);">0.58</span><span class="val" style="color: var(--amber);">0.65</span><span class="val" style="color: var(--accent);">21%</span></div>
+        <div class="fit-row"><span class="name">vwap-revert-tsla</span><span class="val" style="color: var(--accent);">0.19</span><span class="val" style="color: var(--accent);">0.22</span><span class="val" style="color: var(--accent);">9%</span></div>
+        <div class="fit-row"><span class="name">gap-fade-qqq</span><span class="val" style="color: var(--accent);">0.27</span><span class="val" style="color: var(--accent);">0.31</span><span class="val" style="color: var(--accent);">14%</span></div>
+        <div style="font-size: 11px; color: var(--text-dim); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-2);">
+          Max return ρ: 0.58 · Max DD ρ: 0.65 · Max entry overlap: 21% · <strong style="color: var(--accent);">All gates pass</strong>
+        </div>
+      </div>
+
+      <div class="override-panel">
+        <strong>Override log:</strong> none. <span class="new-pill" style="cursor:default;">NEW</span>
+      </div>
+
+    </div>
+
+    <div class="modal-actions">
+      <button class="reject">Reject</button>
+      <div class="spacer"></div>
+      <button class="accept">Accept → Live</button>
+    </div>
+  </div>
+</div>
+
+<!-- =================== DECISION MATRIX =================== -->
+<div class="section-divider">
+  <div class="line"></div>
+  <span class="label">Pick the version</span>
+  <div class="line"></div>
+</div>
+
+<details open>
+  <summary><strong>Decision matrix — FULL vs LITE side by side</strong></summary>
+  <div style="margin-top: 12px;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+      <thead>
+        <tr>
+          <th style="text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); width: 30%;">Capability</th>
+          <th style="text-align: center; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text);">FULL</th>
+          <th style="text-align: center; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--amber);">LITE</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Hold-out as gate (Pipeline + Score modal)</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Multi-dim correlation (return + DD + entry-time)</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Calibration banner</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Decay sparkline + K-S divergence shown on Live cards</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Relative context in Score modal</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Override log + verdict freshness</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);">Current regime banner (top of page)</td><td style="text-align: center;">✓</td><td style="text-align: center;">✓</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>Per-strategy regime fit on Live cards</strong></td><td style="text-align: center; color: var(--accent);">✓</td><td style="text-align: center; color: var(--dropped);">—</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>Per-regime PF table in Score modal</strong></td><td style="text-align: center; color: var(--accent);">✓</td><td style="text-align: center; color: var(--dropped);">—</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>Regime-fit column on Pipeline</strong></td><td style="text-align: center; color: var(--accent);">✓</td><td style="text-align: center; color: var(--dropped);">—</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>"Strategies favored now" stat on regime banner</strong></td><td style="text-align: center; color: var(--accent);">✓</td><td style="text-align: center; color: var(--dropped);">—</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>K-S fail → auto-disable card</strong></td><td style="text-align: center; color: var(--accent);">✓</td><td style="text-align: center; color: var(--amber);">REVIEW only</td></tr>
+        <tr style="background: rgba(245, 158, 11, 0.04);"><td style="padding: 6px 12px; border-bottom: 1px solid var(--border);"><strong>Notify severity on K-S fail</strong></td><td style="text-align: center;">critical</td><td style="text-align: center; color: var(--amber);">warning</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border); font-weight: 600;">Build effort</td><td style="text-align: center;">~6 days</td><td style="text-align: center;">~5 days</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border); font-weight: 600;">Statistical risk (false confidence from thin samples)</td><td style="text-align: center; color: var(--amber);">moderate</td><td style="text-align: center; color: var(--accent);">lower</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border); font-weight: 600;">Operational risk (false auto-disable)</td><td style="text-align: center; color: var(--amber);">moderate</td><td style="text-align: center; color: var(--accent);">none (manual)</td></tr>
+        <tr><td style="padding: 6px 12px; border-bottom: 1px solid var(--border); font-weight: 600;">Decision-quality gain</td><td style="text-align: center; color: var(--accent);">strong</td><td style="text-align: center; color: var(--accent);">strong</td></tr>
+        <tr><td style="padding: 6px 12px; font-weight: 600;">Action-completeness (catches problems autonomously)</td><td style="text-align: center; color: var(--accent);">stronger</td><td style="text-align: center; color: var(--amber);">weaker (you decide)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</details>
+
+<details open style="margin-top: 24px;">
+  <summary><strong>The honest read</strong></summary>
+  <div class="annotation" style="margin-top: 8px;">
+    <strong>Pick FULL if:</strong> you trust automated guardrails to act when you're not at the desk, you want maximum information density, and you accept that some signals (per-regime PF, K-S auto-disable) may fire on thin statistical samples.
+    <br/><br/>
+    <strong>Pick LITE if:</strong> you'd rather make every kill-decision yourself based on the data shown, you trust your own pattern recognition over machine-driven thresholds, and you want to see what the system says before letting it act.
+    <br/><br/>
+    <strong>Most realistic third option:</strong> ship LITE first (5 days), live with it for 30-60 days, then decide whether to add FULL's two extras (per-strategy regime fit + K-S auto-disable) based on what the calibration banner is telling you.
+    Calibration tells you whether your judgment alone is enough; if it shows you're missing decay events the system should have caught, then you upgrade to FULL.
+  </div>
+</details>
+
+<div style="text-align: center; padding: 32px 0; color: var(--text-faint); font-size: 11px;">
+  Static mockup · LITE version (adjustments 1+2) · file:///C:/TradingScripts/tradelab/docs/superpowers/mockups/research_tab_redesign_proposal_LITE.html
+</div>
+
+</body>
+</html>

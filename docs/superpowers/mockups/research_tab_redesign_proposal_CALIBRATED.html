@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Research Tab — Validation Redesign CALIBRATED (v3)</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --panel-3: #232838;
+    --border: #2a2f3e;
+    --border-2: #353b4d;
+    --text: #e4e6eb;
+    --text-dim: #9aa0ac;
+    --text-faint: #6b7280;
+    --accent: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --new: #a78bfa;
+    --gate: #06b6d4;
+    --dropped: #6b7280;
+    --confound: #ec4899;
+    --canary: #14b8a6;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+  body { padding: 24px 32px 80px; max-width: 1480px; margin: 0 auto; }
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+  h3 { font-size: 13px; color: var(--text-dim); letter-spacing: 0.03em; text-transform: uppercase; }
+
+  .page-header { padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+  .page-header h1 .version { display: inline-block; font-size: 12px; padding: 2px 8px; background: rgba(20, 184, 166, 0.15); color: var(--canary); border: 1px solid rgba(20, 184, 166, 0.4); border-radius: 4px; margin-left: 10px; vertical-align: middle; letter-spacing: 0.05em; }
+  .page-header .subtitle { color: var(--text-dim); font-size: 13px; margin-top: 6px; line-height: 1.6; }
+
+  .new-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(167, 139, 250, 0.15); color: var(--new); border: 1px solid rgba(167, 139, 250, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+  .gate-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(6, 182, 212, 0.15); color: var(--gate); border: 1px solid rgba(6, 182, 212, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; }
+  .confound-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(236, 72, 153, 0.15); color: var(--confound); border: 1px solid rgba(236, 72, 153, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+  .canary-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(20, 184, 166, 0.15); color: var(--canary); border: 1px solid rgba(20, 184, 166, 0.4); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+  .dropped-pill { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em; background: rgba(107, 114, 128, 0.15); color: var(--dropped); border: 1px dashed rgba(107, 114, 128, 0.5); border-radius: 4px; vertical-align: middle; margin-left: 6px; cursor: help; }
+
+  /* Version-comparison banner */
+  .version-banner { background: linear-gradient(135deg, rgba(20, 184, 166, 0.08), rgba(167, 139, 250, 0.05)); border: 1px solid rgba(20, 184, 166, 0.3); border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; }
+  .version-banner h3 { color: var(--canary); margin-bottom: 8px; }
+  .version-banner .compare-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-top: 10px; font-size: 11px; }
+  .version-banner .col { padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+  .version-banner .col strong { color: var(--text); font-size: 12px; }
+  .version-banner .col ul { margin: 6px 0 0; padding-left: 16px; line-height: 1.6; color: var(--text-dim); }
+  .version-banner .col.this { border-color: rgba(20, 184, 166, 0.5); background: rgba(20, 184, 166, 0.05); }
+  .version-banner .col.this strong { color: var(--canary); }
+
+  .legend { display: flex; gap: 16px; padding: 12px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; font-size: 11px; color: var(--text-dim); margin-bottom: 24px; flex-wrap: wrap; }
+  .legend strong { color: var(--text); }
+
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .panel-header .title { display: flex; align-items: center; gap: 8px; }
+  .panel-header .actions { display: flex; gap: 8px; font-size: 12px; color: var(--text-dim); }
+
+  /* §1 CONFOUND PANEL — most prominent */
+  .confound-panel { background: linear-gradient(135deg, rgba(236, 72, 153, 0.08), rgba(239, 68, 68, 0.04)); border: 2px solid rgba(236, 72, 153, 0.4); }
+  .confound-panel .lead { font-size: 13px; color: var(--text); margin-bottom: 12px; line-height: 1.6; }
+  .confound-panel .lead strong { color: var(--confound); }
+  .confound-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .confound-table th { text-align: left; padding: 6px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
+  .confound-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .confound-status { font-weight: 600; font-size: 11px; padding: 2px 8px; border-radius: 4px; display: inline-block; }
+  .confound-status.matched { background: rgba(34, 197, 94, 0.15); color: var(--accent); border: 1px solid rgba(34, 197, 94, 0.3); }
+  .confound-status.divergent { background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+  .confound-status.missing { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .confound-action { padding: 8px 12px; background: rgba(236, 72, 153, 0.1); border-left: 3px solid var(--confound); border-radius: 4px; margin-top: 12px; font-size: 12px; color: var(--text); }
+
+  /* Canary panel */
+  .canary-panel { background: rgba(20, 184, 166, 0.04); border-left: 3px solid var(--canary); }
+  .canary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
+  .canary-cell { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .canary-cell .name { font-size: 12px; font-weight: 600; color: var(--text); }
+  .canary-cell .expected { font-size: 10px; color: var(--text-faint); margin-top: 2px; }
+  .canary-cell .actual { font-size: 14px; font-weight: 600; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .canary-cell .actual.match { color: var(--accent); }
+  .canary-cell .actual.miss { color: var(--red); }
+  .canary-cell .last-run { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+
+  /* Regime banner — LITE behavior */
+  .regime-banner { background: linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(59, 130, 246, 0.08)); border-left: 3px solid var(--accent); }
+  .regime-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .regime-cell .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .regime-cell .value { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .regime-cell .meta { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  /* Verdict accuracy loop — calibration + per-signal hit rate */
+  .calibration-panel { background: rgba(245, 158, 11, 0.06); border-left: 3px solid var(--amber); }
+  .calibration-panel .stat-row { display: flex; gap: 24px; align-items: center; margin: 4px 0 16px; padding-bottom: 14px; border-bottom: 1px dashed var(--border-2); }
+  .calibration-panel .stat { display: flex; flex-direction: column; }
+  .calibration-panel .stat .num { font-size: 22px; font-weight: 600; color: var(--amber); font-variant-numeric: tabular-nums; }
+  .calibration-panel .stat .num.dim { color: var(--text-dim); font-size: 14px; padding-top: 4px; }
+  .calibration-panel .stat .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .calibration-panel .recommend { margin-left: auto; padding: 6px 12px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; font-size: 12px; color: var(--amber); max-width: 300px; }
+
+  .hit-rate-section h3 { margin-bottom: 8px; }
+  .hit-rate-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .hit-rate-table th { text-align: left; padding: 6px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
+  .hit-rate-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  .hit-rate-table .signal-name { font-weight: 600; }
+  .hit-rate-table .cat-edge { color: var(--blue); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hit-rate-table .cat-stability { color: var(--amber); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hit-rate-table .cat-generalization { color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .hit-rate-table .insufficient { color: var(--text-faint); font-style: italic; }
+  .hit-rate-table .predictive { color: var(--accent); font-weight: 600; }
+  .hit-rate-table .questionable { color: var(--amber); font-weight: 600; }
+  .hit-rate-table .noisy { color: var(--red); font-weight: 600; }
+
+  /* Live strategy cards */
+  .cards-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .strategy-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .strategy-card .card-name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .strategy-card .card-name .stale { font-size: 10px; color: var(--text-faint); margin-left: 6px; font-weight: 400; }
+  .strategy-card .verdict-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+  .verdict-pill { display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 600; letter-spacing: 0.05em; border-radius: 4px; }
+  .verdict-pill.robust { background: rgba(34, 197, 94, 0.15); color: var(--accent); border: 1px solid rgba(34, 197, 94, 0.3); }
+  .verdict-pill.fragile { background: rgba(239, 68, 68, 0.15); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.3); }
+  .verdict-pill.unscored { background: rgba(107, 114, 128, 0.15); color: var(--dropped); border: 1px dashed rgba(107, 114, 128, 0.4); }
+  .strategy-card .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 11px; margin: 6px 0; }
+  .strategy-card .metrics .k { color: var(--text-dim); }
+  .strategy-card .metrics .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .strategy-card .health-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px dashed var(--border-2); border-bottom: 1px dashed var(--border-2); margin: 8px 0; font-size: 11px; }
+  .strategy-card .health-row .lbl { color: var(--text-faint); text-transform: uppercase; font-size: 9px; letter-spacing: 0.05em; }
+  .te-bar { display: inline-flex; gap: 2px; }
+  .te-bar span { width: 8px; height: 12px; background: var(--border-2); border-radius: 1px; }
+  .te-bar.green span:nth-child(-n+4) { background: var(--accent); }
+  .te-bar.amber span:nth-child(-n+3) { background: var(--amber); }
+  .te-bar.red span:nth-child(-n+1) { background: var(--red); }
+  .ks-tag { font-size: 10px; font-weight: 600; padding: 1px 5px; border-radius: 3px; font-variant-numeric: tabular-nums; }
+  .ks-tag.ok { background: rgba(34, 197, 94, 0.15); color: var(--accent); }
+  .ks-tag.warn { background: rgba(245, 158, 11, 0.15); color: var(--amber); }
+  .ks-tag.fail { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+  .ks-tag.warming { background: rgba(107, 114, 128, 0.15); color: var(--dropped); font-style: italic; }
+  .review-tag { display: inline-block; padding: 2px 6px; font-size: 9px; font-weight: 600; background: rgba(245, 158, 11, 0.15); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 3px; letter-spacing: 0.05em; }
+  .review-tag.urgent { background: rgba(239, 68, 68, 0.15); color: var(--red); border-color: rgba(239, 68, 68, 0.4); }
+  .confound-tag { display: inline-block; padding: 1px 5px; font-size: 9px; font-weight: 600; background: rgba(236, 72, 153, 0.15); color: var(--confound); border: 1px solid rgba(236, 72, 153, 0.4); border-radius: 3px; letter-spacing: 0.05em; }
+  .strategy-card .actions-row { display: flex; gap: 4px; margin-top: 6px; }
+  .strategy-card .actions-row button { flex: 1; padding: 4px 0; background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 4px; color: var(--text); font-size: 11px; cursor: pointer; }
+  .strategy-card .actions-row button:hover { background: var(--border-2); }
+
+  .sparkline { height: 18px; width: 100%; }
+  .sparkline path { fill: none; stroke-width: 1.5; }
+  .sparkline .stable { stroke: var(--text-dim); }
+  .sparkline .declining { stroke: var(--amber); }
+  .sparkline .dying { stroke: var(--red); }
+
+  /* Portfolio health */
+  .portfolio-health { background: var(--panel); border-left: 3px solid var(--blue); }
+  .ph-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .ph-cell { padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .ph-cell .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .ph-cell .value { font-size: 18px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .ph-cell .value.warn { color: var(--amber); }
+  .ph-cell .value.ok { color: var(--accent); }
+  .ph-cell .detail { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  /* Pipeline */
+  table.pipeline { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  table.pipeline th { text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-dim); border-bottom: 1px solid var(--border); font-weight: 600; }
+  table.pipeline td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+  table.pipeline tr:hover td { background: rgba(255, 255, 255, 0.02); }
+  th.new-col, td.new-col { background: rgba(167, 139, 250, 0.04); }
+  .gate-cell.pass { color: var(--accent); }
+  .gate-cell.fail { color: var(--red); }
+  .gate-cell.na { color: var(--text-faint); }
+  .corr-cell { font-weight: 600; }
+  .corr-cell.ok { color: var(--accent); }
+  .corr-cell.warn { color: var(--amber); }
+  .corr-cell.fail { color: var(--red); }
+
+  .row-actions { display: flex; gap: 4px; }
+  .row-actions button { padding: 2px 8px; background: var(--panel-3); border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); font-size: 10px; cursor: pointer; }
+
+  /* Score modal mockup */
+  .modal-mockup { margin-top: 32px; }
+  .modal-frame { background: var(--panel); border: 1px solid var(--border-2); border-radius: 12px; max-width: 760px; margin: 0 auto; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); overflow: hidden; }
+  .modal-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .modal-header .title { font-size: 16px; font-weight: 600; }
+  .modal-header .meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .modal-body { padding: 20px 24px; }
+
+  .holdout-gate { margin-bottom: 20px; padding: 14px 16px; border-radius: 8px; border: 2px solid; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .holdout-gate.pass { background: rgba(34, 197, 94, 0.08); border-color: rgba(34, 197, 94, 0.4); }
+  .holdout-gate .left { display: flex; align-items: center; gap: 12px; }
+  .holdout-gate .icon { font-size: 24px; line-height: 1; }
+  .holdout-gate .icon.pass { color: var(--accent); }
+  .holdout-gate .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+  .holdout-gate .verdict-text { font-size: 16px; font-weight: 600; }
+  .holdout-gate .verdict-text.pass { color: var(--accent); }
+  .holdout-gate .detail { text-align: right; font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+  .diagnostics-section { margin-bottom: 20px; }
+  .diag-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .diag-cell { padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .diag-cell .name { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .diag-cell .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .diag-cell .val.pass { color: var(--accent); }
+  .diag-cell.cat-edge { border-left: 2px solid var(--blue); }
+  .diag-cell.cat-stability { border-left: 2px solid var(--amber); }
+  .diag-cell.cat-generalization { border-left: 2px solid var(--accent); }
+  .diag-cell .hit-rate-tag { font-size: 9px; padding: 1px 4px; background: rgba(167, 139, 250, 0.1); color: var(--new); border-radius: 3px; margin-left: 6px; }
+
+  .relative-context { margin-bottom: 16px; padding: 10px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; }
+  .relative-context .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .relative-context .row .anchor { color: var(--text-dim); }
+  .relative-context .row .anchor strong { color: var(--text); }
+  .relative-context .rank { color: var(--accent); font-weight: 600; }
+
+  .dropped-placeholder { margin-bottom: 16px; padding: 14px; background: rgba(107, 114, 128, 0.05); border: 1px dashed var(--border-2); border-radius: 6px; text-align: center; font-size: 11px; color: var(--text-faint); }
+  .dropped-placeholder strong { color: var(--dropped); }
+
+  .portfolio-fit { margin-bottom: 16px; padding: 12px 14px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .portfolio-fit .fit-row { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; padding: 4px 0; font-size: 12px; align-items: center; }
+  .portfolio-fit .fit-row .name { color: var(--text-dim); }
+  .portfolio-fit .fit-row .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .portfolio-fit .legend-row { display: flex; gap: 16px; font-size: 10px; color: var(--text-faint); padding-bottom: 6px; border-bottom: 1px dashed var(--border-2); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .portfolio-fit .legend-row span { font-weight: 600; }
+
+  .override-panel { margin-bottom: 16px; padding: 8px 12px; background: var(--panel-2); border: 1px dashed var(--border-2); border-radius: 6px; font-size: 11px; color: var(--text-faint); }
+
+  .modal-actions { display: flex; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--border); background: var(--panel-2); }
+  .modal-actions .spacer { flex: 1; }
+  .modal-actions button { padding: 8px 18px; font-size: 13px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-2); }
+  .modal-actions .reject { background: var(--panel-3); color: var(--text); }
+  .modal-actions .accept { background: var(--accent); color: #062c14; border-color: var(--accent); }
+
+  .annotation { padding: 12px 16px; background: rgba(167, 139, 250, 0.06); border-left: 3px solid var(--new); border-radius: 0 6px 6px 0; font-size: 12px; color: var(--text-dim); margin: 16px 0; line-height: 1.6; }
+  .annotation strong { color: var(--new); }
+  .annotation code { font-family: 'Cascadia Code', 'Consolas', monospace; background: rgba(255, 255, 255, 0.04); padding: 1px 4px; border-radius: 3px; color: var(--text); font-size: 11px; }
+  .annotation.confound { background: rgba(236, 72, 153, 0.05); border-left-color: var(--confound); }
+  .annotation.confound strong { color: var(--confound); }
+  .annotation.canary { background: rgba(20, 184, 166, 0.05); border-left-color: var(--canary); }
+  .annotation.canary strong { color: var(--canary); }
+
+  details { margin: 16px 0; }
+  details summary { cursor: pointer; font-size: 12px; color: var(--text-dim); padding: 6px 0; }
+  details summary:hover { color: var(--text); }
+
+  .section-divider { display: flex; align-items: center; gap: 12px; margin: 32px 0 16px; }
+  .section-divider .line { flex: 1; height: 1px; background: var(--border); }
+  .section-divider .label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  /* Decision matrix table */
+  .decision-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .decision-table th { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text-dim); font-weight: 600; }
+  .decision-table th.this-version { color: var(--canary); }
+  .decision-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+  .decision-table .cell-yes { color: var(--accent); }
+  .decision-table .cell-partial { color: var(--amber); }
+  .decision-table .cell-no { color: var(--text-faint); }
+  .decision-table .row-emphasis { background: rgba(20, 184, 166, 0.04); }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Research — Validation Redesign <span class="version">CALIBRATED v3</span></h1>
+  <p class="subtitle">
+    Hybrid of FULL + LITE + the verdict accuracy loop the recon §7 asked for.<br/>
+    Surfaces the §1 confound (live bot not running tradelab code) that all prior versions left invisible.
+    Uses real S2/S4/S7/S8/S10/S12 data from <code style="background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-family: 'Cascadia Code', 'Consolas', monospace;">ENGINE_CALIBRATION_RECON_2026-04-23.md</code>.
+  </p>
+</div>
+
+<!-- =================== VERSION COMPARISON =================== -->
+<div class="version-banner">
+  <h3>FULL vs LITE vs CALIBRATED — what's different</h3>
+  <div class="compare-grid">
+    <div class="col">
+      <strong>FULL (rejected)</strong>
+      <ul>
+        <li>K-S auto-disable on uncalibrated test</li>
+        <li>Per-strategy regime fit on thin samples (~9-42 trades/bucket)</li>
+        <li>Calibration banner = 3 thin stats only</li>
+        <li>No §1 confound surface</li>
+        <li>No per-signal hit rate</li>
+        <li>No canary integrity panel</li>
+      </ul>
+    </div>
+    <div class="col">
+      <strong>LITE (closer to right)</strong>
+      <ul>
+        <li>K-S = REVIEW only (good)</li>
+        <li>No per-strategy regime fit (good)</li>
+        <li>Calibration banner = 3 thin stats only</li>
+        <li>No §1 confound surface</li>
+        <li>No per-signal hit rate</li>
+        <li>No canary integrity panel</li>
+      </ul>
+    </div>
+    <div class="col this">
+      <strong>CALIBRATED (this proposal)</strong>
+      <ul>
+        <li><strong>§1 confound panel at top</strong> — surfaces deployed-vs-scored code mismatch</li>
+        <li><strong>Canary integrity panel</strong> — blocks Accepts if gauntlet drifts</li>
+        <li><strong>Per-signal hit-rate table</strong> — the actual feedback loop</li>
+        <li>Full ledger schema extension (signal_values + thresholds + accepted_bool)</li>
+        <li>K-S = REVIEW only (LITE behavior preserved)</li>
+        <li>Regime banner only (LITE behavior preserved)</li>
+        <li>Hold-out gate, multi-dim correlation, relative context (FULL behavior preserved)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <span><strong>Existing:</strong> shipped or in current spec</span>
+  <span><span class="new-pill" style="cursor:default;">NEW</span> additions to current spec</span>
+  <span><span class="gate-pill">GATE</span> hard pre-Accept gate</span>
+  <span><span class="confound-pill" style="cursor:default;">CONFOUND</span> §1 contamination surface</span>
+  <span><span class="canary-pill" style="cursor:default;">CANARY</span> engine integrity guard</span>
+  <span><span class="dropped-pill" style="cursor:default;">DROPPED</span> in FULL but not in CALIBRATED</span>
+</div>
+
+<!-- =================== §1 CONFOUND PANEL — TOP =================== -->
+<section class="panel confound-panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2 style="color: var(--confound);">Engine ↔ Live Code Match</h2>
+      <span class="confound-pill" title="The recon §1 found that the live bot is not running tradelab code. Every calibration stat downstream is contaminated until this is resolved.">§1 CONFOUND</span>
+    </div>
+    <div class="actions">
+      <span style="color: var(--confound);">▶ Resolution required before calibration meaningful</span>
+    </div>
+  </div>
+
+  <div class="lead">
+    <strong>The deployed bot (`alpaca_trading_bot.py`) loads strategies from bare module names.</strong>
+    Tradelab's verdict engine has only ever scored <code style="font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;">tradelab.strategies.*</code>. Until each deployed module matches the scored module, every "calibration" stat compares an engine verdict to live PnL of a different copy of the code. <strong>Resolve this before trusting any feedback loop downstream.</strong>
+  </div>
+
+  <table class="confound-table">
+    <thead>
+      <tr>
+        <th>Live module</th>
+        <th>Allocation</th>
+        <th>Tradelab module</th>
+        <th>Last scored verdict</th>
+        <th>Code match</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>S4_InsideDayBreakout</strong></td>
+        <td>$25k / 25%</td>
+        <td><code style="font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;">tradelab.strategies.s4_inside_day_breakout</code></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span> 2026-04-19</td>
+        <td><span class="confound-status divergent">DIVERGENT</span></td>
+        <td>module loaded by bare name; not verified identical</td>
+      </tr>
+      <tr>
+        <td><strong>S12_MomentumAcceleration</strong></td>
+        <td>$25k / 25%</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="confound-status missing">NOT IN tradelab.yaml</span></td>
+        <td>engine has never scored this code</td>
+      </tr>
+      <tr>
+        <td><strong>S7_RDZMomentum</strong></td>
+        <td>$20k / 20%</td>
+        <td><code style="font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;">tradelab.strategies.s7_rdz_momentum</code></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span> 2026-04-19</td>
+        <td><span class="confound-status divergent">DIVERGENT</span></td>
+        <td>module loaded by bare name; not verified identical</td>
+      </tr>
+      <tr>
+        <td><strong>S8_BullishOutsideDay</strong></td>
+        <td>$15k / 15%</td>
+        <td><code style="font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;">tradelab.strategies.s8_bullish_outside_day</code></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span> 2026-04-19</td>
+        <td><span class="confound-status divergent">DIVERGENT</span></td>
+        <td>module loaded by bare name; not verified identical</td>
+      </tr>
+      <tr>
+        <td><strong>S2_PocketPivot</strong></td>
+        <td>$10k / 10%</td>
+        <td><code style="font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px;">tradelab.strategies.s2_pocket_pivot</code></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span> 2026-04-21</td>
+        <td><span class="confound-status divergent">DIVERGENT</span></td>
+        <td>module loaded by bare name; not verified identical</td>
+      </tr>
+      <tr>
+        <td><strong>S10_RSNewHighs</strong></td>
+        <td>$5k / 5%</td>
+        <td>—</td>
+        <td>—</td>
+        <td><span class="confound-status missing">NOT IN tradelab.yaml</span></td>
+        <td>engine has never scored this code</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="confound-action">
+    <strong style="color: var(--confound);">Pick one resolution path before shipping the calibration loop:</strong><br/>
+    <strong>(A)</strong> Port S10 + S12 into <code>tradelab.strategies.*</code>; verify all 6 deployed modules are byte-identical to the tradelab copies. Best long-term.<br/>
+    <strong>(B)</strong> Stand up a separate paper Alpaca account that trades only <code>tradelab.strategies.*</code>; run 30 days; compare. Best calibration test.<br/>
+    <strong>(C)</strong> Retrospective on existing <code>trades.csv</code>; explicitly flag results as "code-divergence caveat applies." Cheapest, weakest signal — recon §7 recommended this as step-1.
+  </div>
+</section>
+
+<!-- =================== ENGINE INTEGRITY / CANARY PANEL =================== -->
+<section class="panel canary-panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2 style="color: var(--canary);">Engine Integrity</h2>
+      <span class="canary-pill" title="Each canary is a synthetic strategy with a known expected verdict. If any canary returns the wrong verdict, the gauntlet has silently broken. New Accepts blocked until investigated.">CANARY</span>
+    </div>
+    <div class="actions">
+      <span style="color: var(--accent);">✓ all 4 canaries match · last run 04-28 14:22</span>
+    </div>
+  </div>
+  <div class="canary-grid">
+    <div class="canary-cell">
+      <div class="name">canary_perfect_robust</div>
+      <div class="expected">expected: ROBUST</div>
+      <div class="actual match">ROBUST ✓</div>
+      <div class="last-run">2026-04-28 14:22 · DSR 0.97</div>
+    </div>
+    <div class="canary-cell">
+      <div class="name">canary_obvious_fragile</div>
+      <div class="expected">expected: FRAGILE</div>
+      <div class="actual match">FRAGILE ✓</div>
+      <div class="last-run">2026-04-28 14:22 · 4 fragile signals</div>
+    </div>
+    <div class="canary-cell">
+      <div class="name">canary_inconclusive</div>
+      <div class="expected">expected: INCONCLUSIVE</div>
+      <div class="actual match">INCONCLUSIVE ✓</div>
+      <div class="last-run">2026-04-28 14:22 · 1 fragile / 1 robust</div>
+    </div>
+    <div class="canary-cell">
+      <div class="name">canary_data_leak</div>
+      <div class="expected">expected: FRAGILE (hold-out)</div>
+      <div class="actual match">FRAGILE ✓</div>
+      <div class="last-run">2026-04-28 14:22 · hold-out PF 0.62</div>
+    </div>
+  </div>
+
+  <div class="annotation canary">
+    <strong>Why this matters:</strong> the recon §3 demonstrated that <code>entry_delay</code> and <code>loso</code> are the "quiet killers" — gates that fire on S4 and S8 but the live bot trades them happily. If a future code change accidentally inverts a threshold or breaks an aggregation rule, you'd find out by losing real money. The canary panel surfaces silent gauntlet drift before any verdict downstream is trustworthy. <strong>If any canary cell goes red, the Accept button on every Score modal is disabled and a critical notify fires.</strong>
+  </div>
+</section>
+
+<!-- =================== REGIME BANNER (LITE behavior) =================== -->
+<section class="panel regime-banner">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Market Regime</h2>
+      <span class="new-pill" title="Banner-only awareness (LITE behavior). Per-strategy regime fit is dropped because the per-bucket sample sizes (~9-42 trades on 2y data) are statistically thin.">NEW (banner only)</span>
+    </div>
+    <div class="actions">stable 12 days · last shift 2026-04-15</div>
+  </div>
+  <div class="regime-grid">
+    <div class="regime-cell">
+      <div class="label">Volatility</div>
+      <div class="value" style="color: var(--accent);">LOW</div>
+      <div class="meta">VIX 12.4 · 30d realized 9.1%</div>
+    </div>
+    <div class="regime-cell">
+      <div class="label">Trend</div>
+      <div class="value" style="color: var(--accent);">TRENDING</div>
+      <div class="meta">SPX above 50/200 MA · ADX 28</div>
+    </div>
+    <div class="regime-cell">
+      <div class="label">Breadth</div>
+      <div class="value" style="color: var(--amber);">NARROW</div>
+      <div class="meta">42% of S&P 500 above 50d</div>
+    </div>
+  </div>
+</section>
+
+<!-- =================== VERDICT ACCURACY LOOP =================== -->
+<section class="panel calibration-panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Verdict Accuracy Loop</h2>
+      <span class="new-pill" title="The actual feedback loop the recon §7 asked for. Centerpiece of CALIBRATED. Combines portfolio-level calibration stats (FULL spec §4.5) with per-signal hit-rate evidence (Slice D from session reframe).">NEW</span>
+    </div>
+    <div class="actions">
+      <span style="color: var(--text-dim);">last 8 accepted cards · 90d window · </span>
+      <span class="confound-pill" style="cursor:default;" title="Stats below carry the §1 confound caveat — comparing tradelab verdicts to live PnL of (possibly) different code">CAVEAT</span>
+    </div>
+  </div>
+
+  <!-- Top: portfolio-level stats (same as FULL/LITE) -->
+  <div class="stat-row">
+    <div class="stat"><div class="num">3 / 8</div><div class="label">TE tripped within 30d</div></div>
+    <div class="stat"><div class="num">2 / 8</div><div class="label">Auto-disabled within 60d</div></div>
+    <div class="stat"><div class="num">+0.38</div><div class="label">Median PF gap (research → live)</div></div>
+    <div class="stat"><div class="num dim">5 / 6</div><div class="label">Live cards with code-match (§1)</div></div>
+    <div class="recommend">▶ §1 unresolved — recommendations suppressed until code match verified</div>
+  </div>
+
+  <!-- Per-signal hit rate (NEW — your Slice D) -->
+  <div class="hit-rate-section">
+    <h3>Per-Signal Hit Rate <span class="new-pill" style="cursor:default;">SLICE D</span></h3>
+    <p style="font-size: 12px; color: var(--text-dim); margin: 4px 0 8px; line-height: 1.6;">
+      For each signal: when it said FRAGILE on a card you accepted anyway, did the card fail in production?
+      <strong style="color: var(--text);">This is the data that should drive `tradelab.yaml` threshold edits</strong> — not "tighten 1.5→1.7" guesswork from the FULL mockup banner.
+    </p>
+    <table class="hit-rate-table">
+      <thead>
+        <tr>
+          <th>Signal</th>
+          <th>Category</th>
+          <th>Importance</th>
+          <th style="text-align: right;">Fragile fires (90d)</th>
+          <th style="text-align: right;">Accepted despite</th>
+          <th style="text-align: right;">Failed in prod</th>
+          <th style="text-align: right;">Hit rate</th>
+          <th>Read</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="signal-name">baseline_pf</span></td>
+          <td><span class="cat-edge">Edge</span></td>
+          <td>Critical</td>
+          <td style="text-align: right;">12</td>
+          <td style="text-align: right;">3</td>
+          <td style="text-align: right;">2</td>
+          <td style="text-align: right;"><span class="predictive">67%</span></td>
+          <td>predictive — keep strict</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">dsr</span></td>
+          <td><span class="cat-edge">Edge</span></td>
+          <td>Critical</td>
+          <td style="text-align: right;">8</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;"><span class="insufficient">100% (n=1)</span></td>
+          <td>insufficient sample</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">sharpe</span></td>
+          <td><span class="cat-edge">Edge</span></td>
+          <td>High</td>
+          <td style="text-align: right;">15</td>
+          <td style="text-align: right;">5</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;"><span class="noisy">20% ⚠</span></td>
+          <td>over-flagging — consider loosening</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">CSCV</span></td>
+          <td><span class="cat-stability">Stability</span></td>
+          <td>High</td>
+          <td style="text-align: right;">6</td>
+          <td style="text-align: right;">2</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;"><span class="insufficient">50% (n=2)</span></td>
+          <td>insufficient sample</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">mc_max_dd</span></td>
+          <td><span class="cat-stability">Stability</span></td>
+          <td>High</td>
+          <td style="text-align: right;">4</td>
+          <td style="text-align: right;">0</td>
+          <td style="text-align: right;">—</td>
+          <td style="text-align: right;"><span class="insufficient">no overrides</span></td>
+          <td>never overridden — can't grade</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">returns_shuffle</span></td>
+          <td><span class="cat-stability">Stability</span></td>
+          <td>Medium</td>
+          <td style="text-align: right;">9</td>
+          <td style="text-align: right;">4</td>
+          <td style="text-align: right;">0</td>
+          <td style="text-align: right;"><span class="noisy">0% ⚠</span></td>
+          <td>4 of 4 overrides survived — gate is noisy</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">WFE</span></td>
+          <td><span class="cat-generalization">Generalization</span></td>
+          <td>Critical</td>
+          <td style="text-align: right;">11</td>
+          <td style="text-align: right;">2</td>
+          <td style="text-align: right;">2</td>
+          <td style="text-align: right;"><span class="predictive">100%</span></td>
+          <td>predictive — keep strict</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">entry_delay</span></td>
+          <td><span class="cat-stability">Stability</span></td>
+          <td>High</td>
+          <td style="text-align: right;">7</td>
+          <td style="text-align: right;">4</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;"><span class="questionable">25% ⚠</span></td>
+          <td>recon §3 "quiet killer" — investigate before retuning</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">loso</span></td>
+          <td><span class="cat-generalization">Generalization</span></td>
+          <td>High</td>
+          <td style="text-align: right;">5</td>
+          <td style="text-align: right;">3</td>
+          <td style="text-align: right;">1</td>
+          <td style="text-align: right;"><span class="questionable">33% ⚠</span></td>
+          <td>recon §3 "quiet killer" — investigate before retuning</td>
+        </tr>
+        <tr>
+          <td><span class="signal-name">noise_band</span></td>
+          <td><span class="cat-generalization">Generalization</span></td>
+          <td>Medium</td>
+          <td style="text-align: right;">5</td>
+          <td style="text-align: right;">3</td>
+          <td style="text-align: right;">0</td>
+          <td style="text-align: right;"><span class="noisy">0% ⚠</span></td>
+          <td>3 of 3 overrides survived — gate is noisy</td>
+        </tr>
+        <tr style="background: rgba(167, 139, 250, 0.04);">
+          <td><span class="signal-name">hold_out_oos</span> <span class="gate-pill">GATE</span></td>
+          <td><span class="cat-generalization">Generalization</span></td>
+          <td>Critical</td>
+          <td style="text-align: right;">—</td>
+          <td style="text-align: right;">—</td>
+          <td style="text-align: right;">—</td>
+          <td style="text-align: right;"><span class="insufficient">not yet shipped</span></td>
+          <td>Slice 1a; will appear here once live</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="annotation" style="margin-top: 12px;">
+      <strong>How to read this:</strong>
+      Signals marked <span class="predictive">predictive</span> earn their place in the verdict — keep them strict.
+      Signals marked <span class="noisy">⚠</span> have fragile-fire-then-survived rates near 0% — either they're noisy or you've been lucky on overrides; investigate before tuning thresholds.
+      <strong>Both "quiet killers" from recon §3 (entry_delay, loso) show up here as questionable</strong> — confirming the recon's hunch that these are the gates to examine first when reconciling "engine says FRAGILE vs live bot happily trading."
+      <br/><br/>
+      <strong>Caveat:</strong> all hit rates are <span style="color: var(--confound);">conditional on §1 resolution</span>. Until deployed code matches scored code, "failed in prod" is comparing tradelab's verdict to PnL of a possibly-different copy. Signals that look noisy here may simply be scoring code that isn't running.
+    </div>
+  </div>
+</section>
+
+<!-- =================== LIVE STRATEGIES (real S2/S4/S7/S8/S10/S12 names) =================== -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Live Strategies</h2>
+      <span style="font-size: 11px; color: var(--text-faint); margin-left: 8px;">6 enabled · health refreshed 1m ago</span>
+    </div>
+  </div>
+
+  <div class="cards-row">
+    <!-- Card 1: S4_InsideDayBreakout — has tradelab match, FRAGILE verdict, but bot trades it -->
+    <div class="strategy-card" style="border-color: rgba(245, 158, 11, 0.4);">
+      <div class="card-name">S4_InsideDayBreakout <span class="stale">verdict 9d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="confound-tag" title="Engine says FRAGILE; bot trades this happily. Either engine is miscalibrated or bot's copy diverged.">§1 DIVERGENT</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.05</span>
+        <span class="k">WR</span><span class="v">51%</span>
+        <span class="k">DD</span><span class="v">-14.8%</span>
+        <span class="k">Alloc</span><span class="v">$25k / 25%</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar amber"><span></span><span></span><span></span><span></span><span></span></span>
+        <span style="color: var(--amber); font-size: 10px;">0.74</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="declining" d="M0,5 L10,6 L20,6 L30,7 L40,7 L50,8 L60,8 L70,9 L80,9 L90,10 L100,11"/>
+        </svg>
+        <span style="color: var(--amber); font-size: 10px;">−slope</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <span></span>
+        <span class="ks-tag warn">p=0.07 ⚠</span>
+      </div>
+      <div class="actions-row">
+        <button>Sig</button><button>Q</button><button>Rb</button>
+      </div>
+    </div>
+
+    <!-- Card 2: S12_MomentumAcceleration — NOT IN tradelab.yaml -->
+    <div class="strategy-card" style="border-color: rgba(236, 72, 153, 0.4);">
+      <div class="card-name">S12_MomentumAcceleration</div>
+      <div class="verdict-row">
+        <span class="verdict-pill unscored">UNSCORED</span>
+        <span class="confound-tag" title="No tradelab.yaml entry. Engine has never scored this code. Verdict accuracy loop cannot grade trades from this card.">§1 NOT IN ENGINE</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.31</span>
+        <span class="k">WR</span><span class="v">54%</span>
+        <span class="k">DD</span><span class="v">-9.2%</span>
+        <span class="k">Alloc</span><span class="v">$25k / 25%</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar"><span></span><span></span><span></span><span></span><span></span></span>
+        <span style="color: var(--text-faint); font-size: 10px;">no baseline</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="stable" d="M0,8 L10,8 L20,7 L30,8 L40,7 L50,8 L60,7 L70,8 L80,7 L90,8 L100,7"/>
+        </svg>
+        <span style="color: var(--text-dim); font-size: 10px;">flat</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <span></span>
+        <span class="ks-tag warming">no baseline</span>
+      </div>
+      <div class="actions-row">
+        <button>Sig</button><button>Q</button><button>Rb</button>
+      </div>
+    </div>
+
+    <!-- Card 3: S7_RDZMomentum — FRAGILE, decaying -->
+    <div class="strategy-card" style="border-color: rgba(239, 68, 68, 0.4);">
+      <div class="card-name">S7_RDZMomentum <span class="stale">verdict 9d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="confound-tag">§1 DIVERGENT</span>
+        <span class="review-tag urgent">REVIEW URGENT</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">0.57</span>
+        <span class="k">WR</span><span class="v">42%</span>
+        <span class="k">DD</span><span class="v">-19.4%</span>
+        <span class="k">Alloc</span><span class="v">$20k / 20%</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar red"><span></span><span></span><span></span><span></span><span></span></span>
+        <span style="color: var(--red); font-size: 10px;">0.41</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="dying" d="M0,3 L10,4 L20,5 L30,7 L40,8 L50,10 L60,11 L70,13 L80,14 L90,15 L100,16"/>
+        </svg>
+        <span style="color: var(--red); font-size: 10px;">dying</span>
+      </div>
+      <div class="health-row" style="border-top: none; padding-top: 0;">
+        <span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        <span></span>
+        <span class="ks-tag fail">p=0.002 ✗</span>
+      </div>
+      <div class="actions-row">
+        <button>Sig</button><button>Q</button><button style="background: var(--red); color: white;">Disable</button>
+      </div>
+    </div>
+
+    <!-- Card 4: S8_BullishOutsideDay -->
+    <div class="strategy-card">
+      <div class="card-name">S8_BullishOutsideDay <span class="stale">verdict 9d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="confound-tag">§1 DIVERGENT</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">2.35</span>
+        <span class="k">WR</span><span class="v">62%</span>
+        <span class="k">DD</span><span class="v">-7.8%</span>
+        <span class="k">Alloc</span><span class="v">$15k / 15%</span>
+      </div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar green"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--accent); font-size: 10px;">0.91</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="stable" d="M0,8 L10,8 L20,7 L30,7 L40,8 L50,7 L60,7 L70,6 L80,7 L90,6 L100,7"/></svg><span style="color: var(--accent); font-size: 10px;">+slope</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag ok">p=0.38</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+
+    <!-- Card 5: S2_PocketPivot — FRAGILE, 4 fragile signals -->
+    <div class="strategy-card" style="border-color: rgba(239, 68, 68, 0.4);">
+      <div class="card-name">S2_PocketPivot <span class="stale">verdict 7d old</span></div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="confound-tag">§1 DIVERGENT</span>
+        <span class="review-tag">REVIEW NEEDED</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">0.78</span>
+        <span class="k">WR</span><span class="v">39%</span>
+        <span class="k">DD</span><span class="v">-22.6%</span>
+        <span class="k">Alloc</span><span class="v">$10k / 10%</span>
+      </div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar amber"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--amber); font-size: 10px;">0.62</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="declining" d="M0,5 L10,6 L20,6 L30,7 L40,8 L50,8 L60,9 L70,9 L80,10 L90,10 L100,11"/></svg><span style="color: var(--amber); font-size: 10px;">−slope</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag warn">p=0.03 ⚠</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+
+    <!-- Card 6: S10_RSNewHighs — NOT IN tradelab -->
+    <div class="strategy-card" style="border-color: rgba(236, 72, 153, 0.4);">
+      <div class="card-name">S10_RSNewHighs</div>
+      <div class="verdict-row">
+        <span class="verdict-pill unscored">UNSCORED</span>
+        <span class="confound-tag">§1 NOT IN ENGINE</span>
+      </div>
+      <div class="metrics">
+        <span class="k">PF</span><span class="v">1.42</span>
+        <span class="k">WR</span><span class="v">56%</span>
+        <span class="k">DD</span><span class="v">-11.3%</span>
+        <span class="k">Alloc</span><span class="v">$5k / 5%</span>
+      </div>
+      <div class="health-row"><span class="lbl">TE</span><span class="te-bar"><span></span><span></span><span></span><span></span><span></span></span><span style="color: var(--text-faint); font-size: 10px;">no baseline</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">DECAY <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none"><path class="stable" d="M0,9 L10,8 L20,8 L30,9 L40,8 L50,7 L60,8 L70,7 L80,7 L90,8 L100,7"/></svg><span style="color: var(--text-dim); font-size: 10px;">flat</span></div>
+      <div class="health-row" style="border-top: none; padding-top: 0;"><span class="lbl">K-S <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span><span></span><span class="ks-tag warming">no baseline</span></div>
+      <div class="actions-row"><button>Sig</button><button>Q</button><button>Rb</button></div>
+    </div>
+  </div>
+
+  <div class="annotation confound">
+    <strong>What CALIBRATED shows that FULL/LITE hide:</strong>
+    Five of your six deployed cards either have no tradelab module (S10, S12) or have a divergent module (S2, S4, S7, S8 — bot loads by bare name). The <span class="confound-pill" style="cursor:default;">§1</span> tags surface this on every card. <strong>Your "ROBUST verdicts" in FULL/LITE were on cards whose deployed code might not match what was scored</strong> — making any verdict-vs-outcome calibration meaningless until §1 resolves.
+    <br/><br/>
+    <strong>K-S behavior in CALIBRATED:</strong> p&lt;0.01 shows REVIEW URGENT badge (LITE behavior preserved). Cards never auto-flip to disabled. Reason: K-S on 30 trades is statistically noisy AND the backtest baseline may be from divergent code — auto-disable is unsafe under either uncertainty.
+  </div>
+</section>
+
+<!-- =================== PORTFOLIO HEALTH (FULL behavior, unchanged) =================== -->
+<section class="panel portfolio-health">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Portfolio Health</h2>
+      <span class="new-pill">NEW</span>
+    </div>
+    <div class="actions"><a href="#" style="color: var(--blue); text-decoration: none;">▶ Open heatmap</a></div>
+  </div>
+  <div class="ph-grid">
+    <div class="ph-cell">
+      <div class="label">Return correlation (max)</div>
+      <div class="value warn">0.61</div>
+      <div class="detail">S4×S12 · threshold 0.70</div>
+    </div>
+    <div class="ph-cell">
+      <div class="label">Drawdown correlation (max) <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></div>
+      <div class="value warn">0.74</div>
+      <div class="detail" style="color: var(--amber);">S2×S7 · they lose together</div>
+    </div>
+    <div class="ph-cell">
+      <div class="label">Entry-time overlap <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></div>
+      <div class="value warn">52%</div>
+      <div class="detail" style="color: var(--amber);">4 strategies fire 09:30–10:00 window</div>
+    </div>
+  </div>
+  <div class="annotation" style="margin-top: 12px; margin-bottom: 0;">
+    Multi-dim correlation is preserved from the FULL spec. Two of three cells already in warn — DD ρ 0.74 means S2 and S7 (both FRAGILE per the engine, both deployed) bleed together; entry-time overlap 52% means execution risk concentrates on the open. <strong>These warnings stand independent of the §1 confound</strong> — they're computed from live trade timestamps and PnL, not from tradelab verdict outputs.
+  </div>
+</section>
+
+<!-- =================== RESEARCH PIPELINE (no regime-fit column, LITE behavior) =================== -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="title">
+      <h2>Research Pipeline</h2>
+      <span style="font-size: 11px; color: var(--text-faint); margin-left: 8px;">12 of 312 runs</span>
+    </div>
+    <div class="actions">
+      <span>Filter:</span><span style="color: var(--text);">Strategy ▾ · Verdict ▾ · Date ▾</span>
+    </div>
+  </div>
+  <table class="pipeline">
+    <thead>
+      <tr>
+        <th>Strategy</th>
+        <th>Verdict</th>
+        <th class="new-col">Hold-out <span class="gate-pill">GATE</span></th>
+        <th>PF</th>
+        <th>WR</th>
+        <th>DD</th>
+        <th class="new-col">Corr <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></th>
+        <th>Trades</th>
+        <th>Date</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>test_a5</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.78</td>
+        <td>1.62</td><td>57%</td><td>-11%</td>
+        <td class="new-col"><span class="corr-cell ok">0.31</span></td>
+        <td>82</td><td>04-26</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>scalp_3</strong></td>
+        <td><span class="verdict-pill fragile">FRAGILE</span></td>
+        <td class="new-col gate-cell fail">✗ PF 0.91</td>
+        <td>1.31</td><td>48%</td><td>-18%</td>
+        <td class="new-col"><span class="corr-cell ok">0.22</span></td>
+        <td>120</td><td>04-25</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>mean_revert_v2</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.62</td>
+        <td>1.55</td><td>61%</td><td>-9%</td>
+        <td class="new-col"><span class="corr-cell fail">0.84</span></td>
+        <td>98</td><td>04-25</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr style="background: rgba(239, 68, 68, 0.04);">
+        <td><strong>regime_rotor</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell fail">✗ PF 1.05</td>
+        <td>1.49</td><td>54%</td><td>-13%</td>
+        <td class="new-col"><span class="corr-cell ok">0.18</span></td>
+        <td>72</td><td>04-24</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+      <tr>
+        <td><strong>vwap_pullback</strong></td>
+        <td><span class="verdict-pill robust">ROBUST</span></td>
+        <td class="new-col gate-cell pass">✓ PF 1.71</td>
+        <td>1.68</td><td>59%</td><td>-8%</td>
+        <td class="new-col"><span class="corr-cell warn">0.62</span></td>
+        <td>104</td><td>04-23</td>
+        <td><div class="row-actions"><button>Score</button><button>Sig</button></div></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="annotation">
+    <strong>Pipeline columns:</strong> Hold-out gate + Corr column preserved from FULL.
+    <strong>Regime fit column dropped</strong> (LITE behavior) — per-regime PF on 2y of backtest data has thin samples (~9-42 trades per bucket); displaying STRONG/WEAK/POOR tags off such samples is statistical theatre.
+    <strong>Next step after CALIBRATED ships and ledger fills:</strong> if 6 months of regime-tagged outcome data shows the regime classifier predicts live performance, upgrade to FULL's regime-fit column. Decision deferred to evidence, not deferred forever.
+  </div>
+</section>
+
+<!-- =================== SCORE MODAL =================== -->
+<div class="section-divider">
+  <div class="line"></div>
+  <span class="label">Score modal — CALIBRATED version</span>
+  <div class="line"></div>
+</div>
+
+<div class="modal-mockup">
+  <div class="modal-frame">
+    <div class="modal-header">
+      <div>
+        <div class="title">test_a5 · run #2026-04-26-1423</div>
+        <div class="meta">SPY 5m · 2y backtest · Robustness gauntlet</div>
+      </div>
+      <span class="verdict-pill robust">ROBUST</span>
+    </div>
+
+    <div class="modal-body">
+
+      <div class="holdout-gate pass">
+        <div class="left">
+          <div class="icon pass">●</div>
+          <div>
+            <div class="label">Hold-out OOS Gate <span class="gate-pill">GATE</span></div>
+            <div class="verdict-text pass">PASS</div>
+          </div>
+        </div>
+        <div class="detail">
+          PF <strong style="color: var(--accent); font-size: 14px;">1.78</strong> on untouched 6mo window<br/>
+          threshold ≥ 1.50 · 23 trades
+        </div>
+      </div>
+
+      <div class="diagnostics-section">
+        <h3>Diagnostics (9 robustness signals)</h3>
+        <p style="font-size: 11px; color: var(--text-dim); margin: 4px 0 8px;">
+          Hover any cell for that signal's per-signal hit rate (from Verdict Accuracy Loop above).
+        </p>
+        <div class="diag-grid">
+          <div class="diag-cell cat-edge"><span class="name">DSR</span><span class="val pass">0.83 ✓ <span class="hit-rate-tag" title="dsr signal hit rate: insufficient sample (n=1)">n=1</span></span></div>
+          <div class="diag-cell cat-edge"><span class="name">PF (OOS)</span><span class="val pass">1.62 ✓ <span class="hit-rate-tag" title="baseline_pf hit rate: 67% — predictive">67%</span></span></div>
+          <div class="diag-cell cat-edge"><span class="name">Sharpe</span><span class="val pass">1.41 ✓ <span class="hit-rate-tag" title="sharpe hit rate: 20% — over-flagging" style="background: rgba(245, 158, 11, 0.15); color: var(--amber);">20%⚠</span></span></div>
+          <div class="diag-cell cat-stability"><span class="name">CSCV</span><span class="val pass">P 22 ✓ <span class="hit-rate-tag" title="CSCV hit rate: 50% (n=2)">n=2</span></span></div>
+          <div class="diag-cell cat-stability"><span class="name">MC drawdown</span><span class="val pass">P95 -16% ✓ <span class="hit-rate-tag" title="never overridden — can't grade">—</span></span></div>
+          <div class="diag-cell cat-stability"><span class="name">Returns shuffle</span><span class="val pass">+8σ ✓ <span class="hit-rate-tag" title="returns_shuffle hit rate: 0% — gate is noisy" style="background: rgba(245, 158, 11, 0.15); color: var(--amber);">0%⚠</span></span></div>
+          <div class="diag-cell cat-generalization"><span class="name">WFE</span><span class="val pass">0.71 ✓ <span class="hit-rate-tag" title="WFE hit rate: 100% — predictive">100%</span></span></div>
+          <div class="diag-cell cat-generalization"><span class="name">Jackknife</span><span class="val pass">σ 0.12 ✓ <span class="hit-rate-tag" title="jackknife hit rate: 20% — over-flagging" style="background: rgba(245, 158, 11, 0.15); color: var(--amber);">20%⚠</span></span></div>
+          <div class="diag-cell cat-generalization"><span class="name">Noise band</span><span class="val pass">passes ✓ <span class="hit-rate-tag" title="noise_band hit rate: 0% — gate is noisy" style="background: rgba(245, 158, 11, 0.15); color: var(--amber);">0%⚠</span></span></div>
+        </div>
+      </div>
+
+      <div class="annotation" style="margin: 0 0 16px; font-size: 11px;">
+        <strong>What CALIBRATED adds inline:</strong> each diagnostic cell carries a hit-rate tag from the Verdict Accuracy Loop. You see at a glance which signals have earned trust (WFE 100%, baseline_pf 67%) versus which have been over-flagging (sharpe 20%, returns_shuffle 0%, noise_band 0%). The tag is not a verdict — it's evidence. Use it when deciding whether a single fragile signal should sink an Accept.
+      </div>
+
+      <div class="relative-context">
+        <h3 style="margin-bottom: 6px;">Relative context <span class="new-pill" style="cursor:default;">NEW</span></h3>
+        <div class="row"><span class="anchor">Hold-out PF <strong>1.78</strong></span><span class="rank">#2 of 7 · live median 1.45 · worst 1.22</span></div>
+        <div class="row"><span class="anchor">DSR <strong>0.83</strong></span><span class="rank">#1 of 7 · live median 0.71 · worst 0.41</span></div>
+        <div class="row"><span class="anchor">DD <strong>-11%</strong></span><span class="rank">#3 of 7 · live median -10.1% · worst -21.8%</span></div>
+      </div>
+
+      <div class="dropped-placeholder">
+        <strong>[Regime Performance table — DROPPED in CALIBRATED]</strong><br/>
+        Same reason as LITE: per-regime trade samples are thin (~9-42 per bucket).<br/>
+        Current regime banner at top of page provides framing instead.
+      </div>
+
+      <div class="portfolio-fit">
+        <h3 style="margin-bottom: 8px;">Portfolio fit <span class="gate-pill">GATE</span></h3>
+        <div class="legend-row">
+          <span style="flex: 1;">Live card</span>
+          <span style="width: 60px; text-align: right;">Return ρ</span>
+          <span style="width: 60px; text-align: right;">DD ρ <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+          <span style="width: 70px; text-align: right;">Entry overlap <span class="new-pill" style="font-size:8px;padding:0 4px;cursor:default;">NEW</span></span>
+        </div>
+        <div class="fit-row"><span class="name">S4_InsideDayBreakout</span><span class="val" style="color: var(--accent);">0.31</span><span class="val" style="color: var(--accent);">0.28</span><span class="val" style="color: var(--accent);">12%</span></div>
+        <div class="fit-row"><span class="name">S7_RDZMomentum</span><span class="val" style="color: var(--accent);">0.22</span><span class="val" style="color: var(--accent);">0.34</span><span class="val" style="color: var(--accent);">8%</span></div>
+        <div class="fit-row"><span class="name">S8_BullishOutsideDay</span><span class="val" style="color: var(--amber);">0.58</span><span class="val" style="color: var(--amber);">0.65</span><span class="val" style="color: var(--accent);">21%</span></div>
+        <div class="fit-row"><span class="name">S2_PocketPivot</span><span class="val" style="color: var(--accent);">0.19</span><span class="val" style="color: var(--accent);">0.22</span><span class="val" style="color: var(--accent);">9%</span></div>
+        <div class="fit-row"><span class="name">S12_MomentumAcceleration</span><span class="val" style="color: var(--accent);">0.27</span><span class="val" style="color: var(--accent);">0.31</span><span class="val" style="color: var(--accent);">14%</span></div>
+        <div style="font-size: 11px; color: var(--text-dim); margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-2);">
+          Max return ρ: 0.58 · Max DD ρ: 0.65 · Max entry overlap: 21% · <strong style="color: var(--accent);">All gates pass</strong>
+        </div>
+      </div>
+
+      <div class="override-panel">
+        <strong>Override log:</strong> none. <span class="new-pill" style="cursor:default;">NEW</span>
+      </div>
+
+    </div>
+
+    <div class="modal-actions">
+      <button class="reject">Reject</button>
+      <div class="spacer"></div>
+      <button class="accept">Accept → Live</button>
+    </div>
+  </div>
+</div>
+
+<!-- =================== DECISION MATRIX =================== -->
+<div class="section-divider">
+  <div class="line"></div>
+  <span class="label">Decision matrix · FULL · LITE · CALIBRATED</span>
+  <div class="line"></div>
+</div>
+
+<details open>
+  <summary><strong>Side-by-side decision matrix</strong></summary>
+  <div style="margin-top: 12px;">
+    <table class="decision-table">
+      <thead>
+        <tr>
+          <th style="width: 40%;">Capability</th>
+          <th style="text-align: center;">FULL</th>
+          <th style="text-align: center;">LITE</th>
+          <th class="this-version" style="text-align: center;">CALIBRATED</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Hold-out as gate</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Multi-dim correlation (return + DD + entry-time)</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Relative context in Score modal</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Override log + verdict freshness</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Decay sparkline + K-S divergence on Live cards</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Current regime banner</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-yes">✓</td></tr>
+        <tr><td>Per-strategy regime fit</td><td style="text-align: center;" class="cell-yes">✓</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td></tr>
+        <tr><td>K-S auto-disable</td><td style="text-align: center;" class="cell-yes">✓ (risky)</td><td style="text-align: center;" class="cell-partial">REVIEW only</td><td style="text-align: center;" class="cell-partial">REVIEW only</td></tr>
+        <tr class="row-emphasis"><td><strong>§1 confound surface (deployed-vs-scored code)</strong></td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-yes"><strong>✓</strong></td></tr>
+        <tr class="row-emphasis"><td><strong>Engine integrity / canary panel</strong></td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-yes"><strong>✓</strong></td></tr>
+        <tr class="row-emphasis"><td><strong>Per-signal hit rate (Slice D)</strong></td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-yes"><strong>✓</strong></td></tr>
+        <tr class="row-emphasis"><td><strong>Hit-rate tag inline on diagnostic cells</strong></td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-yes"><strong>✓</strong></td></tr>
+        <tr class="row-emphasis"><td><strong>Ledger schema extension (signal vector + thresholds + accepted_bool)</strong></td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-no">—</td><td style="text-align: center;" class="cell-yes"><strong>✓</strong></td></tr>
+        <tr><td style="font-weight: 600;">Build effort (incremental from current state)</td><td style="text-align: center;">~6 days</td><td style="text-align: center;">~5 days</td><td style="text-align: center; color: var(--canary);">~8 days + §1 fix</td></tr>
+        <tr><td style="font-weight: 600;">Statistical risk (false confidence from thin samples)</td><td style="text-align: center;" class="cell-partial">moderate</td><td style="text-align: center;" class="cell-yes">low</td><td style="text-align: center; color: var(--canary);">low</td></tr>
+        <tr><td style="font-weight: 600;">Operational risk (false auto-disable)</td><td style="text-align: center;" class="cell-partial">moderate</td><td style="text-align: center;" class="cell-yes">none</td><td style="text-align: center; color: var(--canary);">none</td></tr>
+        <tr><td style="font-weight: 600;">Calibration meaningfulness</td><td style="text-align: center;" class="cell-partial">contaminated</td><td style="text-align: center;" class="cell-partial">contaminated</td><td style="text-align: center; color: var(--canary);">honest about contamination, fixes it</td></tr>
+        <tr><td style="font-weight: 600;">Long-term threshold-tuning evidence</td><td style="text-align: center;" class="cell-partial">3 thin stats</td><td style="text-align: center;" class="cell-partial">3 thin stats</td><td style="text-align: center; color: var(--canary);"><strong>per-signal hit rate</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+</details>
+
+<!-- =================== BUILD ORDER =================== -->
+<details open style="margin-top: 24px;">
+  <summary><strong>Build order — dependency-ordered, ~8 days + §1 fix</strong></summary>
+  <div class="annotation" style="margin-top: 8px;">
+    <ol style="margin: 0; padding-left: 20px; line-height: 1.8;">
+      <li><strong>Slice -1 — §1 confound resolution.</strong> Pick (A)/(B)/(C) from Confound panel above. Cheapest is (C) retrospective on <code>trades.csv</code> — recon §7 estimated 1 session. Without this, every downstream stat is contaminated. <strong>Hard prerequisite for Slice 6.</strong></li>
+      <li><strong>Slice 0 — Ledger schema extension</strong> (½ day). Add <code>signal_values_json</code>, <code>thresholds_json</code>, <code>accepted_bool</code>, <code>reject_reason</code> to existing <code>data/tradelab_history.db::runs</code>. Backfill from existing <code>reports/*/robustness_result.json</code>. Prerequisite for Slice 6.</li>
+      <li><strong>Slice 0.5 — Engine Integrity / Canary panel</strong> (½ day). 4 canary strategies + dashboard banner + Accept-block when any canary mismatches. Doesn't depend on §1.</li>
+      <li><strong>Slice 1a — Hold-out as gate</strong> (½ day). FULL spec §4.2. Orthogonal failure mode (data leakage) — doesn't depend on §1 or calibration evidence.</li>
+      <li><strong>Slice 1b — Relative context section</strong> in Score modal (½ day). FULL spec §4.7. Pure frontend.</li>
+      <li><strong>Slice 2 — Multi-dim correlation gate</strong> (1.5 days). FULL spec §4.3. Independent of §1 — computed from live trade timestamps + PnL, not verdicts.</li>
+      <li><strong>Slice 3 — Outcome backfill cron + per-signal hit rate</strong> (1 day). User's Slices C+D. Daily batch over the extended ledger. Depends on Slice 0 + Slice -1.</li>
+      <li><strong>Slice 4 — Regime banner only</strong> (1 day). LITE behavior. Per-strategy regime fit deferred until Slice 3 evidence shows the classifier predicts live performance.</li>
+      <li><strong>Slice 5 — Live divergence (K-S + decay) as REVIEW only</strong> (1 day). LITE behavior. Auto-disable upgrade gated on Slice 3 evidence showing K-S correlates with real failure.</li>
+      <li><strong>Slice 6 — Verdict Accuracy Loop banner</strong> (1 day). Combines portfolio stats (FULL §4.5) with per-signal hit-rate panel (Slice 3). Hit-rate tags inline on Score modal diagnostic cells. Depends on Slice -1 + Slice 0 + Slice 3.</li>
+    </ol>
+    <strong>Net:</strong> ~8 days of build + 1-5 days for §1 resolution depending on path chosen.<br/>
+    <strong>Compared to current spec (6 days):</strong> +2 days build + the §1 cost. Buys: actual feedback loop, canary integrity, honest calibration. Saves: not shipping K-S auto-disable on uncalibrated test, not shipping per-strategy regime fit on thin samples — both of which would need to be ripped out later when ledger evidence shows them unreliable.
+  </div>
+</details>
+
+<details style="margin-top: 24px;">
+  <summary><strong>The honest read — when to pick which version</strong></summary>
+  <div class="annotation" style="margin-top: 8px;">
+    <strong>Pick FULL if:</strong> you've already resolved §1 (deployed code matches scored code), you have ≥60 days of regime-tagged outcome data validating the classifier, and you trust K-S on 30 trades enough to give it kill-switch authority. None of those preconditions hold today. <span style="color: var(--red);">Don't pick FULL.</span>
+    <br/><br/>
+    <strong>Pick LITE if:</strong> you want a smaller build that softens the two riskiest pieces of FULL but accepts that the calibration banner remains a 3-stat side-show rather than a real feedback loop, and you're willing to leave §1 contamination invisible. Better than FULL but still missing the centerpiece.
+    <br/><br/>
+    <strong>Pick CALIBRATED if:</strong> you want to honor the recon §7 recommendation explicitly — close the verdict-accuracy loop first, surface the §1 confound that contaminates everything else, and add only the gates whose value is independent of calibration evidence (hold-out, multi-dim correlation). Defer K-S auto-disable and per-strategy regime fit until ledger evidence justifies them. <strong>This is what the recon was asking for.</strong>
+    <br/><br/>
+    <strong>Practical sequence:</strong> ship Slices -1 → 0 → 0.5 → 1a → 1b → 2 first (~4 days + §1 cost). That's the orthogonal-coverage portion plus the integrity surfaces — value lands quickly. Then Slices 3 → 4 → 5 → 6 over the next ~4 days, with the calibration banner becoming meaningful as the ledger fills.
+  </div>
+</details>
+
+<div style="text-align: center; padding: 32px 0; color: var(--text-faint); font-size: 11px;">
+  Static mockup · CALIBRATED v3 (hybrid: LITE caution + verdict accuracy loop + §1 confound surface) ·
+  file:///C:/TradingScripts/tradelab/docs/superpowers/mockups/research_tab_redesign_proposal_CALIBRATED.html
+</div>
+
+</body>
+</html>

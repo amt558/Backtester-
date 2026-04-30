@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Research Tab — Redesign v3 (Tabbed Live Cards)</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --card: #1c2030;
+    --panel-3: #232838;
+    --border: #2a2f3e;
+    --border-2: #353b4d;
+    --text: #e4e6eb;
+    --text2: #9aa0ac;
+    --text3: #6b7280;
+    --green: #22c55e;
+    --green-bg: rgba(34, 197, 94, 0.15);
+    --green-border: rgba(34, 197, 94, 0.4);
+    --amber: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.15);
+    --amber-border: rgba(245, 158, 11, 0.4);
+    --red: #ef4444;
+    --red-bg: rgba(239, 68, 68, 0.15);
+    --red-border: rgba(239, 68, 68, 0.4);
+    --blue: #3b82f6;
+    --cyan: #06b6d4;
+    --new: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+  body { padding: 24px 32px 80px; max-width: 1480px; margin: 0 auto; }
+  h1, h2, h3, h4 { margin: 0; font-weight: 600; }
+  h1 { font-size: 22px; }
+  h2 { font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text2); }
+  h3 { font-size: 13px; color: var(--text2); letter-spacing: 0.03em; text-transform: uppercase; }
+
+  .page-header { padding-bottom: 16px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .page-header .subtitle { color: var(--text2); font-size: 13px; margin-top: 6px; line-height: 1.5; }
+  .page-header code { font-family: 'Cascadia Code', 'Consolas', monospace; background: var(--card); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  /* Preflight strip + Score button (preserved) */
+  .preflight-strip { display: flex; gap: 12px; align-items: center; padding: 10px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .chip { font-size: 11px; padding: 3px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; color: var(--text2); }
+  .chip.ok { color: var(--green); border-color: var(--green-border); background: var(--green-bg); }
+  .chip.warn { color: var(--amber); border-color: var(--amber-border); background: var(--amber-bg); }
+  .preflight-strip .spacer { flex: 1; }
+  .btn { padding: 6px 14px; font-size: 12px; font-weight: 600; border-radius: 6px; cursor: pointer; border: 1px solid var(--border-2); background: var(--card); color: var(--text); }
+  .btn:hover { background: var(--panel-3); }
+  .btn-primary { background: var(--green); color: #062c14; border-color: var(--green); }
+  .btn-primary:hover { background: #1aa54e; }
+
+  /* Section header */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin: 24px 0 12px; }
+  .section-header .meta { font-size: 11px; color: var(--text3); }
+
+  /* Live Strategies grid */
+  .cards-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .strategy-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+
+  /* Card header (always visible) */
+  .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .card-name-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .card-name { font-size: 15px; font-weight: 600; }
+  .card-name .stale { font-size: 10px; color: var(--text3); margin-left: 6px; font-weight: 400; }
+  .card-actions { display: flex; gap: 6px; }
+  .card-actions button { padding: 3px 9px; font-size: 11px; border-radius: 4px; background: var(--card); color: var(--text); border: 1px solid var(--border-2); cursor: pointer; }
+  .card-actions button.danger { background: rgba(239, 68, 68, 0.1); color: var(--red); border-color: var(--red-border); }
+  .verdict-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .verdict-pill { display: inline-block; padding: 3px 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; border-radius: 4px; }
+  .verdict-pill.robust { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .verdict-pill.fragile { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+  .verdict-pill.inconclusive { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+  .review-tag { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 3px; background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); letter-spacing: 0.05em; }
+
+  /* Top stats grid in card */
+  .topstats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 12px 18px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .topstat { display: flex; flex-direction: column; }
+  .topstat .label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .topstat .value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .topstat .value.ok { color: var(--green); }
+  .topstat .value.warn { color: var(--amber); }
+  .topstat .value.fail { color: var(--red); }
+
+  /* Health rows (TE/Decay/K-S — T3 LITE) */
+  .health-block { padding: 8px 18px; background: var(--card); border-bottom: 1px solid var(--border); }
+  .health-row { display: grid; grid-template-columns: 60px 1fr 80px; gap: 12px; align-items: center; padding: 4px 0; font-size: 11px; }
+  .health-row + .health-row { border-top: 1px dashed var(--border-2); }
+  .health-row .lbl { color: var(--text3); text-transform: uppercase; font-size: 9px; letter-spacing: 0.05em; }
+  .te-bar { display: inline-flex; gap: 2px; }
+  .te-bar span { width: 10px; height: 12px; background: var(--border-2); border-radius: 1px; }
+  .te-bar.green span:nth-child(-n+4) { background: var(--green); }
+  .te-bar.green-full span { background: var(--green); }
+  .te-bar.amber span:nth-child(-n+3) { background: var(--amber); }
+  .te-bar.red span:nth-child(-n+1) { background: var(--red); }
+  .te-bar.empty span { background: var(--border-2); }
+  .sparkline { height: 18px; width: 100%; }
+  .sparkline path { fill: none; stroke-width: 1.5; }
+  .sparkline .stable { stroke: var(--text2); }
+  .sparkline .climbing { stroke: var(--green); }
+  .sparkline .declining { stroke: var(--amber); }
+  .sparkline .dying { stroke: var(--red); }
+  .sparkline .sparse { stroke: var(--text3); stroke-dasharray: 2,2; }
+  .ks-tag { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 3px; font-variant-numeric: tabular-nums; text-align: center; }
+  .ks-tag.ok { background: var(--green-bg); color: var(--green); }
+  .ks-tag.warn { background: var(--amber-bg); color: var(--amber); }
+  .ks-tag.fail { background: var(--red-bg); color: var(--red); }
+  .ks-tag.sparse { background: rgba(107, 114, 128, 0.15); color: var(--text3); }
+  .health-value { font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+
+  /* Tab strip */
+  .tab-strip { display: flex; background: var(--bg); border-bottom: 1px solid var(--border); }
+  .tab-strip button { flex: 1; padding: 10px 14px; background: transparent; border: none; color: var(--text2); font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; cursor: pointer; border-bottom: 2px solid transparent; transition: color 120ms, border-color 120ms; }
+  .tab-strip button.active { color: var(--text); border-bottom-color: var(--green); }
+  .tab-strip button:hover:not(.active) { color: var(--text); }
+  .tab-strip .pill-count { display: inline-block; padding: 1px 5px; margin-left: 6px; font-size: 9px; background: var(--card); border-radius: 3px; color: var(--text2); }
+  .tab-strip button.active .pill-count { background: var(--green-bg); color: var(--green); }
+
+  /* Tab content */
+  .tab-content { padding: 16px 18px; min-height: 240px; }
+
+  /* QuantStats tab */
+  .qs-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .qs-stat { padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 5px; }
+  .qs-stat .label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; }
+  .qs-stat .value { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .qs-stat .value.ok { color: var(--green); }
+  .qs-stat .value.warn { color: var(--amber); }
+  .qs-stat .value.fail { color: var(--red); }
+  .qs-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .qs-chart { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 10px 12px; }
+  .qs-chart .chart-title { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .qs-chart svg { width: 100%; height: 80px; }
+  .qs-chart .heatmap-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1px; }
+  .qs-chart .heatmap-cell { aspect-ratio: 1; border-radius: 2px; }
+
+  /* Robustness tab */
+  .rob-grid-header { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+  .rob-cat { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 8px; border-radius: 4px; text-align: center; }
+  .rob-cat.edge { background: rgba(59, 130, 246, 0.12); color: var(--blue); }
+  .rob-cat.stability { background: rgba(245, 158, 11, 0.12); color: var(--amber); }
+  .rob-cat.gen { background: rgba(34, 197, 94, 0.12); color: var(--green); }
+  .rob-cells { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .rob-col { display: flex; flex-direction: column; gap: 6px; }
+  .rob-cell { padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 11px; }
+  .rob-cell.edge { border-left: 2px solid var(--blue); }
+  .rob-cell.stability { border-left: 2px solid var(--amber); }
+  .rob-cell.gen { border-left: 2px solid var(--green); }
+  .rob-cell .name { color: var(--text2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .rob-cell .val { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 12px; }
+  .rob-cell .val.pass { color: var(--green); }
+  .rob-cell .val.fail { color: var(--red); }
+  .rob-cell .val.inconclusive { color: var(--amber); }
+
+  .rob-footer { margin-top: 12px; padding: 8px 12px; background: var(--card); border-radius: 5px; font-size: 11px; color: var(--text2); display: flex; justify-content: space-between; align-items: center; }
+  .rob-footer .reason { font-style: italic; color: var(--text3); }
+
+  /* Pipeline */
+  table.pipeline { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  table.pipeline th { text-align: left; padding: 10px 12px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text2); border-bottom: 1px solid var(--border); font-weight: 600; background: var(--card); }
+  table.pipeline td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+  table.pipeline tr:last-child td { border-bottom: none; }
+  table.pipeline tr:hover td { background: rgba(255, 255, 255, 0.02); }
+  .gate-pass { color: var(--green); }
+  .gate-fail { color: var(--red); }
+  .gate-na { color: var(--text3); }
+  .corr-cell.warn { color: var(--amber); font-weight: 600; }
+  .corr-cell.fail { color: var(--red); font-weight: 600; }
+  .row-actions { display: flex; gap: 4px; }
+  .row-actions button { padding: 2px 8px; background: var(--card); border: 1px solid var(--border-2); border-radius: 3px; color: var(--text); font-size: 10px; cursor: pointer; }
+
+  /* Annotations */
+  .annotation { padding: 12px 16px; background: rgba(167, 139, 250, 0.06); border-left: 3px solid var(--new); border-radius: 0 6px 6px 0; font-size: 12px; color: var(--text2); margin: 16px 0; line-height: 1.6; }
+  .annotation strong { color: var(--new); }
+  .annotation code { font-family: 'Cascadia Code', 'Consolas', monospace; background: rgba(255, 255, 255, 0.04); padding: 1px 4px; border-radius: 3px; color: var(--text); font-size: 11px; }
+
+  .dropped-list { background: rgba(239, 68, 68, 0.04); border: 1px solid var(--red-border); border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; }
+  .dropped-list strong { color: var(--red); }
+  .dropped-list ul { margin: 6px 0 0; padding-left: 22px; line-height: 1.6; color: var(--text2); }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Research Tab — <span style="color: var(--green);">Redesign v3</span> (Tabbed Live Cards)</h1>
+  <p class="subtitle">
+    Strips Regime / Calibration / Portfolio Health / Engine Integrity. Keeps Score New Strategy + Pipeline. Each Live Strategy card gains <strong>QuantStats</strong> and <strong>Robustness</strong> tabs inline; the 9-signal matrix moves out of the Sig modal into the Robustness tab on every card.
+  </p>
+</div>
+
+<div class="dropped-list">
+  <strong>DROPPED in v3 (vs current shipped LITE-for-Flow-A):</strong>
+  <ul>
+    <li>Market Regime banner (T8) — including the <code>fetch_regime</code> wiring that's already in code</li>
+    <li>Verdict Calibration banner (T9)</li>
+    <li>Portfolio Health 3-cell panel (T7)</li>
+    <li>Engine Integrity / Canary panel (pre-LITE Slice 0.5 leftover) — "doesn't make sense"</li>
+    <li>Sig button + Sig modal (Slice 0) — replaced by the inline Robustness tab on every card</li>
+  </ul>
+</div>
+
+<!-- ============= TOP STRIP (preserved) ============= -->
+<div class="preflight-strip">
+  <span class="chip ok">UNIVERSE 487</span>
+  <span class="chip ok">CACHE 14m ago</span>
+  <span class="chip ok">STRATEGIES 6</span>
+  <span class="chip warn">TD API 1d stale</span>
+  <span class="spacer"></span>
+  <button class="btn">Refresh Data</button>
+  <button class="btn">New Strategy</button>
+  <button class="btn btn-primary">Score New Strategy</button>
+</div>
+
+<!-- ============= LIVE STRATEGIES (kept, redesigned) ============= -->
+<div class="section-header">
+  <h2>Live Strategies</h2>
+  <span class="meta">4 cards · 1 enabled · health refreshed 1m ago</span>
+</div>
+
+<div class="cards-grid">
+
+  <!-- ===== CARD 1: virpo-mu-v1 with QuantStats tab active ===== -->
+  <div class="strategy-card">
+    <div class="card-header">
+      <div class="card-name-row">
+        <div class="card-name">virpo-mu-v1 <span class="stale">scored 32d ago</span></div>
+        <div class="card-actions">
+          <button>Edit</button>
+          <button class="danger">Disable</button>
+        </div>
+      </div>
+      <div class="verdict-row">
+        <span class="verdict-pill robust">ROBUST</span>
+        <span style="font-size: 11px; color: var(--text3);">SPY 5m · 2y backtest · TV→Alpaca</span>
+      </div>
+    </div>
+
+    <div class="topstats">
+      <div class="topstat"><div class="label">PF</div><div class="value ok">1.62</div></div>
+      <div class="topstat"><div class="label">WR</div><div class="value">58%</div></div>
+      <div class="topstat"><div class="label">DD</div><div class="value warn">-12.1%</div></div>
+      <div class="topstat"><div class="label">DSR</div><div class="value ok">0.83</div></div>
+    </div>
+
+    <div class="health-block">
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar green-full"><span></span><span></span><span></span><span></span><span></span></span>
+        <span class="health-value" style="color: var(--green);">0.97</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">DECAY</span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="stable" d="M0,9 L10,8 L20,9 L30,8 L40,9 L50,8 L60,9 L70,8 L80,8 L90,9 L100,9"/>
+        </svg>
+        <span class="health-value" style="color: var(--text2);">flat</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">K-S</span>
+        <span></span>
+        <span class="ks-tag ok">p=0.41</span>
+      </div>
+    </div>
+
+    <div class="tab-strip">
+      <button class="active">QuantStats <span class="pill-count">3y</span></button>
+      <button>Robustness <span class="pill-count">9</span></button>
+    </div>
+
+    <div class="tab-content">
+      <div class="qs-stats-grid">
+        <div class="qs-stat"><div class="label">Total Return</div><div class="value ok">+47.3%</div></div>
+        <div class="qs-stat"><div class="label">Sharpe</div><div class="value ok">1.42</div></div>
+        <div class="qs-stat"><div class="label">Sortino</div><div class="value ok">2.18</div></div>
+        <div class="qs-stat"><div class="label">CAGR</div><div class="value ok">14.6%</div></div>
+        <div class="qs-stat"><div class="label">Avg Win</div><div class="value">+1.84%</div></div>
+        <div class="qs-stat"><div class="label">Avg Loss</div><div class="value">-1.13%</div></div>
+        <div class="qs-stat"><div class="label">Trades</div><div class="value">312</div></div>
+        <div class="qs-stat"><div class="label">Days Live</div><div class="value">32</div></div>
+      </div>
+
+      <div class="qs-charts">
+        <div class="qs-chart">
+          <div class="chart-title">Drawdown curve · 2y</div>
+          <svg viewBox="0 0 200 80" preserveAspectRatio="none">
+            <path d="M0,5 L20,4 L40,12 L50,20 L60,30 L70,18 L80,8 L100,5 L120,15 L140,25 L150,30 L160,20 L180,10 L200,4"
+                  fill="rgba(239,68,68,0.15)" stroke="var(--red)" stroke-width="1.2"/>
+            <line x1="0" y1="0" x2="200" y2="0" stroke="var(--border)" stroke-dasharray="2,2"/>
+          </svg>
+        </div>
+        <div class="qs-chart">
+          <div class="chart-title">Monthly returns · 2y</div>
+          <div class="heatmap-grid">
+            <!-- Generate 24 cells (12mo × 2y) with random green/red intensity -->
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.4);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.6);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.2);"></div>
+            <div class="heatmap-cell" style="background: rgba(239,68,68,0.3);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.5);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.7);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.3);"></div>
+            <div class="heatmap-cell" style="background: rgba(239,68,68,0.5);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.6);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.4);"></div>
+            <div class="heatmap-cell" style="background: rgba(239,68,68,0.2);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.5);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.7);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.4);"></div>
+            <div class="heatmap-cell" style="background: rgba(239,68,68,0.4);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.6);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.5);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.3);"></div>
+            <div class="heatmap-cell" style="background: rgba(239,68,68,0.6);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.5);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.6);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.4);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.7);"></div>
+            <div class="heatmap-cell" style="background: rgba(34,197,94,0.5);"></div>
+          </div>
+        </div>
+        <div class="qs-chart" style="grid-column: 1 / -1;">
+          <div class="chart-title">Rolling Sharpe · 30d window</div>
+          <svg viewBox="0 0 400 80" preserveAspectRatio="none">
+            <line x1="0" y1="40" x2="400" y2="40" stroke="var(--border)" stroke-dasharray="2,2"/>
+            <line x1="0" y1="20" x2="400" y2="20" stroke="var(--border-2)" stroke-dasharray="1,3"/>
+            <line x1="0" y1="60" x2="400" y2="60" stroke="var(--border-2)" stroke-dasharray="1,3"/>
+            <path d="M0,30 Q40,25 80,28 T160,35 T240,22 T320,30 T400,25"
+                  fill="none" stroke="var(--green)" stroke-width="1.5"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CARD 2: bos-scalp-mu-v2 with Robustness tab active ===== -->
+  <div class="strategy-card">
+    <div class="card-header">
+      <div class="card-name-row">
+        <div class="card-name">bos-scalp-mu-v2 <span class="stale">scored 14d ago</span></div>
+        <div class="card-actions">
+          <button>Edit</button>
+          <button class="danger">Disable</button>
+        </div>
+      </div>
+      <div class="verdict-row">
+        <span class="verdict-pill fragile">FRAGILE</span>
+        <span class="review-tag" title="K-S p<0.05">REVIEW NEEDED</span>
+        <span style="font-size: 11px; color: var(--text3);">QQQ 1m · 2y backtest · TV→Alpaca</span>
+      </div>
+    </div>
+
+    <div class="topstats">
+      <div class="topstat"><div class="label">PF</div><div class="value warn">1.18</div></div>
+      <div class="topstat"><div class="label">WR</div><div class="value">44%</div></div>
+      <div class="topstat"><div class="label">DD</div><div class="value fail">-21.8%</div></div>
+      <div class="topstat"><div class="label">DSR</div><div class="value warn">0.41</div></div>
+    </div>
+
+    <div class="health-block">
+      <div class="health-row">
+        <span class="lbl">TE</span>
+        <span class="te-bar amber"><span></span><span></span><span></span><span></span><span></span></span>
+        <span class="health-value" style="color: var(--amber);">0.71</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">DECAY</span>
+        <svg class="sparkline" viewBox="0 0 100 18" preserveAspectRatio="none">
+          <path class="declining" d="M0,5 L10,5 L20,6 L30,7 L40,7 L50,8 L60,9 L70,10 L80,11 L90,12 L100,13"/>
+        </svg>
+        <span class="health-value" style="color: var(--amber);">−slope</span>
+      </div>
+      <div class="health-row">
+        <span class="lbl">K-S</span>
+        <span></span>
+        <span class="ks-tag warn">p=0.04 ⚠</span>
+      </div>
+    </div>
+
+    <div class="tab-strip">
+      <button>QuantStats <span class="pill-count">3y</span></button>
+      <button class="active">Robustness <span class="pill-count">9</span></button>
+    </div>
+
+    <div class="tab-content">
+      <div class="rob-grid-header">
+        <div class="rob-cat edge">Edge · 3</div>
+        <div class="rob-cat stability">Stability · 3</div>
+        <div class="rob-cat gen">Generalization · 3</div>
+      </div>
+      <div class="rob-cells">
+        <div class="rob-col">
+          <div class="rob-cell edge">
+            <span class="name">DSR</span>
+            <span class="val pass">0.41 ✓</span>
+          </div>
+          <div class="rob-cell edge">
+            <span class="name">PF (OOS)</span>
+            <span class="val inconclusive">1.18 ?</span>
+          </div>
+          <div class="rob-cell edge">
+            <span class="name">Sharpe</span>
+            <span class="val pass">0.94 ✓</span>
+          </div>
+        </div>
+        <div class="rob-col">
+          <div class="rob-cell stability">
+            <span class="name">CSCV</span>
+            <span class="val fail">P 78 ✗</span>
+          </div>
+          <div class="rob-cell stability">
+            <span class="name">MC drawdown</span>
+            <span class="val fail">P95 -28% ✗</span>
+          </div>
+          <div class="rob-cell stability">
+            <span class="name">Returns shuffle</span>
+            <span class="val pass">+3σ ✓</span>
+          </div>
+        </div>
+        <div class="rob-col">
+          <div class="rob-cell gen">
+            <span class="name">WFE</span>
+            <span class="val fail">0.32 ✗</span>
+          </div>
+          <div class="rob-cell gen">
+            <span class="name">Jackknife</span>
+            <span class="val pass">σ 0.18 ✓</span>
+          </div>
+          <div class="rob-cell gen">
+            <span class="name">Hold-out OOS</span>
+            <span class="val fail">PF 0.85 ✗</span>
+          </div>
+        </div>
+      </div>
+      <div class="rob-footer">
+        <span><strong>3 fragile</strong> · 1 inconclusive · 5 robust</span>
+        <span class="reason">CSCV overfit risk + hold-out PF below 1.00 + WFE collapsed</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Annotation -->
+<div class="annotation">
+  <strong>What changed per card:</strong> The 9-signal matrix moves OUT of the modal-only Sig button and INTO an inline Robustness tab on every card. QuantStats tab pulls the per-run tearsheet (drawdown / monthly returns / rolling Sharpe / expanded stat row) inline so you don't have to open a separate iframe. Action buttons collapse to <code>Edit</code> + <code>Disable</code>; the old <code>Sig / Q / Rb</code> trio becomes redundant.
+</div>
+
+<!-- ============= RESEARCH PIPELINE (kept) ============= -->
+<div class="section-header">
+  <h2>Research Pipeline</h2>
+  <span class="meta">12 of 312 runs · filter: Strategy ▾ Verdict ▾ Date ▾</span>
+</div>
+
+<table class="pipeline">
+  <thead>
+    <tr>
+      <th>Strategy</th>
+      <th>Verdict</th>
+      <th>Hold-out</th>
+      <th>PF</th>
+      <th>WR</th>
+      <th>DD</th>
+      <th>Corr</th>
+      <th>Trades</th>
+      <th>Date</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>test_a5</strong></td>
+      <td><span class="verdict-pill robust">ROBUST</span></td>
+      <td class="gate-pass">✓ 1.78</td>
+      <td>1.62</td><td>57%</td><td>-11%</td>
+      <td><span class="corr-cell">0.31</span></td>
+      <td>82</td><td>04-26</td>
+      <td><div class="row-actions"><button>Score</button><button>View</button></div></td>
+    </tr>
+    <tr>
+      <td><strong>scalp_3</strong></td>
+      <td><span class="verdict-pill fragile">FRAGILE</span></td>
+      <td class="gate-fail">✗ 0.91</td>
+      <td>1.31</td><td>48%</td><td>-18%</td>
+      <td><span class="corr-cell">0.22</span></td>
+      <td>120</td><td>04-25</td>
+      <td><div class="row-actions"><button>Score</button><button>View</button></div></td>
+    </tr>
+    <tr>
+      <td><strong>mean_revert_v2</strong></td>
+      <td><span class="verdict-pill robust">ROBUST</span></td>
+      <td class="gate-pass">✓ 1.62</td>
+      <td>1.55</td><td>61%</td><td>-9%</td>
+      <td><span class="corr-cell fail">0.84</span></td>
+      <td>98</td><td>04-25</td>
+      <td><div class="row-actions"><button>Score</button><button>View</button></div></td>
+    </tr>
+    <tr>
+      <td><strong>regime_rotor</strong></td>
+      <td><span class="verdict-pill robust">ROBUST</span></td>
+      <td class="gate-fail">✗ 1.05</td>
+      <td>1.49</td><td>54%</td><td>-13%</td>
+      <td><span class="corr-cell">0.18</span></td>
+      <td>72</td><td>04-24</td>
+      <td><div class="row-actions"><button>Score</button><button>View</button></div></td>
+    </tr>
+    <tr>
+      <td><strong>vwap_pullback</strong></td>
+      <td><span class="verdict-pill robust">ROBUST</span></td>
+      <td class="gate-pass">✓ 1.71</td>
+      <td>1.68</td><td>59%</td><td>-8%</td>
+      <td><span class="corr-cell warn">0.62</span></td>
+      <td>104</td><td>04-23</td>
+      <td><div class="row-actions"><button>Score</button><button>View</button></div></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="annotation">
+  <strong>Pipeline kept as-is:</strong> Hold-out gate column (T4) and Corr column (T6) remain. <code>Score</code> button on each row opens the existing Score modal flow; <code>View</code> opens the run's tearsheet in iframe. No regime-fit column (depends on dropped Regime banner data).
+</div>
+
+<div style="text-align: center; padding: 32px 0; color: var(--text3); font-size: 11px;">
+  Static mockup · Redesign v3 (Tabbed Live Cards) · 2026-04-28<br/>
+  file:///C:/TradingScripts/tradelab/docs/superpowers/mockups/research_tab_redesign_v3.html
+</div>
+
+</body>
+</html>

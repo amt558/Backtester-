@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Research Tab v3 · Option D — Master/Detail Split</title>
+<style>
+  :root { --bg:#0f1117; --panel:#161922; --card:#1c2030; --panel-3:#232838; --border:#2a2f3e; --border-2:#353b4d; --text:#e4e6eb; --text2:#9aa0ac; --text3:#6b7280; --green:#22c55e; --green-bg:rgba(34,197,94,0.15); --green-border:rgba(34,197,94,0.4); --amber:#f59e0b; --amber-bg:rgba(245,158,11,0.15); --amber-border:rgba(245,158,11,0.4); --red:#ef4444; --red-bg:rgba(239,68,68,0.15); --red-border:rgba(239,68,68,0.4); --blue:#3b82f6; --cyan:#06b6d4; --new:#a78bfa; }
+  *{box-sizing:border-box}
+  html,body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+  body{padding:24px 32px 80px;max-width:1480px;margin:0 auto}
+  h1,h2,h3{margin:0;font-weight:600}
+  h1{font-size:22px}
+  h2{font-size:15px;letter-spacing:0.04em;text-transform:uppercase;color:var(--text2)}
+  .page-header{padding-bottom:16px;border-bottom:1px solid var(--border);margin-bottom:20px}
+  .page-header .subtitle{color:var(--text2);font-size:13px;margin-top:6px;line-height:1.5}
+  .page-header .label-tag{display:inline-block;padding:2px 8px;font-size:10px;font-weight:600;background:rgba(167,139,250,0.15);color:var(--new);border:1px solid rgba(167,139,250,0.4);border-radius:4px;letter-spacing:0.05em;margin-left:8px;vertical-align:middle}
+
+  .preflight-strip{display:flex;gap:12px;align-items:center;padding:10px 14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;margin-bottom:20px;flex-wrap:wrap}
+  .chip{font-size:11px;padding:3px 8px;background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text2)}
+  .chip.ok{color:var(--green);border-color:var(--green-border);background:var(--green-bg)}
+  .chip.warn{color:var(--amber);border-color:var(--amber-border);background:var(--amber-bg)}
+  .preflight-strip .spacer{flex:1}
+  .btn{padding:6px 14px;font-size:12px;font-weight:600;border-radius:6px;cursor:pointer;border:1px solid var(--border-2);background:var(--card);color:var(--text)}
+  .btn-primary{background:var(--green);color:#062c14;border-color:var(--green)}
+
+  .section-header{display:flex;align-items:center;justify-content:space-between;margin:24px 0 12px}
+  .section-header .meta{font-size:11px;color:var(--text3)}
+
+  /* OPTION D — Master/Detail split */
+  .md-split{display:grid;grid-template-columns:280px 1fr;gap:14px;margin-bottom:18px}
+
+  /* LEFT: card list */
+  .card-list{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+  .card-list-header{padding:10px 14px;border-bottom:1px solid var(--border);font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text3);background:var(--card);font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .card-list-header select{background:var(--panel);color:var(--text);border:1px solid var(--border-2);border-radius:3px;padding:2px 4px;font-size:10px}
+  .card-list-item{padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;flex-direction:column;gap:6px;transition:background 120ms}
+  .card-list-item:hover{background:var(--card)}
+  .card-list-item.active{background:rgba(34,197,94,0.06);border-left:3px solid var(--green);padding-left:11px}
+  .card-list-item .name-row{display:flex;justify-content:space-between;align-items:center}
+  .card-list-item .name{font-size:12px;font-weight:600}
+  .verdict-pill{display:inline-block;padding:2px 7px;font-size:9px;font-weight:700;letter-spacing:0.05em;border-radius:3px}
+  .verdict-pill.robust{background:var(--green-bg);color:var(--green);border:1px solid var(--green-border)}
+  .verdict-pill.fragile{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
+  .verdict-pill.large{padding:3px 10px;font-size:10px}
+  .card-list-item .stats-row{display:flex;justify-content:space-between;font-size:10px;color:var(--text2);font-variant-numeric:tabular-nums}
+  .card-list-item .stats-row .pf-good{color:var(--green);font-weight:600}
+  .card-list-item .stats-row .pf-warn{color:var(--amber);font-weight:600}
+  .card-list-item .stats-row .pf-fail{color:var(--red);font-weight:600}
+  .review-tag{font-size:9px;font-weight:600;padding:1px 6px;border-radius:3px;background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-border);letter-spacing:0.05em}
+  .review-tag.urgent{background:var(--red-bg);color:var(--red);border-color:var(--red-border)}
+
+  /* RIGHT: detail pane */
+  .detail-pane{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+  .detail-header{padding:14px 20px;background:var(--card);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+  .detail-header .name{font-size:18px;font-weight:600}
+  .detail-header .name .stale{font-size:11px;color:var(--text3);margin-left:8px;font-weight:400}
+  .detail-header .actions{display:flex;gap:6px}
+  .detail-header .actions button{padding:6px 14px;font-size:12px;border-radius:5px;background:var(--panel-3);color:var(--text);border:1px solid var(--border-2);cursor:pointer}
+  .detail-header .actions button.danger{background:rgba(239,68,68,0.1);color:var(--red);border-color:var(--red-border)}
+  .detail-meta-row{padding:12px 20px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+
+  .summary-bar{display:grid;grid-template-columns:repeat(7,1fr);gap:0;background:var(--card);border-bottom:1px solid var(--border)}
+  .sum-cell{padding:14px 16px;border-right:1px solid var(--border);display:flex;flex-direction:column}
+  .sum-cell:last-child{border-right:none}
+  .sum-cell .label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em}
+  .sum-cell .value{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:3px}
+  .sum-cell .value.ok{color:var(--green)}
+  .sum-cell .value.warn{color:var(--amber)}
+  .sum-cell .value.fail{color:var(--red)}
+  .sum-cell .sub{font-size:10px;color:var(--text3);margin-top:1px}
+  .te-bar{display:inline-flex;gap:2px}
+  .te-bar span{width:11px;height:13px;background:var(--border-2);border-radius:1px}
+  .te-bar.green-full span{background:var(--green)}
+  .ks-tag{font-size:11px;font-weight:600;padding:3px 8px;border-radius:3px;font-variant-numeric:tabular-nums;display:inline-block}
+  .ks-tag.ok{background:var(--green-bg);color:var(--green)}
+
+  .tab-strip{display:flex;background:var(--bg);border-bottom:1px solid var(--border)}
+  .tab-strip button{flex:0 0 auto;padding:12px 22px;background:transparent;border:none;color:var(--text2);font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;cursor:pointer;border-bottom:2px solid transparent}
+  .tab-strip button.active{color:var(--text);border-bottom-color:var(--green)}
+  .tab-strip .pill-count{display:inline-block;padding:1px 5px;margin-left:6px;font-size:9px;background:var(--card);border-radius:3px;color:var(--text2)}
+
+  .tab-content{padding:18px 20px;flex:1}
+  .qs-stats-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:14px}
+  .qs-stat{padding:8px 10px;background:var(--card);border:1px solid var(--border);border-radius:5px}
+  .qs-stat .label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em}
+  .qs-stat .value{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:2px}
+  .qs-stat .value.ok{color:var(--green)}
+  .qs-charts{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:12px}
+  .qs-chart{background:var(--card);border:1px solid var(--border);border-radius:5px;padding:10px 12px}
+  .qs-chart .chart-title{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px}
+  .qs-chart svg{width:100%;height:100px}
+  .heatmap-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:1px}
+  .heatmap-cell{aspect-ratio:1;border-radius:2px}
+
+  table.pipeline{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  table.pipeline th{text-align:left;padding:10px 12px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);border-bottom:1px solid var(--border);font-weight:600;background:var(--card)}
+  table.pipeline td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text)}
+  table.pipeline tr:last-child td{border-bottom:none}
+  .gate-pass{color:var(--green)}
+  .gate-fail{color:var(--red)}
+  .corr-cell.warn{color:var(--amber);font-weight:600}
+  .corr-cell.fail{color:var(--red);font-weight:600}
+  .row-actions{display:flex;gap:4px}
+  .row-actions button{padding:2px 8px;background:var(--card);border:1px solid var(--border-2);border-radius:3px;color:var(--text);font-size:10px;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Research Tab v3 · <span style="color:var(--green)">Option D</span> — Master/Detail Split <span class="label-tag">FOCUSED-CARD LAYOUT</span></h1>
+  <p class="subtitle">
+    Left rail = compact card list (sortable, scannable). Right pane = focused-card detail with full QuantStats / Robustness tabs at full size. Click a row in the left rail to swap into the detail pane. Always-one-card-focused workflow — like an email client.
+  </p>
+</div>
+
+<div class="preflight-strip">
+  <span class="chip ok">UNIVERSE 487</span>
+  <span class="chip ok">CACHE 14m</span>
+  <span class="chip ok">STRATEGIES 6</span>
+  <span class="chip warn">TD API 1d stale</span>
+  <span class="spacer"></span>
+  <button class="btn">Refresh Data</button>
+  <button class="btn">New Strategy</button>
+  <button class="btn btn-primary">Score New Strategy</button>
+</div>
+
+<div class="section-header">
+  <h2>Live Strategies</h2>
+  <span class="meta">4 cards · click left to switch</span>
+</div>
+
+<div class="md-split">
+
+  <!-- LEFT: card list -->
+  <div class="card-list">
+    <div class="card-list-header">
+      <span>4 cards</span>
+      <select>
+        <option>Sort: Health</option>
+        <option>Verdict</option>
+        <option>PF</option>
+        <option>Recency</option>
+      </select>
+    </div>
+    <div class="card-list-item active">
+      <div class="name-row"><span class="name">virpo-mu-v1</span><span class="verdict-pill robust">R</span></div>
+      <div class="stats-row"><span>PF <span class="pf-good">1.62</span></span><span>WR 58%</span><span>DD -12%</span></div>
+    </div>
+    <div class="card-list-item">
+      <div class="name-row"><span class="name">bos-scalp-mu-v2</span><span class="verdict-pill fragile">F</span></div>
+      <div class="stats-row"><span>PF <span class="pf-warn">1.18</span></span><span>WR 44%</span><span>DD -22%</span></div>
+      <div><span class="review-tag">REVIEW NEEDED</span></div>
+    </div>
+    <div class="card-list-item">
+      <div class="name-row"><span class="name">mean-revert-tsla</span><span class="verdict-pill robust">R</span></div>
+      <div class="stats-row"><span>PF <span class="pf-good">1.45</span></span><span>WR 52%</span><span>DD -9%</span></div>
+    </div>
+    <div class="card-list-item">
+      <div class="name-row"><span class="name">atr-breakout-nvda</span><span class="verdict-pill fragile">F</span></div>
+      <div class="stats-row"><span>PF <span class="pf-fail">0.98</span></span><span>WR 41%</span><span>DD -28%</span></div>
+      <div><span class="review-tag urgent">REVIEW URGENT</span></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: detail pane -->
+  <div class="detail-pane">
+    <div class="detail-header">
+      <div class="name">virpo-mu-v1 <span class="stale">scored 32d ago · enabled</span></div>
+      <div class="actions">
+        <button>Edit</button>
+        <button class="danger">Disable</button>
+      </div>
+    </div>
+    <div class="detail-meta-row">
+      <span class="verdict-pill robust large">ROBUST</span>
+      <span style="font-size:12px;color:var(--text2)">SPY 5m · 2y backtest · TV→Alpaca · cards.json:enabled</span>
+    </div>
+
+    <div class="summary-bar">
+      <div class="sum-cell"><div class="label">PF</div><div class="value ok">1.62</div><div class="sub">backtest</div></div>
+      <div class="sum-cell"><div class="label">WR</div><div class="value">58%</div><div class="sub">backtest</div></div>
+      <div class="sum-cell"><div class="label">DD</div><div class="value warn">-12.1%</div><div class="sub">max</div></div>
+      <div class="sum-cell"><div class="label">DSR</div><div class="value ok">0.83</div><div class="sub">prob</div></div>
+      <div class="sum-cell"><div class="label">TE</div><div class="value"><span class="te-bar green-full"><span></span><span></span><span></span><span></span><span></span></span></div><div class="sub" style="color:var(--green)">0.97 ratio</div></div>
+      <div class="sum-cell"><div class="label">Decay</div><div class="value" style="color:var(--text2);font-size:13px">flat</div><div class="sub">30d slope</div></div>
+      <div class="sum-cell"><div class="label">K-S</div><div class="value"><span class="ks-tag ok">p=0.41</span></div><div class="sub">2-sample</div></div>
+    </div>
+
+    <div class="tab-strip">
+      <button class="active">QuantStats <span class="pill-count">3y</span></button>
+      <button>Robustness <span class="pill-count">9</span></button>
+    </div>
+
+    <div class="tab-content">
+      <div class="qs-stats-grid">
+        <div class="qs-stat"><div class="label">Total Return</div><div class="value ok">+47.3%</div></div>
+        <div class="qs-stat"><div class="label">Sharpe</div><div class="value ok">1.42</div></div>
+        <div class="qs-stat"><div class="label">Sortino</div><div class="value ok">2.18</div></div>
+        <div class="qs-stat"><div class="label">CAGR</div><div class="value ok">14.6%</div></div>
+        <div class="qs-stat"><div class="label">Avg Win</div><div class="value">+1.84%</div></div>
+        <div class="qs-stat"><div class="label">Avg Loss</div><div class="value">-1.13%</div></div>
+        <div class="qs-stat"><div class="label">Trades</div><div class="value">312</div></div>
+        <div class="qs-stat"><div class="label">Days Live</div><div class="value">32</div></div>
+      </div>
+      <div class="qs-charts">
+        <div class="qs-chart">
+          <div class="chart-title">Drawdown · 2y</div>
+          <svg viewBox="0 0 200 100" preserveAspectRatio="none"><path d="M0,5 L20,4 L40,15 L50,25 L60,38 L70,22 L80,8 L100,5 L120,18 L140,30 L150,38 L160,25 L180,12 L200,4" fill="rgba(239,68,68,0.15)" stroke="var(--red)" stroke-width="1.2"/></svg>
+        </div>
+        <div class="qs-chart">
+          <div class="chart-title">Monthly returns</div>
+          <div class="heatmap-grid">
+            <div class="heatmap-cell" style="background:rgba(34,197,94,0.4)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.6)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.2)"></div><div class="heatmap-cell" style="background:rgba(239,68,68,0.3)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.5)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.7)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.3)"></div><div class="heatmap-cell" style="background:rgba(239,68,68,0.5)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.6)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.4)"></div><div class="heatmap-cell" style="background:rgba(239,68,68,0.2)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.5)"></div>
+            <div class="heatmap-cell" style="background:rgba(34,197,94,0.7)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.4)"></div><div class="heatmap-cell" style="background:rgba(239,68,68,0.4)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.6)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.5)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.3)"></div><div class="heatmap-cell" style="background:rgba(239,68,68,0.6)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.5)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.6)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.4)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.7)"></div><div class="heatmap-cell" style="background:rgba(34,197,94,0.5)"></div>
+          </div>
+        </div>
+        <div class="qs-chart">
+          <div class="chart-title">Rolling Sharpe · 30d</div>
+          <svg viewBox="0 0 200 100" preserveAspectRatio="none"><line x1="0" y1="50" x2="200" y2="50" stroke="var(--border)" stroke-dasharray="2,2"/><path d="M0,40 Q40,32 80,38 T160,45 T200,30" fill="none" stroke="var(--green)" stroke-width="1.5"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section-header">
+  <h2>Research Pipeline</h2>
+  <span class="meta">5 of 312 runs</span>
+</div>
+
+<table class="pipeline">
+  <thead><tr><th>Strategy</th><th>Verdict</th><th>Hold-out</th><th>PF</th><th>WR</th><th>DD</th><th>Corr</th><th>Trades</th><th>Date</th><th>Actions</th></tr></thead>
+  <tbody>
+    <tr><td><strong>test_a5</strong></td><td><span class="verdict-pill robust">ROBUST</span></td><td class="gate-pass">✓ 1.78</td><td>1.62</td><td>57%</td><td>-11%</td><td><span class="corr-cell">0.31</span></td><td>82</td><td>04-26</td><td><div class="row-actions"><button>Score</button><button>View</button></div></td></tr>
+    <tr><td><strong>scalp_3</strong></td><td><span class="verdict-pill fragile">FRAGILE</span></td><td class="gate-fail">✗ 0.91</td><td>1.31</td><td>48%</td><td>-18%</td><td><span class="corr-cell">0.22</span></td><td>120</td><td>04-25</td><td><div class="row-actions"><button>Score</button><button>View</button></div></td></tr>
+    <tr><td><strong>mean_revert_v2</strong></td><td><span class="verdict-pill robust">ROBUST</span></td><td class="gate-pass">✓ 1.62</td><td>1.55</td><td>61%</td><td>-9%</td><td><span class="corr-cell fail">0.84</span></td><td>98</td><td>04-25</td><td><div class="row-actions"><button>Score</button><button>View</button></div></td></tr>
+    <tr><td><strong>regime_rotor</strong></td><td><span class="verdict-pill robust">ROBUST</span></td><td class="gate-fail">✗ 1.05</td><td>1.49</td><td>54%</td><td>-13%</td><td><span class="corr-cell">0.18</span></td><td>72</td><td>04-24</td><td><div class="row-actions"><button>Score</button><button>View</button></div></td></tr>
+    <tr><td><strong>vwap_pullback</strong></td><td><span class="verdict-pill robust">ROBUST</span></td><td class="gate-pass">✓ 1.71</td><td>1.68</td><td>59%</td><td>-8%</td><td><span class="corr-cell warn">0.62</span></td><td>104</td><td>04-23</td><td><div class="row-actions"><button>Score</button><button>View</button></div></td></tr>
+  </tbody>
+</table>
+
+<div style="text-align:center;padding:32px 0;color:var(--text3);font-size:11px">
+  Static mockup · v3 Option D (Master/Detail Split) · 2026-04-28
+</div>
+
+</body>
+</html>
