@@ -982,6 +982,111 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             traceback.print_exc(file=sys.stderr)
             return _err("accept failed: internal error"), 500
 
+    # Task 10: one-click activate. Looks up the strategy's latest run, derives
+    # symbol/timeframe from its backtest_result.json, and forwards to
+    # accept_scored(activate=True). Reuses every gate, side effect, and SSE
+    # broadcast from the /tradelab/accept code path.
+    m = re.match(r"^/tradelab/strategies/([^/]+)/activate$", path)
+    if m:
+        strategy_id = m.group(1)
+        from tradelab.live.cards import CardExistsError, CardRegistry
+        from tradelab.web import approve_strategy
+
+        # 1. Latest audit row for this strategy.
+        runs = audit_reader.list_runs(
+            strategy=strategy_id, limit=1, db_path=_db_path()
+        )
+        if not runs:
+            return _err(f"no runs found for strategy {strategy_id!r}"), 422
+        latest = runs[0]
+
+        # 2. Resolve the report folder. no_run shouldn't happen (we just read
+        # the row from the same DB), but no_folder is a real failure mode for
+        # CLI runs invoked without --report.
+        lookup = audit_reader.resolve_run_folder(
+            latest["run_id"], db_path=_db_path()
+        )
+        if lookup.status != "ok" or lookup.folder is None:
+            return _err(
+                f"latest run {latest['run_id']} has no report folder"
+            ), 422
+
+        # 3. Read symbol/timeframe from backtest_result.json (the report
+        # folder's metadata file written by csv_scoring.write_report_folder).
+        bt_json_path = lookup.folder / "backtest_result.json"
+        if not bt_json_path.exists():
+            return _err(
+                f"backtest_result.json missing in {lookup.folder}"
+            ), 422
+        try:
+            bt_json = json.loads(bt_json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            return _err(f"backtest_result.json unreadable: {e}"), 422
+
+        symbol = bt_json.get("symbol")
+        timeframe = bt_json.get("timeframe")
+        if not symbol or not timeframe:
+            return _err(
+                "backtest_result.json missing symbol/timeframe"
+            ), 422
+
+        # 4. Forward to accept_scored with activate=True.
+        registry = CardRegistry(_cards_path())
+
+        # Defensive guard: if any enabled card already exists for this
+        # base_name, refuse rather than auto-bumping to -v2. The FE button
+        # state machine ("● Already live ↗") prevents this from the UI, but
+        # a duplicate POST should fail loudly so the FE can react.
+        for cid, card in registry.all().items():
+            if (
+                card.get("base_name") == latest["strategy_name"]
+                and card.get("status") == "enabled"
+            ):
+                return _err(
+                    f"strategy {latest['strategy_name']!r} already activated as "
+                    f"{cid}; deactivate it first to re-activate"
+                ), 409
+        try:
+            data = approve_strategy.accept_scored(
+                base_name=latest["strategy_name"],
+                symbol=symbol,
+                timeframe=timeframe,
+                report_folder=str(lookup.folder),
+                verdict=latest["verdict"] or "INCONCLUSIVE",
+                dsr_probability=latest["dsr_probability"],
+                scoring_run_id=latest["run_id"],
+                registry=registry,
+                pine_archive_root=_pine_archive_root(),
+                reports_root=_reports_root(),
+                activate=True,
+            )
+            # Notify FE listeners (Task 16 wires SSE listener on the FE side).
+            try:
+                from tradelab.web import get_broadcaster
+                get_broadcaster().broadcast({
+                    "type": "card_activated",
+                    "card_id": data["card_id"],
+                })
+            except Exception:
+                pass
+            return _ok(data), 200
+        except approve_strategy.ActivationGateFailed as e:
+            return _err(str(e)), 422
+        except CardExistsError as e:
+            return _err(f"card_id {e} already registered"), 409
+        except FileNotFoundError as e:
+            return _err(f"report folder unavailable: {e}"), 422
+        except ValueError as e:
+            return _err(str(e)), 400
+        except Exception as e:
+            print(
+                f"[handlers] /tradelab/strategies/{strategy_id}/activate "
+                f"unexpected: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+            traceback.print_exc(file=sys.stderr)
+            return _err("activate failed: internal error"), 500
+
     if path == "/tradelab/cards/bulk-toggle":
         ids = payload.get("ids")
         status_val = payload.get("status")

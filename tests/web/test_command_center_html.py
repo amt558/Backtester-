@@ -745,3 +745,170 @@ def test_v3_research_load_live_cards_invokes_drift_renderer(html: str) -> None:
     assert "renderAllDriftSparklines" in body, (
         "researchLoadLiveCards must invoke renderAllDriftSparklines after rendering tiles"
     )
+
+
+# ─── Task 10: Activate state machine + cross-tab linkage ───────────────
+
+def test_v3_task10_activate_click_handler_wired_to_grid(html: str) -> None:
+    """Task 10 wires a delegated click on #researchLiveCards. Without this
+    the .activate buttons are inert — silent failure pytest can't catch."""
+    # Function that installs the delegated listener.
+    assert "function wireResearchLiveCardsClick" in html, (
+        "Task 10 click handler installer is missing"
+    )
+    # The handler must be delegated on the grid container, not on each tile.
+    assert "getElementById('researchLiveCards')" in html
+    # And researchLoadLiveCards must invoke it after rendering.
+    idx = html.find("async function researchLoadLiveCards")
+    assert idx > 0
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 3000)
+    assert "wireResearchLiveCardsClick" in html[idx:end], (
+        "researchLoadLiveCards must call wireResearchLiveCardsClick"
+    )
+
+
+def test_v3_task10_activate_posts_to_strategies_activate_endpoint(html: str) -> None:
+    """The Activate flow MUST POST to /tradelab/strategies/<id>/activate.
+    Pasting the wrong URL (e.g. /tradelab/accept) silently breaks activation
+    because the BE expects different payloads on each route."""
+    # Look for the literal URL fragment with template interpolation.
+    pattern = re.compile(
+        r"/tradelab/strategies/\$\{encodeURIComponent\([^)]+\)\}/activate"
+    )
+    assert pattern.search(html), (
+        "Activate must POST to /tradelab/strategies/${id}/activate"
+    )
+    # Confirm POST method is used (not GET).
+    idx = html.find("wireResearchLiveCardsClick")
+    if idx > 0:
+        block = html[idx:idx + 4000]
+        assert "method: 'POST'" in block or 'method:"POST"' in block, (
+            "Activate must use POST"
+        )
+
+
+def test_v3_task10_activate_state_transitions_present(html: str) -> None:
+    """Buttons go enabled → activating → live (or back to enabled on error).
+    Each class must appear in the click handler so the visual state matches."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    end = idx + 5000
+    body = html[idx:end]
+    # In-flight transition.
+    assert "'activating'" in body, "must add 'activating' class during POST"
+    # Success state.
+    assert "'live'" in body, "must transition to 'live' on success"
+    # Error rollback.
+    assert "'enabled'" in body, "must restore 'enabled' on POST failure"
+    # Toast surfaces both success and error.
+    assert "toast(" in body, "must surface success/error to user via toast()"
+
+
+def test_v3_task10_activating_class_has_css(html: str) -> None:
+    """The .activate.activating selector needs a real CSS rule, otherwise
+    the in-flight state is invisible to the user."""
+    assert ".activate.activating" in html, (
+        "Missing CSS rule for .activate.activating in-flight state"
+    )
+
+
+def test_v3_task10_switch_to_overview_helper_present(html: str) -> None:
+    """The cross-tab cross-jump helper must exist and call switchTab('overview').
+    The button on Live state ('● Already live ↗') uses this to navigate."""
+    idx = html.find("function switchToOverviewTabAndScrollTo")
+    assert idx > 0, "switchToOverviewTabAndScrollTo helper is missing"
+    end = idx + 1500
+    body = html[idx:end]
+    assert "switchTab('overview')" in body, (
+        "helper must invoke switchTab('overview')"
+    )
+    # Pulses target by adding/removing a class on a timer.
+    assert "r3-highlight-pulse" in body, (
+        "helper must add/remove the highlight-pulse class"
+    )
+
+
+def test_v3_task10_highlight_pulse_keyframes_defined(html: str) -> None:
+    """The pulse animation must be defined in CSS so the cross-tab jump
+    actually animates rather than silently no-op'ing."""
+    assert "@keyframes r3-highlight-pulse" in html, (
+        "Missing @keyframes r3-highlight-pulse"
+    )
+    assert ".r3-highlight-pulse {" in html or ".r3-highlight-pulse{" in html, (
+        "Missing .r3-highlight-pulse class rule binding the animation"
+    )
+
+
+def test_v3_task10_open_research_button_in_live_card_template(html: str) -> None:
+    """Overview live cards must have an ↗ Research button so users can
+    cross-jump back from Overview to Research."""
+    # The Overview live card template lives in command_center.html. Find the
+    # render block (it sits right above the live-card-hero markup) and
+    # confirm the button is rendered inside.
+    idx = html.find('class="strategy-card live-card')
+    assert idx > 0
+    block = html[max(0, idx - 800):idx + 200]
+    assert "open-research-btn" in block, (
+        "Overview live-card markup is missing the ↗ Research button"
+    )
+    assert "data-base-name=" in block, (
+        "↗ Research button must carry data-base-name for cross-jump"
+    )
+
+
+def test_v3_task10_open_research_button_click_handler(html: str) -> None:
+    """A document-level click delegate must wire .open-research-btn → switchTab.
+    Otherwise the button renders but does nothing."""
+    # The click handler must reference the class selector.
+    pattern = re.compile(r"closest\(['\"]\.open-research-btn['\"]\)")
+    assert pattern.search(html), (
+        "Missing document-level handler for .open-research-btn"
+    )
+    # And it must call switchTab('research').
+    # Search within ~1500 chars after the matched closest() to confirm the
+    # handler body actually switches tabs and pulses the tile.
+    m = pattern.search(html)
+    body = html[m.end():m.end() + 1500]
+    assert "switchTab('research')" in body, (
+        "open-research-btn handler must invoke switchTab('research')"
+    )
+    assert "r3-highlight-pulse" in body, (
+        "open-research-btn handler must pulse the destination tile"
+    )
+
+
+def test_v3_task10_open_research_button_styles_defined(html: str) -> None:
+    """The ↗ Research button needs its own CSS rule (positioned, hover state)."""
+    assert ".open-research-btn" in html, "Missing .open-research-btn CSS"
+    # Positioned absolutely so it sits in the top-right corner of the card.
+    pattern = re.compile(r"\.open-research-btn\s*\{[^}]*position:\s*absolute", re.DOTALL)
+    assert pattern.search(html), (
+        ".open-research-btn must be positioned absolute (top-right corner)"
+    )
+
+
+def test_v3_task10_card_id_stashed_on_tile_after_activate(html: str) -> None:
+    """After a successful activate, the tile's data-card-id must be set so
+    the next click ('Already live ↗') can cross-jump without re-fetch."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 5000]
+    # Either tile.dataset.cardId = ... or tile.setAttribute('data-card-id', ...)
+    assert (
+        "tile.dataset.cardId" in body
+        or "data-card-id" in body
+    ), "tile must persist the new card_id after activate so cross-jump works"
+
+
+def test_v3_task10_no_old_accept_endpoint_for_live_cards(html: str) -> None:
+    """Defense against regression: the Live Cards Activate flow must NOT POST
+    to /tradelab/accept (that endpoint requires base_name/symbol/timeframe
+    payload that the FE doesn't have). Use /tradelab/strategies/<id>/activate."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 5000]
+    assert "'/tradelab/accept'" not in body, (
+        "wireResearchLiveCardsClick must not POST to /tradelab/accept "
+        "(missing payload fields); use /tradelab/strategies/<id>/activate"
+    )
