@@ -1312,3 +1312,75 @@ def test_v3_task13_classify_outcome_treats_inconclusive_as_marginal_or_dim(html:
     # Easier: just assert 'inconclusive' is never adjacent to "return 'pass'".
     assert "inconclusive') return 'pass'" not in body
     assert 'inconclusive") return "pass"' not in body
+
+
+# ─── Task 14: Pipeline restyle ─────────────────────────────────────────
+
+
+def test_v3_task14_pipeline_card_wrapper_present(html: str) -> None:
+    """The Research Pipeline section gets the v3 .pipeline-card chrome so
+    the existing CSS rules at body.research-v3 #research .pipeline-card
+    actually apply."""
+    assert 'class="pipeline-card"' in html, (
+        "Research Pipeline section missing the .pipeline-card v3 wrapper"
+    )
+
+
+def test_v3_task14_pipeline_toolbar_wrapper_present(html: str) -> None:
+    """Filter row should sit inside .pipeline-toolbar so the v3 toolbar CSS
+    (border-bottom, gap, font) applies. The v2 .research-filters div can
+    stay as inner content; we just need the v3 wrapper outside it."""
+    assert 'class="pipeline-toolbar"' in html, (
+        "Filter row missing the .pipeline-toolbar v3 wrapper"
+    )
+
+
+def test_v3_task14_pipeline_table_has_pipeline_class(html: str) -> None:
+    """The CSS rule body.research-v3 #research table.pipeline targets
+    .pipeline (not .table). Without the class, the v3 table styling
+    (column-uppercase headers, hover stripe, monospaced numerics) doesn't
+    apply."""
+    # Find the existing #researchPipelineTable opening tag and confirm it
+    # carries class="pipeline" alongside whatever else.
+    idx = html.find('id="researchPipelineTable"')
+    assert idx > 0, "researchPipelineTable id missing"
+    tag_start = html.rfind('<table', 0, idx)
+    tag_end = html.find('>', idx)
+    assert tag_start > 0 and tag_end > 0
+    tag = html[tag_start:tag_end + 1]
+    assert "pipeline" in tag, (
+        f"researchPipelineTable must include class \"pipeline\" for v3 styling. "
+        f"Current tag: {tag}"
+    )
+
+
+def test_v3_task14_section_header_for_pipeline(html: str) -> None:
+    """A v3 section header sits between the matrix and the pipeline card so
+    the user can see 'Research Pipeline' as a labeled landmark, with the
+    meta caption describing what's inside."""
+    assert 'id="pipeline-section-header"' in html, (
+        "Missing #pipeline-section-header — needed so the v3 typography "
+        "rule applies and to anchor the meta caption"
+    )
+    assert 'id="pipeline-meta"' in html, (
+        "Missing #pipeline-meta — runs count goes here"
+    )
+
+
+def test_v3_task14_trash_button_tooltip_says_delete_not_archive(html: str) -> None:
+    """Memory note 840fb0f flipped DELETE /tradelab/runs/<id> from
+    soft-archive to hard-delete. The trash button tooltip must reflect
+    that — calling it 'Archive run' is misleading and was the v2 wording."""
+    # Find the actionsCell function (per-row delete button definition).
+    idx = html.find("function actionsCell")
+    assert idx > 0, "actionsCell function not found"
+    body = html[idx:idx + 2000]
+    assert 'title="Delete run"' in body or "title='Delete run'" in body, (
+        "Trash button title must say 'Delete run', not the v2 'Archive run' "
+        "(DELETE is hard-delete since 840fb0f)"
+    )
+    # And NOT the old wording
+    assert 'title="Archive run"' not in body and "title='Archive run'" not in body, (
+        "Stale 'Archive run' tooltip on trash button — DELETE is hard-delete "
+        "since tradelab commit 840fb0f"
+    )
