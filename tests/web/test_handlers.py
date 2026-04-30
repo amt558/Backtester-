@@ -304,3 +304,208 @@ def test_get_preflight_returns_all_four_statuses(monkeypatch, tmp_path):
     body = json.loads(body_str)
     assert body["error"] is None
     assert set(body["data"].keys()) == {"universe", "cache", "strategy", "tdapi"}
+
+
+# ─── Research v3 routes ────────────────────────────────────────────────
+
+
+def test_get_qs_metrics_unknown_run_returns_404(fake_audit_db: Path, monkeypatch):
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/does-not-exist/qs-metrics"
+    )
+    assert status == 404
+
+
+def test_get_qs_metrics_happy_returns_metric_keys(
+    fake_audit_db: Path, fake_run_folder: Path, monkeypatch,
+):
+    """qs-metrics for a run with a backtest_result.json equity_curve returns
+    the full sub-grid payload (sharpe, sortino, cagr, drawdown, monthly,
+    rolling, plus the 4 header numbers)."""
+    import sqlite3
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-003'",
+        (str(fake_run_folder / "dashboard.html"),),
+    )
+    conn.commit(); conn.close()
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/run-003/qs-metrics"
+    )
+    assert status == 200
+    payload = json.loads(body)
+    for key in (
+        "sharpe", "sortino", "cagr", "max_drawdown",
+        "monthly_returns", "rolling_sharpe",
+        "total_return", "trades", "win_rate", "profit_factor",
+    ):
+        assert key in payload, f"missing key {key!r}"
+    assert isinstance(payload["monthly_returns"], list)
+    assert isinstance(payload["rolling_sharpe"], list)
+
+
+def test_get_qs_metrics_run_with_no_equity_curve_returns_404(
+    fake_audit_db: Path, fake_tradelab_root: Path, monkeypatch,
+):
+    """A run with a folder but no backtest_result.json/equity_curve returns 404
+    — the FE shows an empty-state rather than a fabricated metric payload."""
+    import sqlite3
+    folder = fake_tradelab_root / "reports" / "empty_run"
+    folder.mkdir()
+    (folder / "dashboard.html").write_text("<html></html>")
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-001'",
+        (str(folder / "dashboard.html"),),
+    )
+    conn.commit(); conn.close()
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/run-001/qs-metrics"
+    )
+    assert status == 404
+
+
+def test_get_verdict_history_returns_oldest_to_newest(
+    fake_audit_db: Path, monkeypatch,
+):
+    """fake_audit_db has 2 ROBUST runs for s4_inside_day_breakout (run-002
+    older, run-003 newer). Endpoint returns lowercase verdicts oldest → newest."""
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/strategies/s4_inside_day_breakout/verdict-history"
+    )
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["verdicts"] == ["robust", "robust"]
+
+
+def test_get_verdict_history_unknown_strategy_returns_empty_list(
+    fake_audit_db: Path, monkeypatch,
+):
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/strategies/nonexistent/verdict-history"
+    )
+    assert status == 200
+    assert json.loads(body) == {"verdicts": []}
+
+
+def test_post_accept_with_invalid_activate_type_returns_400(
+    fake_tradelab_root: Path, monkeypatch,
+):
+    """activate must be a boolean; a string is rejected at the validation layer."""
+    monkeypatch.setattr(handlers, "_cards_path",
+                        lambda: fake_tradelab_root / "cards.json")
+    monkeypatch.setattr(handlers, "_pine_archive_root",
+                        lambda: fake_tradelab_root / "pine_archive")
+    monkeypatch.setattr(handlers, "_reports_root",
+                        lambda: fake_tradelab_root / "reports")
+
+    payload = {
+        "base_name": "smoke",
+        "symbol": "AMZN",
+        "timeframe": "1H",
+        "report_folder": str(fake_tradelab_root / "reports" / "x"),
+        "verdict": "ROBUST",
+        "activate": "yes",  # invalid — should be a bool
+    }
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/accept", json.dumps(payload).encode()
+    )
+    assert status == 400
+    assert "activate" in json.loads(body)["error"]
+
+
+def test_delete_run_permanent_unknown_returns_404(
+    fake_audit_db: Path, monkeypatch,
+):
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    body, status = handlers.handle_delete_with_status(
+        "/tradelab/runs/no-such-run/permanent"
+    )
+    assert status == 404
+
+
+def test_delete_run_permanent_removes_db_row_and_folder(
+    fake_audit_db: Path, fake_tradelab_root: Path, monkeypatch,
+):
+    """Permanent delete: DB row gone, folder removed, JSONL audit appended.
+    Distinguishes from soft-archive (which keeps the row + supports unarchive)."""
+    import sqlite3
+    folder = fake_tradelab_root / "reports" / "doomed_run"
+    folder.mkdir()
+    (folder / "dashboard.html").write_text("<html></html>")
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-001'",
+        (str(folder / "dashboard.html"),),
+    )
+    conn.commit(); conn.close()
+
+    log_path = fake_tradelab_root / "data" / "deletions.log"
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    # Default log path is cwd-relative — chdir into the fake root so
+    # delete_run_atomic writes the JSONL audit there.
+    monkeypatch.chdir(fake_tradelab_root)
+
+    body, status = handlers.handle_delete_with_status(
+        "/tradelab/runs/run-001/permanent"
+    )
+    assert status == 200
+    manifest = json.loads(body)
+    assert manifest["run_id"] == "run-001"
+    assert manifest["strategy"] == "s2_pocket_pivot"
+
+    # DB row is gone
+    conn = sqlite3.connect(str(fake_audit_db))
+    try:
+        row = conn.execute(
+            "SELECT run_id FROM runs WHERE run_id = 'run-001'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is None
+    # Folder is gone
+    assert not folder.exists()
+    # JSONL audit was appended
+    assert log_path.exists()
+    line = log_path.read_text(encoding="utf-8").strip()
+    entry = json.loads(line)
+    assert entry["run_id"] == "run-001"
+
+
+def test_delete_run_soft_archive_route_still_works_after_v3_addition(
+    fake_audit_db: Path, fake_tradelab_root: Path, monkeypatch,
+):
+    """Regression guard: adding the /permanent route must not shadow the
+    existing soft-archive DELETE. The old route stays at the un-suffixed path."""
+    import sqlite3
+    folder = fake_tradelab_root / "reports" / "soft_archive_run"
+    folder.mkdir()
+    (folder / "dashboard.html").write_text("<html></html>")
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-002'",
+        (str(folder),),
+    )
+    conn.commit(); conn.close()
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+
+    body, status = handlers.handle_delete_with_status(
+        "/tradelab/runs/run-002"
+    )
+    assert status == 204
+    # Soft-archive: row preserved
+    conn = sqlite3.connect(str(fake_audit_db))
+    try:
+        row = conn.execute(
+            "SELECT run_id FROM runs WHERE run_id = 'run-002'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row == ("run-002",)

@@ -691,6 +691,23 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         status = run_canary_check(db_path=_db_path())
         return json.dumps(status.to_dict()), 200
 
+    # ─── Research v3 routes ────────────────────────────────────────────
+    m = re.match(r"^/tradelab/runs/([^/]+)/qs-metrics$", path)
+    if m:
+        run_id = m.group(1)
+        lookup = audit_reader.resolve_run_folder(run_id, db_path=_db_path())
+        if lookup.status != "ok" or lookup.folder is None:
+            return _err("run not found"), 404
+        return _qs_metrics_response(run_id, lookup.folder)
+
+    m = re.match(r"^/tradelab/strategies/([^/]+)/verdict-history$", path)
+    if m:
+        from tradelab.web import verdict_history
+        verdicts = verdict_history.get_recent_verdicts(
+            m.group(1), n=12, db_path=_db_path()
+        )
+        return json.dumps({"verdicts": verdicts}), 200
+
     return _err("not found"), 404
 
 
@@ -937,8 +954,21 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 registry=registry,
                 pine_archive_root=_pine_archive_root(),
                 reports_root=_reports_root(),
+                activate=bool(payload.get("activate", False)),
             )
+            if payload.get("activate"):
+                # Notify FE listeners (Task 16 wires the dispatch on the FE side).
+                try:
+                    from tradelab.web import get_broadcaster
+                    get_broadcaster().broadcast({
+                        "type": "card_activated",
+                        "card_id": data["card_id"],
+                    })
+                except Exception:
+                    pass
             return _ok(data), 200
+        except approve_strategy.ActivationGateFailed as e:
+            return _err(str(e)), 422
         except FileNotFoundError as e:
             print(f"[handlers] /tradelab/accept report folder missing: {e}", file=sys.stderr)
             return _err("report folder not found"), 404
@@ -1443,17 +1473,50 @@ def _validate_accept_payload(payload: dict) -> Optional[str]:
         return "symbol must be 1–5 uppercase letters"
     if payload["timeframe"] not in _ALLOWED_TIMEFRAMES:
         return f"unknown timeframe: {payload['timeframe']!r}"
+    if "activate" in payload and not isinstance(payload["activate"], bool):
+        return "activate must be a boolean"
     return None
 
 
 def handle_delete_with_status(path: str) -> tuple[str, int]:
     """DELETE dispatcher with explicit status."""
+    # Hard-delete (Research v3): atomic DB row + folder removal + JSONL audit.
+    # Distinct from the soft-archive route below (which keeps the runs row
+    # and supports /unarchive).
+    m = re.match(r"^/tradelab/runs/([^/]+)/permanent$", path)
+    if m:
+        return _delete_run_permanent(m.group(1))
+
     m = re.match(r"^/tradelab/runs/([^/]+)$", path)
     if m:
         run_id = m.group(1)
         return _delete_run(run_id)
 
     return _err("not found"), 404
+
+
+def _delete_run_permanent(run_id: str) -> tuple[str, int]:
+    """Hard-delete via run_deletion.delete_run_atomic. Broadcasts run_deleted."""
+    from tradelab.web import run_deletion
+    try:
+        manifest = run_deletion.delete_run_atomic(run_id, db_path=_db_path())
+    except run_deletion.RunNotFound:
+        return _err("run not found"), 404
+    except Exception as e:
+        print(f"[handlers] /tradelab/runs/{run_id}/permanent: "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return _err("permanent delete failed: internal error"), 500
+    try:
+        from tradelab.web import get_broadcaster
+        get_broadcaster().broadcast({
+            "type":     "run_deleted",
+            "run_id":   manifest["run_id"],
+            "strategy": manifest["strategy"],
+        })
+    except Exception:
+        pass
+    return json.dumps(manifest), 200
 
 
 def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, int]:
@@ -1483,6 +1546,57 @@ def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, in
 
     # Fall through to body-less variant for legacy routes
     return handle_delete_with_status(path)
+
+
+def _load_daily_returns_for_run(folder: Path):
+    """Build a pd.Series of daily returns from the run's backtest_result.json.
+
+    Returns an empty Series if the file is missing or has no equity_curve.
+    Pandas is imported lazily so cold-path callers don't pay the import cost.
+    """
+    import pandas as pd  # lazy
+    bt_file = folder / "backtest_result.json"
+    if not bt_file.exists():
+        return pd.Series(dtype=float)
+    try:
+        data = json.loads(bt_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return pd.Series(dtype=float)
+    ec = data.get("equity_curve") or []
+    if not ec:
+        return pd.Series(dtype=float)
+    try:
+        dates = pd.to_datetime([p["date"] for p in ec])
+        equities = [float(p["equity"]) for p in ec]
+    except (KeyError, ValueError, TypeError):
+        return pd.Series(dtype=float)
+    s = pd.Series(equities, index=pd.DatetimeIndex(dates), dtype=float)
+    return s.pct_change().dropna()
+
+
+def _qs_metrics_response(run_id: str, folder: Path) -> tuple[str, int]:
+    """Compute QuantStats sub-grid metrics for one run. Unenveloped JSON."""
+    from tradelab.web import qs_metrics
+    returns = _load_daily_returns_for_run(folder)
+    if len(returns) == 0:
+        return _err("no equity curve for run"), 404
+
+    monthly = qs_metrics.monthly_returns_matrix(returns).fillna(0.0).values.tolist()
+    rolling = qs_metrics.rolling_sharpe(returns).dropna().tolist()
+    metrics = audit_reader.get_run_metrics(run_id, db_path=_db_path()) or {}
+    payload = {
+        "sharpe":           qs_metrics.sharpe(returns),
+        "sortino":          qs_metrics.sortino(returns),
+        "cagr":             qs_metrics.cagr(returns),
+        "max_drawdown":     qs_metrics.max_drawdown(returns),
+        "monthly_returns":  monthly,
+        "rolling_sharpe":   rolling,
+        "total_return":     float((1.0 + returns).prod() - 1.0),
+        "trades":           metrics.get("total_trades", metrics.get("trades", 0)),
+        "win_rate":         metrics.get("win_rate", 0.0),
+        "profit_factor":    metrics.get("profit_factor", 0.0),
+    }
+    return json.dumps(payload), 200
 
 
 def _delete_run(run_id: str) -> tuple[str, int]:
