@@ -12,6 +12,11 @@
 
 **Visual mockups:** `.superpowers/brainstorm/216-1777553249/content/{01,02,03}*.html`
 
+> **Slice 0 amendments (2026-04-30, after Phase 0 findings):** see `docs/superpowers/notes/2026-04-30-research-v3-slice0-findings.md`.
+> - **Task 4 changes:** **Do not create `tradelab/src/tradelab/web/activation.py`.** `approve_strategy.accept_scored` (lines 145–254) already writes to `cards.json` via `CardRegistry.create` for the v1 Score→Accept flow. v3 "Activate" extends that function with an `activate: bool = False` parameter. When `True`: set `status="enabled"`, stamp `activated_at` + `activated_verdict` fields. Add the gate logic (ROBUST-only) here. Tests extend `test_approve_strategy.py`.
+> - **Task 5 changes:** the activation route is the existing `POST /tradelab/accept` (line 920 in `handlers.py`) with an extra `activate` boolean in the payload. `_validate_accept_payload` (line 1435) needs the new field. No new `/strategies/<id>/activate` route — drop that branch.
+> - **Task 18 changes:** Class B target is **`C:/TradingScripts/alpaca_config.json`**, field `strategies[i].enabled`. The bot reads this file once at startup — no hot-reload. UI must inform the user "takes effect at next bot startup". Use write-then-rename for atomicity (existing parent-repo `write_config()` is non-atomic).
+
 ---
 
 ## File Structure
