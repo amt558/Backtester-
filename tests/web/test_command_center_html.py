@@ -428,3 +428,67 @@ def test_canary_panel_wired_into_research_load(html: str) -> None:
         "researchLoadAll must invoke loadCanaryStatus() so the canary panel "
         "populates when the Research tab activates."
     )
+
+
+# ─── Research v3 scope (Task 7) ────────────────────────────────────────
+
+
+def test_v3_google_fonts_link_present(html: str) -> None:
+    """Editorial typography requires Fraunces (display), Geist (sans),
+    JetBrains Mono. The Google Fonts <link> must be in <head>."""
+    head_close = html.find("</head>")
+    assert head_close > 0
+    head = html[:head_close]
+    assert "fonts.googleapis.com" in head, "Google Fonts <link> missing from <head>"
+    for family in ("Fraunces", "Geist", "JetBrains+Mono"):
+        assert family in head, f"font family {family!r} missing from Google Fonts URL"
+
+
+def test_v3_scope_style_block_present(html: str) -> None:
+    """The research-v3 CSS lives in its own <style id='research-v3-scope'>
+    block so future edits don't tangle with the existing dashboard styles."""
+    assert 'id="research-v3-scope"' in html, "research-v3-scope <style> block missing"
+
+
+def test_v3_palette_variables_defined_under_body_scope(html: str) -> None:
+    """Variables MUST be scoped to body.research-v3, not :root, so the rest
+    of the dashboard's palette is unchanged. Checks a sample of the palette
+    + each font-family token."""
+    idx = html.find("body.research-v3 {")
+    assert idx > 0, "body.research-v3 variable block missing"
+    block = html[idx:idx + 3000]
+    for token in (
+        "--r3-bg:", "--r3-accent:", "--r3-green:", "--r3-red:", "--r3-amber:",
+        "--r3-font-display:", "--r3-font-sans:", "--r3-font-mono:",
+    ):
+        assert token in block, f"palette/font token {token!r} missing from v3 scope"
+
+
+def test_v3_scope_does_not_leak_root_variable_names(html: str) -> None:
+    """Existing dashboard's :root vars (--bg, --green, etc.) MUST NOT be
+    redefined by the v3 scope — that would change every other tab's colors.
+    All v3 vars are prefixed with --r3-*."""
+    idx = html.find('id="research-v3-scope"')
+    assert idx > 0
+    end = html.find("</style>", idx)
+    block = html[idx:end]
+    # Anything inside the v3 scope that defines --bg / --green / --red without
+    # the r3- prefix would clobber the dashboard. (Comments and selectors
+    # mentioning these names elsewhere are fine; we look for declarations.)
+    for forbidden in ("--bg:", "--green:", "--red:", "--amber:", "--text:"):
+        assert forbidden not in block, (
+            f"v3 scope must not redefine global {forbidden!r}; use --r3-* prefix"
+        )
+
+
+def test_v3_body_class_toggle_in_switch_tab(html: str) -> None:
+    """switchTab must add 'research-v3' to the body class only when the
+    Research tab is active, and remove it on every other tab."""
+    idx = html.find("function switchTab")
+    assert idx > 0, "switchTab function not found"
+    chunk = html[idx:idx + 4000]
+    # The toggle pattern: classList.toggle('research-v3', tabName === 'research')
+    assert "research-v3" in chunk, "switchTab does not reference research-v3 class"
+    assert "tabName === 'research'" in chunk or "tabName==='research'" in chunk, (
+        "switchTab must gate the research-v3 body class on tabName === 'research'"
+    )
