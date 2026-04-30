@@ -89,11 +89,36 @@ def reload() -> None:
             _atomic_write(_LIVE_CONFIG_PATH, _cache)
 
 
-def get() -> dict[str, Any]:
-    """Return the cached config (lazy-loads on first call)."""
+_MISSING = object()
+
+
+def get(key: str | None = None, default: Any = _MISSING) -> Any:
+    """Return the cached config, or a leaf value via dotted-path lookup.
+
+    Two call shapes:
+      - ``get()`` → full cached dict (legacy; existing callers unchanged).
+      - ``get("email_digest.enabled", False)`` → walk the dotted path; return
+        the leaf value if every segment exists, else ``default``. Designed
+        to eliminate verbose ``cfg.get("a", {}).get("b", {}).get("c", x)``
+        chains and the B1-style spec/code drift they invite.
+
+    The full-dict form returns the live cache (same identity as before —
+    callers that mutate it will mutate the cache; this is a pre-existing
+    contract we preserve).
+    """
     if not _cache:
         reload()
-    return _cache
+    if key is None:
+        return _cache
+    node: Any = _cache
+    for segment in key.split("."):
+        if isinstance(node, dict) and segment in node:
+            node = node[segment]
+        else:
+            if default is _MISSING:
+                raise KeyError(f"live_config path not found: {key!r}")
+            return default
+    return node
 
 
 def save(new_cfg: dict[str, Any]) -> None:

@@ -212,6 +212,93 @@ def _pf_from_report_path(report_path_str: Optional[str]) -> Optional[float]:
         return None
 
 
+def _metrics_from_report_path(report_path_str: Optional[str]) -> dict:
+    """Read full metrics dict from the run's backtest_result.json sibling.
+
+    Like _pf_from_report_path() but returns the entire metrics block rather
+    than just profit_factor. Returns {} on any miss so callers can treat
+    "no data" uniformly.
+    """
+    if not report_path_str:
+        return {}
+    folder = Path(report_path_str)
+    if folder.is_file():
+        folder = folder.parent
+    json_path = folder / "backtest_result.json"
+    if not json_path.exists():
+        return {}
+    try:
+        data = json.loads(json_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data.get("metrics", {}) or {}
+
+
+def baselines_for_all_strategies(
+    db_path: Optional[Path] = None,
+    exclude_archived: bool = True,
+) -> dict[str, dict]:
+    """Return latest backtest metrics per strategy from the audit DB.
+
+    For each strategy_name, walks runs newest-first and returns the first
+    row whose backtest_result.json exists with a non-empty metrics dict.
+    Strategies with no usable run are omitted.
+
+    Why this exists: the Command Center's Strategy Divergence KPI compares
+    live win rate against baseline values. Frozen baselines miscalibrate the
+    KPI as strategies drift; this surfaces the most-recent OOS baseline so
+    the dashboard can refresh on page load.
+
+    Returned shape:
+        {
+            "s4_inside_day_breakout": {
+                "run_id": "...",
+                "timestamp_utc": "...",
+                "verdict": "FRAGILE",
+                "metrics": {win_rate, profit_factor, pct_return,
+                            sharpe_ratio, max_drawdown_pct, total_trades, ...},
+            },
+            ...
+        }
+    """
+    db = _resolve_db(db_path)
+    if not db.exists():
+        return {}
+
+    archived_ids: set[str] = set()
+    if exclude_archived:
+        from tradelab.audit.archive import list_archived_run_ids
+        archived_ids = list_archived_run_ids(db_path=db)
+
+    conn = sqlite3.connect(str(db))
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT run_id, timestamp_utc, strategy_name, verdict, "
+            "report_card_html_path FROM runs ORDER BY timestamp_utc DESC"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    out: dict[str, dict] = {}
+    for r in rows:
+        if r["run_id"] in archived_ids:
+            continue
+        name = r["strategy_name"]
+        if name in out:
+            continue  # already have the newest valid run for this strategy
+        metrics = _metrics_from_report_path(r["report_card_html_path"])
+        if not metrics:
+            continue
+        out[name] = {
+            "run_id": r["run_id"],
+            "timestamp_utc": r["timestamp_utc"],
+            "verdict": r["verdict"],
+            "metrics": metrics,
+        }
+    return out
+
+
 def history_for_strategy(
     strategy: str,
     *,

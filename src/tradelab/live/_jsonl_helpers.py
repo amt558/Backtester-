@@ -12,12 +12,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-try:
-    from zoneinfo import ZoneInfo  # Python 3.9+
-    _ET = ZoneInfo("America/New_York")
-except Exception:  # pragma: no cover — Windows may need tzdata
-    import pytz
-    _ET = pytz.timezone("America/New_York")
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 
 def _parse_ts_to_et_date(ts_value: Any) -> date | None:

@@ -57,6 +57,36 @@ def test_handle_unknown_route_returns_404_shape():
     assert data["error"] == "not found"
 
 
+def test_handle_baselines_returns_envelope_with_per_strategy_metrics(
+    fake_audit_db: Path, fake_run_folder: Path, monkeypatch
+):
+    import sqlite3
+    conn = sqlite3.connect(str(fake_audit_db))
+    conn.execute(
+        "UPDATE runs SET report_card_html_path = ? WHERE run_id = 'run-003'",
+        (str(fake_run_folder),),
+    )
+    conn.commit(); conn.close()
+
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    body = handlers.handle_get("/tradelab/baselines")
+    data = json.loads(body)
+    assert data["error"] is None
+    assert "baselines" in data["data"]
+    s4 = data["data"]["baselines"]["s4_inside_day_breakout"]
+    assert s4["metrics"]["win_rate"] == 59.09
+    assert s4["metrics"]["profit_factor"] == 1.42
+    assert s4["verdict"] == "ROBUST"
+
+
+def test_handle_baselines_returns_empty_dict_when_db_missing(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(handlers, "_db_path", lambda: tmp_path / "nope.db")
+    body = handlers.handle_get("/tradelab/baselines")
+    data = json.loads(body)
+    assert data["error"] is None
+    assert data["data"] == {"baselines": {}}
+
+
 def test_handle_relative_context_unknown_run_returns_404(monkeypatch):
     """T6: /tradelab/relative-context/<run_id> with unknown run_id → 404."""
     monkeypatch.setattr(handlers, "_db_path", lambda: Path("nope.db"))
@@ -118,8 +148,36 @@ def test_handle_runs_folder_distinguishes_no_run_from_no_folder(
     assert status == 404
     assert json.loads(body)["error"] == "run has no report folder"
 
+    # Truly missing run → "run not found"
     body, status = handlers.handle_get_with_status(
         "/tradelab/runs/does-not-exist/folder"
+    )
+    assert status == 404
+    assert json.loads(body)["error"] == "run not found"
+
+
+def test_handle_runs_robustness_returns_empty_for_no_folder(
+    fake_audit_db, monkeypatch
+):
+    """Run in DB but null report path → 200 with empty signals (expected miss,
+    not an error). Browser would otherwise log every Pipeline 404 to console.
+    """
+    monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
+    monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
+    monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))
+
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/run-002/robustness"
+    )
+    assert status == 200
+    data = json.loads(body)["data"]
+    assert data["signals"] == []
+    assert data["verdict"] is None
+    assert data["run_id"] == "run-002"
+
+    # Missing run still says "run not found" (genuine error)
+    body, status = handlers.handle_get_with_status(
+        "/tradelab/runs/does-not-exist/robustness"
     )
     assert status == 404
     assert json.loads(body)["error"] == "run not found"
@@ -128,9 +186,6 @@ def test_handle_runs_folder_distinguishes_no_run_from_no_folder(
 def test_handle_correlation_returns_empty_for_no_folder(
     fake_audit_db, monkeypatch
 ):
-    """Run in DB but null report path → 200 with empty pairs (expected miss,
-    not an error). Browser would otherwise log every Pipeline 404 to console.
-    """
     monkeypatch.setattr(handlers, "_db_path", lambda: fake_audit_db)
     monkeypatch.setattr(handlers, "_cache_root", lambda: Path("."))
     monkeypatch.setattr(handlers, "_src_root", lambda: Path("src"))

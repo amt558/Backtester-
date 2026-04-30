@@ -133,6 +133,45 @@ def test_banner_dismiss_uses_localstorage(html_text):
     assert "localStorage" in html_text
 
 
+def test_reenable_uses_correct_card_patch_url(html_text):
+    """reenableFromSnapshot must PATCH /tradelab/cards/{cid} (NOT /tradelab/live/cards/{cid}).
+
+    The 2026-04-27 RTH smoke (results doc FU#2) found that the wrong URL
+    silently 404'd, leaving the post-panic 'Re-enable just these N' button
+    broken. The plan template carried the wrong path; this contract pin
+    catches a re-introduction.
+    """
+    start = html_text.find("async function reenableFromSnapshot")
+    assert start > 0, "reenableFromSnapshot function not found"
+    body = html_text[start:start + 1500]
+    assert "`/tradelab/cards/${encodeURIComponent(cid)}`" in body, (
+        "reenableFromSnapshot must build URL `/tradelab/cards/${encodeURIComponent(cid)}` "
+        "(without the /live/ infix — that route does not exist; backend handler matches "
+        "^/tradelab/cards/([^/]+)$ at handlers.py)"
+    )
+    assert "/tradelab/live/cards/${" not in body, (
+        "reenableFromSnapshot must NOT use /tradelab/live/cards/{cid} — that 404s"
+    )
+
+
+def test_reenable_uses_envelope_error_check_not_env_ok(html_text):
+    """reenableFromSnapshot must check the {error, data} envelope (resp.ok && !env.error),
+    not a non-existent env.ok field. The PATCH /tradelab/cards/{id} response is
+    `{"error": null, "data": {"updated": "..."}}` with NO `ok` key — checking env.ok
+    always evaluates falsy, so every re-enable was reported as failed even when the
+    backend updated the card. Same handler envelope as patchCard at command_center.html
+    (uses `if (!resp.ok || json.error)`) — keep these consistent.
+    """
+    start = html_text.find("async function reenableFromSnapshot")
+    body = html_text[start:start + 1500]
+    assert "if (env.ok)" not in body, (
+        "reenableFromSnapshot must not check env.ok — the {error,data} envelope has no ok key"
+    )
+    assert "!env.error" in body or "json.error" in body, (
+        "reenableFromSnapshot must check the envelope's error field (resp.ok && !env.error pattern)"
+    )
+
+
 # ─── Slice 5 follow-up #9: dead .lt-pill--silent CSS regression guard ──
 
 def test_dead_lt_pill_silent_class_removed(html_text):

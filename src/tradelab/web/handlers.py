@@ -147,6 +147,45 @@ def _probe_json(url: str, timeout: float = 1.5) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def probe_receiver_status() -> dict:
+    """Probe receiver (port 8878) and ngrok directly. Returns the dict that
+    /tradelab/receiver/status wraps in an envelope. Used by the route handler
+    AND by daily_summary's daemon (which lives in the launcher process and
+    must not HTTP-call itself).
+
+    Performs up to two outbound HTTP requests (1.5s timeout each, worst-case
+    ~3s). Named `probe_*` rather than `compute_*` to make the I/O cost
+    explicit at every call site.
+    """
+    receiver_up = False
+    cards_loaded = None
+    try:
+        health = _probe_json(_receiver_health_url(), timeout=1.5)
+        receiver_up = health.get("status") == "ok"
+        cards_loaded = health.get("cards_loaded")
+    except Exception:
+        pass
+
+    ngrok_up = False
+    ngrok_url = None
+    try:
+        tunnels = _probe_json(_ngrok_api_url(), timeout=1.5)
+        for t in tunnels.get("tunnels", []):
+            if t.get("proto") == "https":
+                ngrok_url = t.get("public_url")
+                ngrok_up = bool(ngrok_url)
+                break
+    except Exception:
+        pass
+
+    return {
+        "receiver_up": receiver_up,
+        "ngrok_up": ngrok_up,
+        "ngrok_url": ngrok_url,
+        "cards_loaded": cards_loaded,
+    }
+
+
 def _yaml_path() -> Path:
     return Path("tradelab.yaml")
 
@@ -247,6 +286,44 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         # Return path relative to tradelab root (used as iframe prefix)
         return _ok({"folder": str(lookup.folder).replace("\\", "/")}), 200
 
+    m = re.match(r"^/tradelab/runs/([^/]+)/robustness$", path)
+    if m:
+        run_id = m.group(1)
+        lookup = audit_reader.resolve_run_folder(run_id, db_path=_db_path())
+        if lookup.status == "no_run":
+            return _err("run not found"), 404
+        # Empty payload (200) for runs that exist but lack robustness data —
+        # CLI runs without --report (no folder) or runs predating T4 (no
+        # robustness_result.json). FE renders "—" silently; 200 prevents
+        # devtools from logging an error for an expected miss.
+        empty = {
+            "run_id": run_id,
+            "strategy": None,
+            "verdict": None,
+            "signals": [],
+            "dsr_probability": None,
+        }
+        if lookup.status == "no_folder":
+            return _ok(empty), 200
+        rob_path = Path(lookup.folder) / "robustness_result.json"
+        if not rob_path.exists():
+            return _ok(empty), 200
+        try:
+            # utf-8-sig handles a stray BOM if any tooling injected one.
+            data = json.loads(rob_path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as e:
+            return _err(f"robustness_result.json parse failed: {e}"), 500
+        # Keep payload tight: signals + verdict + the strategy name.
+        # The full RobustnessSuiteResult is bigger than the FE needs.
+        verdict = data.get("verdict") or {}
+        return _ok({
+            "run_id": run_id,
+            "strategy": data.get("strategy"),
+            "verdict": verdict.get("verdict"),
+            "signals": verdict.get("signals", []),
+            "dsr_probability": data.get("dsr_probability"),
+        }), 200
+
     if path == "/tradelab/data-freshness":
         return _ok(freshness.get_freshness(cache_root=_cache_root())), 200
 
@@ -300,6 +377,14 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             _alerts_log_path(),
         )
         return _ok(view), 200
+
+    if path == "/tradelab/baselines":
+        # Latest backtest metrics per strategy, fed to Command Center's
+        # Strategy Divergence KPI so it compares against fresh OOS values
+        # instead of frozen const fields. Strategies with no usable run
+        # are absent from the dict — frontend keeps its baked-in fallback.
+        baselines = audit_reader.baselines_for_all_strategies(db_path=_db_path())
+        return _ok({"baselines": baselines}), 200
 
     m = re.match(r"^/tradelab/cards/([^/]+)/alerts$", path)
     if m:
@@ -592,6 +677,12 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
 
     if path == "/tradelab/live/panic/last-event":
         return handle_panic_last_event_get()
+
+    if path == "/tradelab/live/digest/preview":
+        return handle_digest_preview_get()
+
+    if path == "/tradelab/live/digest/state":
+        return handle_digest_state_get()
 
     if path == "/tradelab/canary-status":
         # Engine integrity status query — reads latest verdict per canary
@@ -1082,6 +1173,7 @@ def _inject_default_params(code: str, new_defaults: dict) -> str:
 _ALLOWED_PATCH_FIELDS = {
     "status", "quantity", "cadence", "daily_limit",
     "cooldown_seconds", "allow_collision", "allow_naked_short",
+    "capital", "max_positions",
 }
 _ALLOWED_STATUSES = {"enabled", "disabled"}
 _ALLOWED_CADENCES = {"intraday", "daily", "weekly", "manual"}
@@ -1110,6 +1202,14 @@ def _validate_patch_card_payload(payload: dict) -> Optional[str]:
             v = payload[k]
             if not isinstance(v, int) or isinstance(v, bool) or v < 0:
                 return f"{k} must be a non-negative int"
+    if "capital" in payload:
+        v = payload["capital"]
+        if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0):
+            return "capital must be a non-negative number or null"
+    if "max_positions" in payload:
+        v = payload["max_positions"]
+        if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 0):
+            return "max_positions must be a non-negative int or null"
     for k in ("allow_collision", "allow_naked_short"):
         if k in payload and not isinstance(payload[k], bool):
             return f"{k} must be a bool"
@@ -1207,6 +1307,50 @@ def handle_silence_status_get() -> Tuple[str, int]:
     """Return current silent-card set as {<card_id>: true} envelope."""
     from tradelab.live import silence_checker
     return _ok({cid: True for cid in silence_checker.silent_set()}), 200
+
+
+def handle_digest_preview_get() -> Tuple[str, int]:
+    """GET /tradelab/live/digest/preview — render today's digest as HTML.
+
+    Pure render. Does not send, does not write state, does not log.
+    Returns 200 with the rendered HTML body on success, or 500 with the
+    standard JSON error envelope (`{"error": ..., "data": null}`) on render
+    failure.
+
+    Note: the launcher's HTTP dispatcher hardcodes Content-Type to
+    application/json regardless of body type — this 200 response will
+    technically arrive at the browser as application/json. The FE in T12
+    does `await resp.text(); el.innerHTML = body`, so the wrong content-type
+    is cosmetic, not functional. Filed as a follow-up if it ever matters.
+    """
+    from datetime import datetime
+    from tradelab.live import daily_summary
+    try:
+        _, html_body = daily_summary.render(datetime.now(daily_summary._ET))
+        return html_body, 200
+    except Exception as e:
+        return _err(f"{type(e).__name__}: {e}"), 500
+
+
+def handle_digest_state_get() -> Tuple[str, int]:
+    """GET /tradelab/live/digest/state — return the current digest state dict.
+
+    Pure read. Does not write state. Returns 200 with the parsed state
+    dict, or 200 with data=null when the state file is missing, empty,
+    or unparseable — `_read_state()` returns {} for all those cases and
+    we surface that as null to the FE (missing state is not an error).
+    """
+    from tradelab.live import daily_summary
+    state = daily_summary._read_state()
+    # _read_state() returns {} for both missing-file and unparseable-file
+    # cases (corrupt JSON is logged to stderr there and squashed to {}).
+    # We intentionally collapse both into data=null at this layer for v1 —
+    # the FE just needs "have we sent today or not?" and corrupt-state is
+    # rare given the atomic-replace writer. Revisit if duplicate-send
+    # incidents surface (would need a `state_health` field in the envelope).
+    if not state:
+        return _ok(None), 200
+    return _ok(state), 200
 
 
 def handle_panic_last_event_get() -> Tuple[str, int]:

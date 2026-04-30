@@ -8,18 +8,17 @@ digest_state.json to prevent same-day re-fires.
 """
 from __future__ import annotations
 
+import html as _html
 import json
 import re
 import sys
-from datetime import date, datetime
+import threading
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-try:
-    from zoneinfo import ZoneInfo
-    _ET = ZoneInfo("America/New_York")
-except Exception:  # pragma: no cover
-    import pytz
-    _ET = pytz.timezone("America/New_York")
+from zoneinfo import ZoneInfo
+
+_ET = ZoneInfo("America/New_York")
 
 from tradelab.live import _jsonl_helpers
 
@@ -93,7 +92,7 @@ def _ts_to_et_hhmm(ts: str) -> str:
         s = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
         dt = datetime.fromisoformat(s)
         return dt.astimezone(_ET).strftime("%H:%M") + " ET"
-    except Exception:
+    except (ValueError, TypeError):
         return ts
 
 
@@ -111,7 +110,7 @@ def _safe_call(fn, *args, default):
 _BADGE_CRIT = 'style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600;color:#fff;background:#d32f2f;margin-right:6px"'
 _BADGE_WARN = 'style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:11px;font-weight:600;color:#fff;background:#f57c00;margin-right:6px"'
 _HEADER_OK = 'style="margin:16px 0 6px 0;font-size:13px;font-weight:600;color:#388e3c;border-bottom:1px solid #f0f0f0;padding-bottom:3px"'
-_HEADER = 'style="margin:16px 0 6px 0;font-size:13px;font-weight:600;color:#444;border-bottom:1px solid #f0f0f0;padding-bottom:3px"'
+_HEADER_NEUTRAL = 'style="margin:16px 0 6px 0;font-size:13px;font-weight:600;color:#444;border-bottom:1px solid #f0f0f0;padding-bottom:3px"'
 _META = 'style="color:#888;font-size:11px"'
 
 
@@ -128,7 +127,12 @@ def _render_anomaly_section(today_et: date) -> tuple[str, dict[str, int]]:
         counts["panic"] = len(panics)
         for p in panics:
             level = p.get("level", "?")
-            cards = p.get("cards_disabled") or p.get("cards_count") or 0
+            # 0 is a valid count, don't fall through to fallback via `or`.
+            cards = p.get("cards_disabled")
+            if cards is None:
+                cards = p.get("cards_count")
+            if cards is None:
+                cards = 0
             t = _ts_to_et_hhmm(p.get("ts", ""))
             items.append(
                 f'<li><span {_BADGE_CRIT}>PANIC {level}</span> {t} — {cards} cards disabled</li>'
@@ -200,7 +204,7 @@ def _render_anomaly_section(today_et: date) -> tuple[str, dict[str, int]]:
         return f'<h4 {_HEADER_OK}>✓ No anomalies today</h4>', counts
 
     body = (
-        f'<h4 {_HEADER}>⚠ Anomalies ({total})</h4>\n'
+        f'<h4 {_HEADER_NEUTRAL}>⚠ Anomalies ({total})</h4>\n'
         '<ul style="margin:4px 0;padding-left:22px">\n'
         + "\n".join(items)
         + "\n</ul>"
@@ -214,6 +218,7 @@ def _render_anomaly_section(today_et: date) -> tuple[str, dict[str, int]]:
 
 def _card_counts() -> dict:
     """Return {total, enabled, disabled, silent} from cards.json + silence_checker."""
+    # Deferred import: avoids circular import via tradelab.live package init.
     from tradelab.live.cards import CardRegistry
     from tradelab.live import silence_checker
 
@@ -243,39 +248,43 @@ def _today_notify_counts_by_severity(today_et: date) -> dict[str, int]:
 
 
 def _open_positions() -> list[dict]:
+    # Deferred import: avoids loading alpaca_client (HTTP client setup) at module import time.
     from tradelab.live import alpaca_client
     return alpaca_client.list_positions()
 
 
 def _open_orders() -> list[dict]:
+    # Deferred import: avoids loading alpaca_client (HTTP client setup) at module import time.
     from tradelab.live import alpaca_client
     return alpaca_client.list_open_orders()
 
 
 def _receiver_status() -> dict:
-    """Best-effort: probe the receiver's status endpoint.
-    Returns {up, ngrok_url}. On failure: {up: False, ngrok_url: "—"}.
-    Note: uptime is not available from the current endpoint shape; see
-    Slice 7a follow-up for adding receiver_uptime_seconds to handlers.py."""
+    """Best-effort receiver probe via direct in-process call.
+
+    Used to be a urllib HTTP self-call to the launcher's /tradelab/receiver/status
+    endpoint, which created a startup race (the daemon could tick before the
+    launcher's HTTP server had bound) and pointless overhead. Now we import
+    handlers.probe_receiver_status() and call it directly.
+
+    Returns {up, ngrok_url}. The probe helper returns the richer
+    {receiver_up, ngrok_up, ngrok_url, cards_loaded} envelope; we narrow it
+    here to match the existing renderer contract.
+
+    Deferred import is intentional: tradelab.web.__init__ eagerly constructs
+    Broadcaster() and JobManager() singletons (with a .cache mkdir), and we
+    don't want to inflict those side effects on the daemon process at module
+    load time. Importing at call time avoids that — keep the deferral.
+    """
     try:
-        import urllib.request
-        import json as _json
-        with urllib.request.urlopen("http://127.0.0.1:8877/tradelab/receiver/status", timeout=2) as r:
-            data = _json.loads(r.read().decode("utf-8")).get("data", {})
+        from tradelab.web.handlers import probe_receiver_status
+        data = probe_receiver_status()
         return {
             "up": bool(data.get("receiver_up", False)),
-            "ngrok_url": data.get("ngrok_url", "—") or "—",
+            "ngrok_url": data.get("ngrok_url") or "—",
         }
     except Exception:
         return {"up": False, "ngrok_url": "—"}
-
-
-def _humanize_seconds(s: int) -> str:
-    """120 → '2m', 7320 → '2h 2m', 0 → '0m'."""
-    h, m = divmod(s // 60, 60)
-    if h:
-        return f"{h}h {m}m"
-    return f"{m}m"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -283,7 +292,7 @@ def _humanize_seconds(s: int) -> str:
 # ────────────────────────────────────────────────────────────────────────────
 
 def _render_snapshot_section(today_et: date) -> str:
-    parts: list[str] = [f'<h4 {_HEADER}>📊 Health snapshot (now)</h4>']
+    parts: list[str] = [f'<h4 {_HEADER_NEUTRAL}>📊 Health snapshot (now)</h4>']
 
     cc, err = _safe_call(_card_counts, default={"total": 0, "enabled": 0, "disabled": 0, "silent": 0})
     if err:
@@ -403,8 +412,8 @@ def _render_plaintext(html: str) -> str:
     s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
     s = re.sub(r"</(td|th)>", "  ", s, flags=re.IGNORECASE)
     s = re.sub(r"<[^>]+>", "", s)  # strip remaining tags
-    # Decode common entities
-    s = s.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    # Decode HTML entities — html.unescape handles named (&amp;) and numeric (&#39;) forms.
+    s = _html.unescape(s)
     # Collapse runs of blank lines and trailing spaces
     s = re.sub(r"[ \t]+\n", "\n", s)
     s = re.sub(r"\n{3,}", "\n\n", s)
@@ -436,24 +445,25 @@ def render(now: datetime) -> tuple[str, str]:
 # ────────────────────────────────────────────────────────────────────────────
 
 def _config_enabled() -> bool:
+    # Deferred import: avoids circular import via tradelab.live package init.
     from tradelab.live import live_config
-    cfg = live_config.get()
-    return bool(cfg.get("email_digest", {}).get("enabled", False))
+    return bool(live_config.get("email_digest.enabled", False))
 
 
 def _config_send_time() -> str:
+    # Deferred import: avoids circular import via tradelab.live package init.
     from tradelab.live import live_config
-    cfg = live_config.get()
-    return str(cfg.get("email_digest", {}).get("send_time", "16:00"))
+    return str(live_config.get("email_digest.send_time", "16:00"))
 
 
 def _config_recipient() -> str:
+    # Deferred import: avoids circular import via tradelab.live package init.
     from tradelab.live import live_config
-    cfg = live_config.get()
-    return str(cfg.get("notifications", {}).get("smtp", {}).get("to_address", ""))
+    return str(live_config.get("notifications.smtp.to_address", ""))
 
 
 def _is_trading_day(d: date) -> bool:
+    # Deferred import: avoids circular import via tradelab.live package init.
     from tradelab.live import trading_calendar
     return trading_calendar.is_trading_day(d)
 
@@ -499,51 +509,32 @@ def _write_state(state: dict) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 
 def _send_email(subject: str, html_body: str, to_address: str) -> None:
-    """Direct SMTP multipart send (HTML + plaintext alternative).
+    """Send the daily digest via notify_channels.email.send_digest().
 
-    Intentionally bypasses notify_channels.email.send() because that helper:
-      - Mangles the subject by prepending '[tradelab SEVERITY]'
-      - Sends plaintext-only (no HTML alternative)
-      - Returns False on failure rather than raising
-    Per spec §3.3, the digest path is deliberately direct-SMTP.
-    Raises on send failure (caller catches and increments attempts_today).
+    Raises on any failure (caller in tick() catches and increments
+    attempts_today for spec §3.5 retry-cap).
     """
-    import smtplib
-    from email.message import EmailMessage
-
+    # Deferred import: avoids loading SMTP/email machinery until a send is actually attempted.
     from tradelab.live import live_config
-    cfg = live_config.get()
-    smtp_cfg = cfg.get("notifications", {}).get("smtp", {})
-    host = str(smtp_cfg.get("host", "")).strip()
-    port = int(smtp_cfg.get("port", 587))
-    user = str(smtp_cfg.get("user", ""))
-    password = str(smtp_cfg.get("password", ""))
-    from_addr = str(smtp_cfg.get("from_address", "") or user)
-    if not host:
-        raise RuntimeError("smtp host not configured")
+    from tradelab.live.notify_channels.email import send_digest
 
-    plaintext = _render_plaintext(html_body)
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = from_addr
-    msg["To"] = to_address
-    msg.set_content(plaintext)
-    msg.add_alternative(html_body, subtype="html")
-
-    with smtplib.SMTP(host, port, timeout=10) as conn:
-        conn.starttls()
-        if user:
-            conn.login(user, password)
-        conn.sendmail(from_addr, [to_address], msg.as_string())
+    send_digest(
+        subject=subject,
+        html_body=html_body,
+        plaintext_body=_render_plaintext(html_body),
+        to_address=to_address,
+        config=live_config.get(),
+    )
 
 
 def _append_audit_line(today_str: str) -> None:
     """Append a single INFO line to notify_events.jsonl marking that today's
     digest was sent. Does NOT route through notify() — direct file append to
     avoid feeding the digest's own activity into tomorrow's tally."""
+    # Timestamp in UTC to match notify.py's notify_events.jsonl format —
+    # they end up in the same file occasionally and inconsistent timezones break grep ordering.
     line = json.dumps({
-        "ts": datetime.now(_ET).isoformat(),
+        "ts": datetime.now(timezone.utc).isoformat(),
         "severity": "INFO",
         "title": "daily_digest_sent",
         "body": f"Daily digest for {today_str} sent successfully.",
@@ -555,6 +546,31 @@ def _append_audit_line(today_str: str) -> None:
             f.write(line)
     except OSError as e:
         print(f"[daily_summary] audit append failed: {e}", file=sys.stderr)
+
+
+def _append_capped_audit_line(today_str: str, attempts: int, last_error: str) -> None:
+    """Append a single CRITICAL line to notify_events.jsonl when the digest
+    has hit MAX_ATTEMPTS_PER_DAY and is giving up for the day.
+
+    Mirrors _append_audit_line shape so tomorrow's anomaly section can
+    detect "yesterday's digest was capped" with one event_type filter
+    instead of scanning per-attempt WARNINGs in order. (B21)
+    """
+    # Timestamp in UTC to match notify.py's notify_events.jsonl format —
+    # they end up in the same file occasionally and inconsistent timezones break grep ordering.
+    line = json.dumps({
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "severity": "CRITICAL",
+        "title": "daily_digest_capped",
+        "body": f"Daily digest for {today_str} capped at {attempts} attempts. Last error: {last_error}",
+        "event_type": "daily_digest_capped",
+    }) + "\n"
+    try:
+        NOTIFY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(NOTIFY_PATH, "a", encoding="utf-8") as f:
+            f.write(line)
+    except OSError as e:
+        print(f"[daily_summary] capped audit append failed: {e}", file=sys.stderr)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -596,7 +612,13 @@ def tick(now: datetime) -> None:
     if state.get("last_sent_date") == today_str:
         return
 
-    # New day — reset attempts_today if state is stale (yesterday or earlier).
+    # Carry forward today's in-flight retry counter, OR reset on a new day.
+    # Subtle: after a non-capped failure, the failure branch preserves the OLD
+    # last_sent_date (None or yesterday) and only bumps attempts_today. So
+    # "last_sent_date is None" can mean "first failure today, keep attempts"
+    # OR "first attempt ever". Either way, the existing attempts_today value
+    # is the right one to carry forward. Only when last_sent_date is a real
+    # PRIOR date does attempts represent yesterday's stale count — wipe it.
     attempts = state.get("attempts_today", 0)
     if state.get("last_sent_date") != today_str and state.get("last_sent_date") is not None:
         attempts = 0
@@ -625,8 +647,14 @@ def tick(now: datetime) -> None:
             "last_attempted_at": now_et.isoformat(),
             "attempts_today": attempts,
         })
+        # On cap, drop a structured CRITICAL line so tomorrow's anomaly
+        # section can detect "yesterday gave up" without scanning per-attempt
+        # WARNINGs. (B21)
+        if capped:
+            _append_capped_audit_line(today_str, attempts, f"{type(e).__name__}: {e}")
         # Notify only on failure (one line per attempt).
         try:
+            # Deferred import: error-path only, and avoids circular import via tradelab.live.
             from tradelab.live.notify import notify, Severity
             suffix = " — no further retries today" if capped else ""
             notify(
@@ -649,7 +677,54 @@ def tick(now: datetime) -> None:
 
     # F2 — rotate logs once per day after a successful send
     try:
+        # Deferred import: avoids circular import via tradelab.live package init.
         from tradelab.live import jsonl_rotation
         jsonl_rotation.rotate_all()
     except Exception as e:
         print(f"[daily_summary] jsonl_rotation failed: {e}", file=sys.stderr)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Daemon thread lifecycle — mirrors silence_checker exactly
+# ────────────────────────────────────────────────────────────────────────────
+
+# Tick interval. Digest sends are gated by send_time inside tick(), so
+# this only controls how often we *check* the send_time gate. 60s gives
+# minute-resolution scheduling without burning CPU.
+TICK_SECONDS = 60
+
+_thread: threading.Thread | None = None
+_stop_evt = threading.Event()
+_start_lock = threading.Lock()
+
+
+def _run_loop() -> None:
+    """Thread body: tick, sleep TICK_SECONDS (interruptible), repeat."""
+    while not _stop_evt.is_set():
+        try:
+            tick(datetime.now(_ET))
+        except Exception as e:
+            print(f"[daily_summary] tick raised: {type(e).__name__}: {e}", file=sys.stderr)
+        if _stop_evt.wait(TICK_SECONDS):
+            break
+
+
+def start() -> None:
+    """Boot the periodic thread. Idempotent — repeated calls are no-ops."""
+    global _thread
+    with _start_lock:
+        if _thread is not None and _thread.is_alive():
+            return
+        _stop_evt.clear()  # event may be set from a previous stop() cycle
+        _thread = threading.Thread(target=_run_loop, daemon=True, name="daily_summary")
+        _thread.start()
+
+
+def stop() -> None:
+    """Signal stop and join the thread. Safe when not running."""
+    global _thread
+    _stop_evt.set()
+    with _start_lock:
+        if _thread is not None:
+            _thread.join(timeout=2.0)
+            _thread = None

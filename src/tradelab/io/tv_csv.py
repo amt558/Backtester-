@@ -87,11 +87,23 @@ def _f(row: dict, key: str, default: float = 0.0) -> float:
     return float(v)
 
 
+def _sniff_delimiter(first_line: str) -> str:
+    """Return ',' or '\\t' based on which the header line uses.
+
+    TV's CSV download is comma-separated, but a paste from Excel arrives
+    tab-separated. Pick the delimiter that appears more often in the header.
+    """
+    if first_line.count("\t") > first_line.count(","):
+        return "\t"
+    return ","
+
+
 def parse_tv_trades_csv(csv_text: str, *, symbol: str) -> ParsedTradesCSV:
     if not csv_text or not csv_text.strip():
         raise TVCSVParseError("CSV is empty")
 
-    reader = csv.DictReader(io.StringIO(csv_text))
+    delim = _sniff_delimiter(csv_text.splitlines()[0])
+    reader = csv.DictReader(io.StringIO(csv_text), delimiter=delim)
     if reader.fieldnames is None:
         raise TVCSVParseError("CSV has no header row")
 

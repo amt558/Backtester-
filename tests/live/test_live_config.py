@@ -82,3 +82,49 @@ def test_update_in_place_then_save(_isolated_config_path):
     assert cfg["notifications"]["ntfy"]["topic"] == "tradelab-test"
     # Other ntfy fields not blown away
     assert cfg["notifications"]["ntfy"]["server"] == "https://ntfy.sh"
+
+
+# ─── B19: dotted-path get() ──────────────────────────────────────────
+
+
+def test_get_dotted_path_returns_leaf_value(_isolated_config_path):
+    """Defaults set email_digest.send_time = '16:00'."""
+    assert live_config.get("email_digest.send_time") == "16:00"
+    assert live_config.get("email_digest.enabled") is False
+    assert live_config.get("guardrails.max_exposure_pct") == 0.90
+
+
+def test_get_dotted_path_returns_default_when_missing(_isolated_config_path):
+    assert live_config.get("does_not_exist.nope", "fallback") == "fallback"
+    assert live_config.get("email_digest.brand_new_field", 42) == 42
+    # Empty default works (None, 0, "", [], etc.)
+    assert live_config.get("missing", None) is None
+    assert live_config.get("missing", 0) == 0
+    assert live_config.get("missing", "") == ""
+
+
+def test_get_dotted_path_raises_when_missing_no_default(_isolated_config_path):
+    with pytest.raises(KeyError, match="path not found"):
+        live_config.get("does_not_exist.nope")
+
+
+def test_get_dotted_path_walks_through_nested_dicts(_isolated_config_path):
+    """Multi-segment paths must descend correctly."""
+    live_config.update({"notifications": {"smtp": {"host": "smtp.example.com"}}})
+    assert live_config.get("notifications.smtp.host") == "smtp.example.com"
+    assert live_config.get("notifications.smtp.port") == 587  # default preserved
+
+
+def test_get_dotted_path_does_not_traverse_non_dict_leaves(_isolated_config_path):
+    """If a segment hits a non-dict value mid-path, treat as missing (not a crash)."""
+    # max_exposure_pct is a float; trying to descend into it should hit default
+    assert live_config.get("guardrails.max_exposure_pct.subkey", "missing") == "missing"
+
+
+def test_get_no_args_still_returns_full_dict(_isolated_config_path):
+    """Backwards compat: no-arg get() unchanged."""
+    cfg = live_config.get()
+    assert isinstance(cfg, dict)
+    assert "schema_version" in cfg
+    # Same identity as cache (existing contract preserved)
+    assert live_config.get() is cfg

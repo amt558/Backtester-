@@ -2445,17 +2445,21 @@ Expected: `~680 passed / 0 failed` (655 baseline + ~25 net-new). If failures, fi
 
 - [ ] **Step 2: Restart dashboard + receiver and verify boot**
 
+The launcher is `C:/TradingScripts/launch_dashboard.py` (or invoke via `Launch_Dashboard.bat`). Logs are written to `C:/TradingScripts/dashboard_*.log` per-session — find the most recent one with `ls -t C:/TradingScripts/dashboard_*.log | head -1`.
+
 ```bash
-# Find existing PIDs
+# Find existing dashboard launcher PID(s)
 cd C:/TradingScripts && tasklist | findstr python
-# Kill old launcher + receiver (note PIDs from above)
-# Start fresh:
-cd C:/TradingScripts && powershell -NoProfile -File start_command_center.ps1
-# Wait ~10s, then check dashboard log for "[startup]" lines
-cd C:/TradingScripts && tail -20 logs/dashboard.log
+# Stop the old launcher + receiver gracefully (note PIDs above; ASK USER before kill if uncertain)
+# Then start fresh:
+cd C:/TradingScripts && cmd //c Launch_Dashboard.bat &
+# Wait ~10s, then read the newest dashboard_*.log (created by the boot)
+ls -t C:/TradingScripts/dashboard_*.log | head -1 | xargs tail -30
 ```
 
-Expected: both processes start cleanly; no exceptions in log; "[startup] silence_checker started" line still present (didn't break Slice 5).
+Expected: launcher boots cleanly; no exceptions in log; "[startup] silence_checker started" line still present (didn't break Slice 5).
+
+**If you cannot safely identify which python process is the dashboard, ASK the user before killing anything** — there may be unrelated python processes running.
 
 - [ ] **Step 3: Static smoke — visit dashboard, confirm panic strip renders**
 

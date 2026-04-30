@@ -126,6 +126,26 @@ def test_malformed_price_includes_trade_number_in_error():
     assert "trade #1" in str(exc.value).lower()
 
 
+def test_tab_separated_paste_from_excel_parses():
+    # When users open the TV CSV in Excel and Ctrl+C the grid into the
+    # dashboard, the clipboard payload is tab-separated, not comma-separated.
+    # Parser must sniff the delimiter and accept both.
+    tsv = (
+        "Trade #\tType\tSignal\tDate/Time\tPrice USD\tContracts\tProfit USD\t"
+        "Profit %\tCumulative profit USD\tCumulative profit %\tRun-up USD\t"
+        "Run-up %\tDrawdown USD\tDrawdown %\n"
+        "1\tEntry long\tLong\t2024-05-01 09:30\t100.00\t10\t\t\t\t\t\t\t\t\n"
+        "1\tExit long\tExit\t2024-05-03 09:30\t105.00\t10\t50.00\t5.00\t"
+        "50.00\t0.05\t60.00\t6.00\t-2.00\t-0.20\n"
+    )
+    parsed = parse_tv_trades_csv(tsv, symbol="MU")
+    assert len(parsed.trades) == 1
+    t = parsed.trades[0]
+    assert t.entry_price == 100.00
+    assert t.exit_price == 105.00
+    assert t.pnl == 50.00
+
+
 def test_modern_tv_schema_with_renamed_columns_parses():
     # As of TV 2025+ the Strategy Tester export renamed several columns:
     #   Date/Time          -> "Date and time"

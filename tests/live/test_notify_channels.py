@@ -166,6 +166,140 @@ def test_email_send_returns_false_on_smtp_exception(monkeypatch):
     assert ok is False
 
 
+# ─── email.send_digest (Slice 7a B1 — daily digest path) ─────────────
+
+def _digest_cfg():
+    return {"notifications": {"smtp": {
+        "host": "smtp.example.com", "port": 587,
+        "user": "u@e.com", "password": "pw",
+        "from_address": "u@e.com",
+    }}}
+
+
+def _patch_smtp(monkeypatch):
+    smtp_instance = MagicMock()
+    smtp_instance.__enter__ = MagicMock(return_value=smtp_instance)
+    smtp_instance.__exit__ = MagicMock(return_value=False)
+    smtp_class = MagicMock(return_value=smtp_instance)
+    monkeypatch.setattr("tradelab.live.notify_channels.email.smtplib.SMTP", smtp_class)
+    return smtp_class, smtp_instance
+
+
+def test_send_digest_passes_subject_through_verbatim(monkeypatch):
+    """No '[tradelab SEVERITY]' prefix — digest owns its own subject."""
+    smtp_class, smtp_instance = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    send_digest(
+        subject="tradelab digest 2026-04-27 — 3 alerts, 1 panic",
+        html_body="<html><body><h1>hi</h1></body></html>",
+        plaintext_body="hi",
+        to_address="amit@e.com",
+        config=_digest_cfg(),
+    )
+    raw = smtp_instance.sendmail.call_args[0][2]
+    # Subject is in raw email — em-dash will be quoted-printable (=E2=80=94)
+    # or base64-encoded; assert the ASCII anchors directly.
+    assert "tradelab digest 2026-04-27" in raw
+    assert "3 alerts, 1 panic" in raw
+    assert "[tradelab" not in raw  # no '[tradelab SEVERITY]' prefix
+
+
+def test_send_digest_builds_multipart_alternative_with_html_and_plaintext(monkeypatch):
+    """spec §5.3: multipart MIME with both text/plain and text/html parts."""
+    smtp_class, smtp_instance = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    send_digest(
+        subject="x",
+        html_body="<html><body><p>HTML version</p></body></html>",
+        plaintext_body="PLAIN version",
+        to_address="amit@e.com",
+        config=_digest_cfg(),
+    )
+    raw = smtp_instance.sendmail.call_args[0][2]
+    assert "multipart/alternative" in raw
+    assert "Content-Type: text/plain" in raw
+    assert "Content-Type: text/html" in raw
+    assert "PLAIN version" in raw
+    assert "HTML version" in raw
+
+
+def test_send_digest_uses_starttls_login_and_sendmail(monkeypatch):
+    smtp_class, smtp_instance = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    send_digest("s", "<p>h</p>", "p", "amit@e.com", _digest_cfg())
+    smtp_class.assert_called_once_with("smtp.example.com", 587, timeout=10)
+    smtp_instance.starttls.assert_called_once()
+    smtp_instance.login.assert_called_once_with("u@e.com", "pw")
+    args = smtp_instance.sendmail.call_args[0]
+    assert args[0] == "u@e.com"
+    assert args[1] == ["amit@e.com"]
+
+
+def test_send_digest_raises_on_smtp_exception(monkeypatch):
+    """spec §3.5 retry-cap depends on raise — must NOT swallow + return bool."""
+    import smtplib as real_smtplib
+    smtp_instance = MagicMock()
+    smtp_instance.__enter__ = MagicMock(return_value=smtp_instance)
+    smtp_instance.__exit__ = MagicMock(return_value=False)
+    smtp_instance.sendmail.side_effect = real_smtplib.SMTPDataError(550, b"rejected")
+    monkeypatch.setattr("tradelab.live.notify_channels.email.smtplib.SMTP", MagicMock(return_value=smtp_instance))
+    from tradelab.live.notify_channels.email import send_digest
+    with pytest.raises(real_smtplib.SMTPDataError):
+        send_digest("s", "<p>h</p>", "p", "amit@e.com", _digest_cfg())
+
+
+def test_send_digest_raises_when_host_not_configured(monkeypatch):
+    smtp_class, _ = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    cfg = {"notifications": {"smtp": {"host": "", "port": 587, "from_address": "u@e.com"}}}
+    with pytest.raises(RuntimeError, match="smtp host not configured"):
+        send_digest("s", "<p>h</p>", "p", "amit@e.com", cfg)
+    smtp_class.assert_not_called()
+
+
+def test_send_digest_raises_when_to_address_empty(monkeypatch):
+    smtp_class, _ = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    with pytest.raises(RuntimeError, match="recipient"):
+        send_digest("s", "<p>h</p>", "p", "", _digest_cfg())
+    smtp_class.assert_not_called()
+
+
+def test_send_digest_skips_login_when_no_user_configured(monkeypatch):
+    smtp_class, smtp_instance = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    cfg = {"notifications": {"smtp": {
+        "host": "smtp.local", "port": 25,
+        "user": "", "password": "",
+        "from_address": "noreply@local",
+    }}}
+    send_digest("s", "<p>h</p>", "p", "amit@e.com", cfg)
+    smtp_instance.starttls.assert_called_once()
+    smtp_instance.login.assert_not_called()
+    smtp_instance.sendmail.assert_called_once()
+
+
+def test_send_digest_falls_back_to_user_when_from_address_missing(monkeypatch):
+    """B25: when from_address is empty/missing, MAIL FROM falls back to user.
+
+    Pins _smtp_params line: `from_addr = str(smtp_cfg.get("from_address", "") or user)`.
+    Regression that swaps fallback ordering or drops the fallback would be caught here.
+    """
+    smtp_class, smtp_instance = _patch_smtp(monkeypatch)
+    from tradelab.live.notify_channels.email import send_digest
+    cfg = {"notifications": {"smtp": {
+        "host": "smtp.example.com", "port": 587,
+        "user": "u@e.com", "password": "pw",
+        # from_address intentionally omitted
+    }}}
+    send_digest("s", "<p>h</p>", "p", "amit@e.com", cfg)
+    args = smtp_instance.sendmail.call_args[0]
+    assert args[0] == "u@e.com"  # MAIL FROM falls back to user
+    assert args[1] == ["amit@e.com"]
+    raw = args[2]
+    assert "From: u@e.com" in raw  # message From: header also uses user
+
+
 # ─── browser ─────────────────────────────────────────────────────────
 
 

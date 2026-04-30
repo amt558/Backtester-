@@ -1,6 +1,7 @@
 """`tradelab history` subcommand — list / show / diff historical runs."""
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .audit import diff_runs, get_run, list_runs
+from .web import audit_reader
 
 
 history_app = typer.Typer(help="Query the append-only tradelab run history.")
@@ -71,6 +73,45 @@ def show_cmd(run_id: str = typer.Argument(..., help="Full or short (8-char) run_
         console.print(f"[dim]dashboard: {run.report_card_html_path}[/dim]")
     console.print()
     console.print(run.report_card_markdown or "[dim](no markdown)[/dim]")
+
+
+@history_app.command("baselines")
+def baselines_cmd(
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON instead of a table"),
+) -> None:
+    """Latest backtest metrics per strategy (what the dashboard fetches)."""
+    baselines = audit_reader.baselines_for_all_strategies()
+    if json_out:
+        console.print_json(_json.dumps(baselines))
+        return
+    if not baselines:
+        console.print("[dim]No baselines available — DB empty or no run has a backtest_result.json sibling.[/dim]")
+        return
+    t = Table(show_header=True, header_style="bold")
+    t.add_column("strategy", style="magenta")
+    t.add_column("verdict")
+    t.add_column("trades", justify="right")
+    t.add_column("WR%", justify="right")
+    t.add_column("PF", justify="right")
+    t.add_column("Ret%", justify="right")
+    t.add_column("Sharpe", justify="right")
+    t.add_column("DD%", justify="right")
+    t.add_column("run", style="dim")
+    for name in sorted(baselines):
+        row = baselines[name]
+        m = row["metrics"]
+        t.add_row(
+            name,
+            row.get("verdict") or "-",
+            str(m.get("total_trades", "-")),
+            f"{m['win_rate']:.2f}" if "win_rate" in m else "-",
+            f"{m['profit_factor']:.3f}" if "profit_factor" in m else "-",
+            f"{m['pct_return']:.2f}" if "pct_return" in m else "-",
+            f"{m['sharpe_ratio']:.3f}" if "sharpe_ratio" in m else "-",
+            f"{m['max_drawdown_pct']:.2f}" if "max_drawdown_pct" in m else "-",
+            row["run_id"][:8],
+        )
+    console.print(t)
 
 
 @history_app.command("diff")

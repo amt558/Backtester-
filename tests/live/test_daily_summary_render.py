@@ -50,6 +50,42 @@ def test_render_anomaly_section_with_panic(monkeypatch):
     assert counts["panic"] == 1
 
 
+def test_render_panic_with_explicit_zero_cards_disabled_reports_zero(monkeypatch):
+    """B13: cards_disabled=0 must render as 0, not fall through to cards_count.
+
+    Regression for `cards_disabled or cards_count or 0` — short-circuit on 0
+    incorrectly preferred cards_count when cards_disabled was a legitimate 0.
+    """
+    monkeypatch.setattr(daily_summary, "_today_panics", lambda d: [
+        _make_panic_entry(
+            "2026-04-27T18:22:00+00:00",
+            "L1",
+            cards_disabled=0,
+            cards_count=7,
+        ),
+    ])
+    for fn in ("_today_silent_transitions", "_today_guardrail_blocks", "_today_order_failures",
+               "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+
+    section, _counts = daily_summary._render_anomaly_section(date(2026, 4, 27))
+    assert "0 cards disabled" in section
+    assert "7 cards disabled" not in section
+
+
+def test_render_panic_falls_back_to_cards_count_when_cards_disabled_missing(monkeypatch):
+    """B13 sibling: when cards_disabled is absent (None), still uses cards_count."""
+    monkeypatch.setattr(daily_summary, "_today_panics", lambda d: [
+        _make_panic_entry("2026-04-27T18:22:00+00:00", "L1", cards_count=5),
+    ])
+    for fn in ("_today_silent_transitions", "_today_guardrail_blocks", "_today_order_failures",
+               "_today_receiver_downtimes", "_today_ngrok_changes"):
+        monkeypatch.setattr(daily_summary, fn, lambda d: [])
+
+    section, _counts = daily_summary._render_anomaly_section(date(2026, 4, 27))
+    assert "5 cards disabled" in section
+
+
 def test_render_anomaly_section_with_blocks(monkeypatch):
     """Three guardrail blocks across two cards → renders count + per-card breakdown."""
     monkeypatch.setattr(daily_summary, "_today_guardrail_blocks", lambda d: [
@@ -292,3 +328,41 @@ def test_render_plaintext_end_to_end_via_render(monkeypatch):
     assert "SymbolQty" not in plain
     # No HTML tags survived
     assert "<" not in plain and ">" not in plain
+
+
+def test_receiver_status_calls_probe_helper_in_process(monkeypatch):
+    """B8: _receiver_status must call handlers.probe_receiver_status directly,
+    not make an HTTP self-call."""
+    from tradelab.web import handlers
+    captured = {}
+
+    def fake_probe():
+        captured["called"] = True
+        return {"receiver_up": True, "ngrok_up": True, "ngrok_url": "x.ngrok.io", "cards_loaded": 3}
+
+    monkeypatch.setattr(handlers, "probe_receiver_status", fake_probe)
+
+    # Also confirm no urllib.request.urlopen call leaks. Use a named function
+    # rather than a generator-throw lambda — clearer to a reader.
+    def _raise(*a, **kw):
+        raise AssertionError("HTTP self-call leaked")
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _raise)
+
+    from tradelab.live import daily_summary
+    result = daily_summary._receiver_status()
+    assert captured.get("called") is True
+    assert result == {"up": True, "ngrok_url": "x.ngrok.io"}
+
+
+def test_receiver_status_returns_down_when_helper_raises(monkeypatch):
+    from tradelab.web import handlers
+
+    def boom():
+        raise RuntimeError("everything is on fire")
+
+    monkeypatch.setattr(handlers, "probe_receiver_status", boom)
+
+    from tradelab.live import daily_summary
+    result = daily_summary._receiver_status()
+    assert result == {"up": False, "ngrok_url": "—"}

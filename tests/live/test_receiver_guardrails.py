@@ -1,4 +1,7 @@
-"""End-to-end webhook → guardrail pipeline → alpaca submit / block."""
+"""End-to-end webhook → guardrail pipeline → alpaca submit / block.
+
+The `patched_receiver` fixture lives in tests/live/conftest.py.
+"""
 from __future__ import annotations
 
 import json
@@ -7,59 +10,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
-from tradelab.live.cards import CardRegistry
 from tradelab.live.guardrails import CardRuntimeState
 from tradelab.live import receiver as rec
-
-
-CARD = {
-    "card_id": "foo-v1", "secret": "s" * 32, "symbol": "AAPL",
-    "status": "enabled", "quantity": 10,
-    "cooldown_seconds": 30, "daily_limit": 5,
-    "allow_collision": False, "allow_naked_short": False,
-}
-
-
-@pytest.fixture
-def patched_receiver(tmp_path, monkeypatch):
-    cards_path = tmp_path / "cards.json"
-    cards_path.write_text(json.dumps({"foo-v1": CARD}), encoding="utf-8")
-    alerts_path = tmp_path / "alerts.jsonl"
-
-    monkeypatch.setattr(rec, "ALERT_LOG", alerts_path)
-    monkeypatch.setattr(rec, "cards", CardRegistry(cards_path))
-    monkeypatch.setattr(rec, "_card_state", {})
-
-    # Stub AlpacaState so guardrails see a fully-stocked account
-    class _Acct:
-        buying_power = "1000000"
-    class _Pos:
-        symbol = "AAPL"
-        qty = "100"
-    fake_state = MagicMock()
-    fake_state.positions.return_value = [_Pos()]
-    fake_state.account.return_value = _Acct()
-    fake_state.open_orders.return_value = []
-    fake_state.invalidate = MagicMock()
-    monkeypatch.setattr(rec, "_alpaca_state", fake_state, raising=False)
-
-    # Stub last-price fetch
-    monkeypatch.setattr(rec, "_fetch_last_price", lambda symbol: 200.0)
-
-    # Stub Alpaca submit
-    monkeypatch.setattr(
-        rec, "submit_market_order",
-        lambda symbol, action, qty, coid: {"id": "ORD-1", "status": "accepted"},
-    )
-
-    return {
-        "cards_path": cards_path,
-        "alerts_path": alerts_path,
-        "fake_state": fake_state,
-        "client": TestClient(rec.app),
-    }
 
 
 def _alert_payload(action="buy", **overrides):

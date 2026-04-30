@@ -4,7 +4,9 @@
 
 **Goal:** Ship the daily 16:00 ET HTML email digest (anomaly debrief + health snapshot), the dashboard preview surface, and bundled cleanup of two carry-over architectural follow-ups (F1 receiver Alpaca exception wrapping, F2 jsonl rotation utility). Closes the code path for Direction A v1; the manual rewrite ships separately as Slice 7b.
 
-**Architecture:** New `daily_summary.py` runs as a daemon thread in the launcher process (mirrors `silence_checker.py` shape) — pure `render(now)` produces (subject, html_body), `tick(now)` is RTH+send_time-gated and idempotent via `digest_state.json`. Send is direct via `notify_channels.email.send()` (NOT through `notify()` — avoids recursive logging). New `jsonl_rotation.py` is called once-per-day from the same tick after a successful send. Two new GET endpoints expose preview HTML and last-sent state. F1 wraps `build_alpaca_state()` in `receiver.py` with a fail-closed `try/except APIError`.
+**Architecture:** New `daily_summary.py` runs as a daemon thread in the launcher process (mirrors `silence_checker.py` shape) — pure `render(now)` produces (subject, html_body), `tick(now)` is RTH+send_time-gated and idempotent via `digest_state.json`. Send is via `notify_channels.email.send_digest()` (NOT through `notify()` — avoids recursive logging; NOT through `notify_channels.email.send()` — that helper is for severity-prefixed alerts and returns bool, while the digest needs verbatim subject + multipart MIME + raise-on-failure for the retry-cap). New `jsonl_rotation.py` is called once-per-day from the same tick after a successful send. Two new GET endpoints expose preview HTML and last-sent state. F1 wraps `build_alpaca_state()` in `receiver.py` with a fail-closed `try/except APIError`.
+
+**B1 resolution (2026-04-27):** The original spec at §3.3 invented `notify_channels.email.send(subject, html_body, plaintext_body, to_address)` — that signature did not exist. The actual `send()` is `(severity, title, body, config) -> bool`. T6 implementer initially wrote a direct-SMTP `_send_email()` in `daily_summary.py`. Adjudicated to **Option (b)**: extend `notify_channels/email.py` with a new `send_digest(subject, html_body, plaintext_body, to_address, config) -> None` that does multipart MIME and raises on failure; keep `send()` for severity-prefixed alerts. SMTP plumbing now lives in one module (`_smtp_params()` shared helper). `_send_email()` in `daily_summary.py` is a thin wrapper. Tests added in `tests/live/test_notify_channels.py` (7 new) — see B1 entry in `2026-04-26-DIRECTION-A-SLICE-7A-PROGRESS.md`.
 
 **Tech Stack:** Python 3.11, alpaca-py SDK, smtplib (already wired in Slice 4 `notify_channels/email.py`), pytest, vanilla HTML/CSS/JS (settings panel additions in `command_center.html`).
 
@@ -893,6 +895,28 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 **Why now:** Depends on T3 daily_summary skeleton existing. Adds the bottom half of the email body.
 
+> **B7 RESOLVED — 2026-04-27 (Option b: up/down only, no uptime).**
+> Receiver status displays only `up`/`down`; no humanized uptime. The
+> `/tradelab/receiver/status` handler does not track receiver startup time, and
+> adding it would require new launcher state plumbing for one line in the
+> digest snapshot — not worth the complexity. Consequences for this task spec:
+>
+> - The reference `_receiver_status()` in Step 3 (this task) returns
+>   `{up, uptime_seconds, ngrok_url}` — **obsolete**. Actual code at
+>   `daily_summary.py:253-268` returns `{up, ngrok_url}` only.
+> - The `_humanize_seconds()` helper shown in Step 3 — **obsolete and
+>   deleted** in B6 cleanup.
+> - The `up_str = f'up, {_humanize_seconds(...)}'` line — **obsolete**.
+>   Actual code uses `up_str = "up" if rs["up"] else "down"`.
+> - Test fixtures referencing `uptime_seconds=...` and the
+>   `assert "8h" in section.lower()` assertion in Step 1 — **obsolete**.
+>   Snapshot tests in `test_daily_summary_render.py` no longer exercise
+>   uptime humanization.
+>
+> This block is informational; no source changes are required by this note.
+> Future plan reads should treat the Step 1/Step 3 templates below as
+> historical context, not as a current spec.
+
 - [ ] **Step 1: Write failing tests for snapshot section**
 
 Append to `tests/live/test_daily_summary_render.py`:
@@ -1498,13 +1522,19 @@ import tempfile
 # ────────────────────────────────────────────────────────────────────────────
 
 def _config_enabled() -> bool:
+    # NOTE: live_config.get() returns the full dict (no dotted-path API);
+    # walk it manually. Spec template prior to 2026-04-27 incorrectly
+    # showed a dotted-path call — it was always wrong (same antipattern
+    # as B1) and the implementer worked around it. Fixed here.
     from tradelab.live import live_config
-    return bool(live_config.get("email_digest.enabled", False))
+    cfg = live_config.get()
+    return bool(cfg.get("email_digest", {}).get("enabled", False))
 
 
 def _config_send_time() -> str:
     from tradelab.live import live_config
-    return str(live_config.get("email_digest.send_time", "16:00"))
+    cfg = live_config.get()
+    return str(cfg.get("email_digest", {}).get("send_time", "16:00"))
 
 
 def _is_trading_day(d: date) -> bool:
@@ -1514,7 +1544,8 @@ def _is_trading_day(d: date) -> bool:
 
 def _config_recipient() -> str:
     from tradelab.live import live_config
-    return str(live_config.get("notifications.smtp.to_address", ""))
+    cfg = live_config.get()
+    return str(cfg.get("notifications", {}).get("smtp", {}).get("to_address", ""))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1553,10 +1584,26 @@ def _write_state(state: dict) -> None:
 # ────────────────────────────────────────────────────────────────────────────
 
 def _send_email(subject: str, html_body: str, to_address: str) -> None:
-    """Direct send via the Slice 4 email channel module. Raises on failure."""
-    from tradelab.live.notify_channels import email as email_channel
-    plaintext = _render_plaintext(html_body)
-    email_channel.send(subject=subject, html_body=html_body, plaintext_body=plaintext, to_address=to_address)
+    """Send the digest via the Slice 4 email channel module's digest API.
+
+    Per B1 resolution (Option b): the channel module exports two callables:
+      - send(severity, title, body, config) -> bool     # severity-prefixed alerts
+      - send_digest(subject, html_body, plaintext_body, to_address, config) -> None
+
+    The digest path uses send_digest() because it needs:
+      (a) verbatim subject (no '[tradelab SEVERITY]' prefix),
+      (b) multipart MIME with both text/plain and text/html parts,
+      (c) raise-on-failure semantics so tick()'s retry-cap can count attempts.
+    """
+    from tradelab.live import live_config
+    from tradelab.live.notify_channels.email import send_digest
+    send_digest(
+        subject=subject,
+        html_body=html_body,
+        plaintext_body=_render_plaintext(html_body),
+        to_address=to_address,
+        config=live_config.get(),
+    )
 
 
 def _append_audit_line(today_str: str) -> None:

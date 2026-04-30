@@ -26,6 +26,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from alpaca.common.exceptions import APIError
+
 from tradelab.live.alpaca_client import get_client, submit_market_order
 from tradelab.live.alpaca_state import AlpacaState
 from tradelab.live.cards import CardRegistry
@@ -350,16 +352,56 @@ async def webhook(request: Request):
     last_price = _fetch_last_price(alert_symbol)
     alpaca_state = _ensure_alpaca_state()
     hydrated_card = {**card, "card_id": alert.card_id}
-    block = evaluate_guardrails(
-        card=hydrated_card,
-        action=alert.action,
-        qty=qty,
-        last_price=last_price,
-        registry=cards.all_hydrated(),
-        states=_card_state,
-        alpaca_state=alpaca_state,
-        now=now,
-    )
+    # FAIL-CLOSED: any exception bubbling out of evaluate_guardrails (which
+    # internally calls alpaca_state.positions() / .account() / .open_orders())
+    # means we cannot trust our view of the account. Block the trade rather
+    # than risk submitting against a stale or unknown state.
+    try:
+        block = evaluate_guardrails(
+            card=hydrated_card,
+            action=alert.action,
+            qty=qty,
+            last_price=last_price,
+            registry=cards.all_hydrated(),
+            states=_card_state,
+            alpaca_state=alpaca_state,
+            now=now,
+        )
+    except APIError as e:
+        record_attempt(_card_state, alert.card_id, now)
+        _log_alert(
+            payload_dict, alert.card_id, "guardrail_blocked",
+            {"reason": "alpaca_unreachable", "message": str(e)},
+        )
+        _notify.notify(
+            Severity.CRITICAL,
+            "Alpaca state fetch failed",
+            f"{alert.card_id} {alert.action} {alert_symbol}: alpaca_unreachable — {e}",
+        )
+        return JSONResponse(
+            {"error": f"alpaca_unreachable: {e}"},
+            status_code=503,
+        )
+    except Exception as e:
+        # NOTE: this MUST come after `except APIError` — APIError is a subclass
+        # of Exception, so swapping the handler order would silently absorb
+        # APIError into this branch and neutralize the specific-error path.
+        # Broader catch: SDK transport quirks, JSON decode errors mid-stream, etc.
+        # Same fail-closed pattern.
+        record_attempt(_card_state, alert.card_id, now)
+        _log_alert(
+            payload_dict, alert.card_id, "guardrail_blocked",
+            {"reason": "alpaca_unreachable", "message": f"{type(e).__name__}: {e}"},
+        )
+        _notify.notify(
+            Severity.CRITICAL,
+            "Alpaca state fetch raised unexpected error",
+            f"{alert.card_id} {alert.action} {alert_symbol}: {type(e).__name__}: {e}",
+        )
+        return JSONResponse(
+            {"error": f"alpaca_unreachable: {type(e).__name__}: {e}"},
+            status_code=503,
+        )
     # Record the attempt regardless of outcome (debounces a flood of
     # blocked webhooks — each one pushes the cooldown forward).
     record_attempt(_card_state, alert.card_id, now)

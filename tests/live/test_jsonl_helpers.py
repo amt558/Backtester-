@@ -57,6 +57,24 @@ def test_read_today_lines_skips_entries_missing_ts(tmp_path):
     assert out[0]["x"] == 1
 
 
+def test_read_today_lines_handles_null_or_missing_ts(tmp_path):
+    """Pin behavior for entries with `ts: null` or no `ts` key at all.
+
+    Production code must not crash on these. Currently null/missing-ts entries
+    are silently skipped (only the valid-ts entry survives the filter).
+    """
+    p = tmp_path / "log.jsonl"
+    p.write_text(
+        '{"ts":"2026-04-27T13:30:00+00:00","x":1}\n'  # valid ts
+        '{"ts":null,"x":2}\n'                          # explicit null ts
+        '{"x":3}\n',                                   # ts key entirely missing
+        encoding="utf-8",
+    )
+    out = _jsonl_helpers.read_today_lines(p, date(2026, 4, 27))
+    assert len(out) == 1
+    assert out[0]["x"] == 1
+
+
 def test_read_today_lines_handles_pre_market_et_boundary(tmp_path):
     """An entry at 23:00 ET on 04-27 is at 03:00 UTC on 04-28.
     Filter for `today=date(2026, 4, 27)` should still include it."""
