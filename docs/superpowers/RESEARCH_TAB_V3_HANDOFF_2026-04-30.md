@@ -1,4 +1,4 @@
-# Research Tab v3 — Handoff Doc (2026-04-30, after Task 3)
+# Research Tab v3 — Handoff Doc (2026-04-30, after Task 6)
 
 > **Read this if you are picking up the Research Tab v3 implementation.** This document is the single source of truth for "where we are" — newer than the plan, supersedes plan-body sketches where they conflict with what was actually built.
 
@@ -7,10 +7,12 @@
 ## TL;DR
 
 - **Plan:** `docs/superpowers/plans/2026-04-30-research-tab-v3.md` (18 tasks)
-- **Branch:** `feat/research-tab-v3` (in `C:\TradingScripts\tradelab\`)
-- **Done:** Tasks 0, 1, 2, 3. Five commits.
-- **Next up:** Task 4 — extend `approve_strategy.accept_scored` with `activate: bool` flag.
-- **Blocking concern:** none. Last full `tests/web/` run = **358 passed**. Working tree is clean.
+- **Branches (cross-repo):**
+  - tradelab repo: `feat/research-tab-v3` (in `C:\TradingScripts\tradelab\`)
+  - parent repo: `feat/research-tab-v3` (in `C:\TradingScripts\`)
+- **Done:** Tasks 0, 1, 2, 3, 4, 5, 6. Eight tradelab commits + one parent-repo commit.
+- **Next up:** Task 7 — frontend CSS scope + Google Fonts in `command_center.html` (parent repo).
+- **Blocking concern:** none. Last full `tests/web/` run = **373 passed**. Both working trees clean.
 - **Don't run pytest via PowerShell** — the prior session hung doing exactly that. Use Bash. (See "Gotcha #1" below.)
 
 ---
@@ -31,13 +33,29 @@ Tasks 1–3 were chosen as a coherent stopping point because:
 
 ## What's done — commits on `feat/research-tab-v3`
 
+### tradelab repo (`C:\TradingScripts\tradelab\`)
+
 ```
+b3c8bcc feat(web): wire 4 Research-v3 routes (qs-metrics, verdict-history,
+        accept activate, permanent delete)                                    ← Task 5
+bb237b8 feat(web): extend approve_strategy.accept_scored with activate flag   ← Task 4
+9954d18 docs(research-v3): handoff after Task 3 — state, gotchas, recipe      ← handoff
 44f7a81 feat(web): add run_deletion module with atomic delete + JSONL audit   ← Task 3
 b07adc7 feat(web): add verdict_history module for drift sparkline             ← Task 2
 aec2605 feat(web): add qs_metrics pure-fn module for Research v3 sub-grid     ← Task 1
 e0c68a2 docs(research-v3): plan amendments per slice 0 findings               ← Task 0 amend
 2d5d927 docs(research-v3): slice 0 findings — approve_strategy survey ...     ← Task 0 notes
 ```
+
+### parent repo (`C:\TradingScripts\`)
+
+```
+421b1294 feat(launcher): add /tradelab/runs/<run_id>/tearsheet pass-through  ← Task 6
+```
+
+The parent repo's `feat/research-tab-v3` branch was created off `main` after Task 5
+to host the launcher + (forthcoming) `command_center.html` changes. Both branches
+merge together when v3 ships.
 
 (`master` head before this branch: see `git log master -1` for the merge base.)
 
@@ -83,7 +101,48 @@ The plan-body code blocks for Tasks 4 and 5 were written before the slice-0 surv
 
 ---
 
-## What's next — Task 4 in detail (this is what the next session should do first)
+## What was done since the prior handoff (Tasks 4, 5, 6)
+
+### Task 4 — `accept_scored` activate flag (`bb237b8`)
+
+- **Modified:** `tradelab/src/tradelab/web/approve_strategy.py`, `tradelab/tests/web/test_approve_strategy.py`
+- **Adds:** `activate: bool = False` param; `ActivationGateFailed` exception; `AlreadyActivated = CardExistsError` alias
+- **When `activate=True`:** ROBUST verdict gate enforced before any disk side effects; card written with `status="enabled"` and stamped with `activated_at` + `activated_verdict`; return dict gains `activated_at` field.
+- **6 new tests:** ROBUST happy, FRAGILE/INCONCLUSIVE gate refusal, case-insensitive ROBUST, default backward compat, AlreadyActivated alias contract.
+
+### Task 5 — 4 backend routes in handlers.py (`b3c8bcc`)
+
+- **Modified:** `tradelab/src/tradelab/web/handlers.py`, `tradelab/tests/web/test_handlers.py`
+- **GET `/tradelab/runs/<run_id>/qs-metrics`** — unenveloped sub-grid payload via `qs_metrics` module + 4 audit-DB header numbers. 404 on no folder OR no equity curve.
+- **GET `/tradelab/strategies/<id>/verdict-history`** — wraps `verdict_history.get_recent_verdicts`. Empty list (200) for unknown strategies, NOT 404.
+- **POST `/tradelab/accept`** extended with optional `activate: bool` field. Maps `ActivationGateFailed` → 422; existing `CardExistsError` → 409 still works. `_validate_accept_payload` type-checks the new field.
+- **DELETE `/tradelab/runs/<run_id>/permanent`** — NEW route, NOT a replacement. Uses `run_deletion.delete_run_atomic`. The existing `DELETE /tradelab/runs/<run_id>` (soft-archive) is preserved because the FE's `/unarchive` flow depends on it. Pipeline tasks (14/15) will choose between soft-archive and permanent-delete per UX tier — **this is a design decision the user can override later.**
+- Both POST-accept-with-activate and DELETE-permanent broadcast on the existing job-stream broadcaster (`get_broadcaster()`); FE dispatch by event.type is Task 16.
+- **9 new tests.**
+
+### Task 6 — launcher tearsheet pass-through (`421b1294`, parent repo)
+
+- **Modified:** `C:/TradingScripts/launch_dashboard.py`
+- Adds `serve_run_tearsheet()` method on `DashboardHandler` mirroring `serve_compare_report` pattern. Routed via `do_GET` dispatcher: `/tradelab/runs/<id>/tearsheet` → resolves run folder via `audit_reader.resolve_run_folder` → serves `quantstats_tearsheet.html` from that folder.
+- 503 if tradelab handlers couldn't be imported at startup; 404 on unknown run / missing folder / missing tearsheet artifact.
+- No pytest in parent repo per workspace memory; verified via `python -c "ast.parse(...)"` + regex sanity tests.
+
+---
+
+## What's next — Task 7 (frontend) is the next major slice
+
+Tasks 7–17 are all FE work in `C:/TradingScripts/command_center.html`. Per the v3 architecture lock memory (`reference_command_center_arch_lock.md`): vanilla HTML+JS+Chart.js only — NO React, Vite, FastAPI, Streamlit, or build steps inside `command_center.html`. The Trading Desk side project is the place for any of those.
+
+Task 7 specifically:
+- Add `<link>` to Google Fonts (Inter + IBM Plex Mono per spec)
+- Add a `body.research-v3`-scoped CSS block (so v2 stays renderable at `body:not(.research-v3)`)
+- Wire the tab-switch class toggle so clicking the Research tab adds the class
+
+Read the spec at `tradelab/docs/superpowers/specs/2026-04-30-research-tab-v3-design.md` and the visual mockups at `.superpowers/brainstorm/216-1777553249/content/{01,02,03}*.html` before starting Task 7.
+
+---
+
+## (Stale below — kept for reference) Original "What's next — Task 4" plan
 
 ### Goal
 
