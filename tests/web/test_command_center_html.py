@@ -569,3 +569,179 @@ def test_action_bar_has_canary_status_icon(html: str) -> None:
     assert "canary-status-icon" in chunk, (
         "renderCanaryGrid must reference the new icon to toggle visibility"
     )
+
+
+# ─── Live Cards tile (Task 9) ──────────────────────────────────────────
+
+
+def _live_card_body(html: str) -> str:
+    """Slice from `function renderLiveCard` up to the next sibling function
+    so v3 contract assertions don't bleed into surrounding helpers."""
+    idx = html.find("function renderLiveCard")
+    assert idx > 0, "renderLiveCard function not found"
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 8000)
+    return html[idx:end]
+
+
+def _drift_renderer_body(html: str) -> str:
+    idx = html.find("function renderAllDriftSparklines")
+    assert idx > 0, "renderAllDriftSparklines function not found"
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 4000)
+    return html[idx:end]
+
+
+def test_v3_live_cards_grid_uses_tile_grid_class(html: str) -> None:
+    """The #researchLiveCards container must carry the .tile-grid class so
+    the v3 grid CSS rule (4-col, 14px gap) applies. Note: the plan body
+    proposed renaming to #live-cards-grid; the existing ID is preserved
+    per the handover doc (reuses the v2 skeleton container)."""
+    idx = html.find('id="researchLiveCards"')
+    assert idx > 0, "researchLiveCards container missing"
+    tag = html[max(0, idx - 200):idx + 200]
+    assert "tile-grid" in tag, (
+        "#researchLiveCards must carry the .tile-grid v3 class so the "
+        "research-v3-scope grid CSS applies"
+    )
+
+
+def test_v3_render_live_card_emits_tile_structure(html: str) -> None:
+    """The renderLiveCard function must emit the v3 tile DOM: tile-head,
+    tile-name, tile-meta, verdict pill, drift container, kpis, health-row,
+    actions/activate."""
+    body = _live_card_body(html)
+    for token in (
+        '"tile-head"',
+        '"tile-name"',
+        '"tile-meta"',
+        'class="verdict ',
+        '"drift"',
+        '"kpis"',
+        '"kpi"',
+        '"health-row"',
+        '"actions"',
+        'class="activate ',
+    ):
+        assert token in body, (
+            f"renderLiveCard missing v3 tile token {token!r} — confirm the "
+            "rewrite emits the v3 markup, not the v2 .research-card-* DOM"
+        )
+
+
+def test_v3_render_live_card_emits_four_kpi_cells(html: str) -> None:
+    """Tile shows exactly 4 KPIs: PF / WR / DD / DSR. Each rendered as
+    .kpi > .l (label) + .v (value, with optional ok/warn/fail color class)."""
+    body = _live_card_body(html)
+    for label in (">PF<", ">WR<", ">DD<", ">DSR<"):
+        assert label in body, f"renderLiveCard missing KPI label {label!r}"
+    # And the .l / .v sub-spans (per v3 CSS scope)
+    assert 'class="l"' in body, "KPI label sub-span class=\"l\" missing"
+    assert 'class="v"' in body or 'class="v ' in body, (
+        "KPI value sub-span class=\"v\" missing"
+    )
+
+
+def test_v3_render_live_card_uses_v3_te_bar_classes(html: str) -> None:
+    """v3 te-bar uses .full/.high/.mid/.low (NOT v2 .empty/.green/.amber/.red).
+    patchTrackingError must apply the v3 set."""
+    pt_idx = html.find("function patchTrackingError")
+    assert pt_idx > 0, "patchTrackingError function not found"
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[pt_idx + 30:])
+    end = pt_idx + 30 + (next_fn.start() if next_fn else 5000)
+    body = html[pt_idx:end]
+    for cls in ("full", "high", "mid", "low"):
+        assert (f'"{cls}"' in body) or (f"'{cls}'" in body), (
+            f"patchTrackingError must apply v3 .te-bar class {cls!r} "
+            "(v2 .green/.green-full/.amber/.red is wrong scope)"
+        )
+
+
+def test_v3_render_live_card_uses_ks_dot_not_ks_tag(html: str) -> None:
+    """v3 health-row uses a .ks-dot visual (no text) — the v2 .ks-tag was a
+    text label inside its own row. New tile compresses to a single dot."""
+    body = _live_card_body(html)
+    assert "ks-dot" in body, (
+        "renderLiveCard must emit a .ks-dot element (v3 contract); "
+        ".ks-tag is the v2-only text variant"
+    )
+
+
+def test_v3_render_all_drift_sparklines_function_defined(html: str) -> None:
+    """A function that fetches the verdict-history endpoint per tile and
+    paints up to 12 .dot spans into each tile's .drift container."""
+    pat = re.compile(r"(?:async\s+)?function\s+renderAllDriftSparklines\s*\(", re.MULTILINE)
+    matches = pat.findall(html)
+    assert len(matches) == 1, (
+        f"renderAllDriftSparklines: found {len(matches)} definitions (expected 1)"
+    )
+
+
+def test_v3_drift_sparkline_fetches_verdict_history_endpoint(html: str) -> None:
+    """The drift renderer must call /tradelab/strategies/<id>/verdict-history
+    (Task 2 endpoint). Different URL = different data source = silent break."""
+    body = _drift_renderer_body(html)
+    assert "/verdict-history" in body, (
+        "renderAllDriftSparklines must fetch /tradelab/strategies/<id>/verdict-history"
+    )
+
+
+def test_v3_drift_sparkline_caps_at_12_dots(html: str) -> None:
+    """Sparkline always renders exactly 12 dots: pad with classless .dot on
+    the left when fewer than 12 verdicts are available."""
+    body = _drift_renderer_body(html)
+    assert "12" in body, "renderAllDriftSparklines must hard-cap at 12 dots"
+
+
+def test_v3_render_live_card_escapes_user_strings(html: str) -> None:
+    """All server-supplied strings (liveId, tradelabName, verdict raw) must
+    flow through escapeHtml() — guard against XSS regression in the rewrite.
+    A direct ${liveId} or ${verdictRaw} interpolation in an innerHTML
+    template fails this test."""
+    body = _live_card_body(html)
+    bad = re.search(
+        r"innerHTML\s*=\s*`[^`]*\$\{(liveId|tradelabName|verdictRaw)\}",
+        body,
+    )
+    assert bad is None, (
+        f"renderLiveCard interpolates raw server string into innerHTML: "
+        f"{bad.group(0) if bad else ''}. Wrap in escapeHtml()."
+    )
+
+
+def test_v3_activate_button_state_helpers_defined(html: str) -> None:
+    """activateState and activateLabel helpers map (verdict, has_card) to
+    (.enabled|.disabled|.live, label text). Pin both names so Task 10's
+    click handler has stable hooks to bind to."""
+    pat_state = re.compile(r"function\s+activateState\s*\(", re.MULTILINE)
+    pat_label = re.compile(r"function\s+activateLabel\s*\(", re.MULTILINE)
+    assert pat_state.search(html), "activateState helper missing"
+    assert pat_label.search(html), "activateLabel helper missing"
+
+
+def test_v3_activate_button_state_emits_three_states(html: str) -> None:
+    """activateState must return exactly the three v3 states the CSS defines:
+    'enabled', 'disabled', 'live' (not 'activating' — that's Task 10's flight
+    state). Returning anything else paints an unstyled grey button."""
+    idx = html.find("function activateState")
+    assert idx > 0
+    next_fn = re.search(r"\n    function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 1500)
+    body = html[idx:end]
+    for state in ("enabled", "disabled", "live"):
+        assert (f'"{state}"' in body) or (f"'{state}'" in body), (
+            f"activateState must be able to return {state!r}"
+        )
+
+
+def test_v3_research_load_live_cards_invokes_drift_renderer(html: str) -> None:
+    """researchLoadLiveCards must call renderAllDriftSparklines AFTER tiles
+    are appended to the DOM (otherwise querySelectorAll('.drift') hits empty)."""
+    idx = html.find("async function researchLoadLiveCards")
+    assert idx > 0
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 3000)
+    body = html[idx:end]
+    assert "renderAllDriftSparklines" in body, (
+        "researchLoadLiveCards must invoke renderAllDriftSparklines after rendering tiles"
+    )
