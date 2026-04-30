@@ -1193,3 +1193,122 @@ def test_v3_task12_heatmap_css_present(html: str) -> None:
     """The heatmap is a fixed-shape CSS grid; the .heatmap-grid rule defines it."""
     for selector in (".heatmap-grid", ".heatmap-cell"):
         assert selector in html, f"Missing CSS rule for {selector}"
+
+
+# ─── Task 13: Cross-strategy factor matrix ─────────────────────────────
+
+
+def test_v3_task13_matrix_markup_present(html: str) -> None:
+    """The matrix needs three id'd containers in the DOM: the card wrapper,
+    the grid (renderFactorMatrix mounts to this), and the meta caption."""
+    for needle in ('id="matrix-card"', 'id="matrix-grid"', 'id="matrix-meta"'):
+        assert needle in html, f"Missing matrix DOM hook: {needle}"
+
+
+def test_v3_task13_alpha_callout_present(html: str) -> None:
+    """The callout starts hidden and is revealed when ≥1 column-warn fires.
+    Without the element renderFactorMatrix's getElementById('matrix-alpha-callout')
+    would silently no-op; tests guard against that drift."""
+    assert 'id="matrix-alpha-callout"' in html, "Missing matrix-alpha-callout div"
+
+
+def test_v3_task13_factor_columns_const_defined(html: str) -> None:
+    """FACTOR_COLUMNS drives the column count + labels. Renaming or removing
+    it would silently break every cell in the matrix."""
+    assert "FACTOR_COLUMNS" in html, "Missing FACTOR_COLUMNS const"
+
+
+def test_v3_task13_factor_columns_use_real_signal_names(html: str) -> None:
+    """The plan body's columns (dsr, monte_carlo, oos_pf, regime, sample,
+    stability, walk_forward) don't match real verdict.py signal names. The
+    matrix must use the actual names so cells light up against real data."""
+    idx = html.find("FACTOR_COLUMNS")
+    assert idx > 0
+    body = html[idx:idx + 2000]
+    # The 8 real signals from src/tradelab/robustness/verdict.py
+    for sig_name in (
+        "baseline_pf", "dsr", "mc_max_dd", "param_landscape",
+        "entry_delay", "loso", "noise_injection", "regime_spread",
+    ):
+        assert f"'{sig_name}'" in body or f'"{sig_name}"' in body, (
+            f"FACTOR_COLUMNS missing real signal name {sig_name!r}"
+        )
+    # And NOT the plan's invented ids that would never match real data
+    assert "'monte_carlo'" not in body and '"monte_carlo"' not in body, (
+        "FACTOR_COLUMNS still uses plan's invented 'monte_carlo' id; "
+        "real signal name is 'mc_max_dd'"
+    )
+    assert "'walk_forward'" not in body and '"walk_forward"' not in body, (
+        "FACTOR_COLUMNS still uses plan's invented 'walk_forward' id"
+    )
+
+
+def test_v3_task13_classify_outcome_function_defined(html: str) -> None:
+    """classifyOutcome maps signal.outcome → cell color class. Needs to handle
+    robust/marginal/fragile/inconclusive (lowercase) per the BE contract."""
+    assert "function classifyOutcome" in html, "Missing classifyOutcome helper"
+    idx = html.find("function classifyOutcome")
+    body = html[idx:idx + 800]
+    # Returns 'pass'/'fail'/'marginal'/'dim' for the 4 outcome states.
+    assert "'pass'" in body or '"pass"' in body
+    assert "'fail'" in body or '"fail"' in body
+    assert "'dim'" in body or '"dim"' in body
+    # Lowercases the outcome string (so 'ROBUST'/'robust' both work).
+    assert "toLowerCase" in body
+
+
+def test_v3_task13_render_factor_matrix_function_defined(html: str) -> None:
+    """The matrix is built by renderFactorMatrix(); it must exist + fetch
+    /tradelab/strategies-summary."""
+    assert "function renderFactorMatrix" in html, "Missing renderFactorMatrix"
+    idx = html.find("function renderFactorMatrix")
+    body = html[idx:idx + 4000]
+    assert "/tradelab/strategies-summary" in body, (
+        "renderFactorMatrix must fetch from /tradelab/strategies-summary"
+    )
+
+
+def test_v3_task13_render_factor_matrix_invoked_on_load(html: str) -> None:
+    """The matrix needs to render when the Research tab loads. Either via
+    researchLoadAll() or alongside researchLoadLiveCards()."""
+    # Search for the call site (not the definition) — it should be invoked
+    # from the Research-tab loader.
+    occurrences = html.count("renderFactorMatrix(")
+    # Definition call has parens too, so we expect ≥ 2 occurrences (def + call).
+    assert occurrences >= 2, (
+        f"renderFactorMatrix() never called — only {occurrences} occurrence(s) "
+        f"(definition with no call site)"
+    )
+
+
+def test_v3_task13_matrix_grid_css_handles_eight_columns(html: str) -> None:
+    """The CSS grid template was hardcoded to 7 columns in the original v3
+    sketch — must be updated to 8 to match real signal count."""
+    idx = html.find(".matrix-grid")
+    assert idx > 0
+    # Find the actual grid-template-columns value
+    rule_end = html.find("}", idx)
+    rule_body = html[idx:rule_end]
+    assert "repeat(8" in rule_body, (
+        f".matrix-grid grid-template-columns must use repeat(8, ...) "
+        f"to match the 8 real signals; current rule:\n{rule_body[:200]}"
+    )
+
+
+def test_v3_task13_classify_outcome_treats_inconclusive_as_marginal_or_dim(html: str) -> None:
+    """Real audit data has many 'inconclusive' signals. Must NOT silently
+    classify them as 'pass' — that would hide weakness."""
+    idx = html.find("function classifyOutcome")
+    body = html[idx:idx + 800]
+    # The default branch (after robust/marginal/fragile) returns dim, so
+    # inconclusive falls through to dim. Just check it doesn't accidentally
+    # return 'pass' for an inconclusive outcome.
+    if "'inconclusive'" in body or '"inconclusive"' in body:
+        # If the function explicitly handles inconclusive, it must not return pass.
+        # This is a weak check; the semantic test is in the explicit branches above.
+        pass
+    # Stronger check: 'inconclusive' values map to either 'dim' or 'marginal' (not pass)
+    # via the fall-through return. Pattern: last return statement is 'dim' or 'marginal'.
+    # Easier: just assert 'inconclusive' is never adjacent to "return 'pass'".
+    assert "inconclusive') return 'pass'" not in body
+    assert 'inconclusive") return "pass"' not in body

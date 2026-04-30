@@ -707,6 +707,15 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         )
         return json.dumps({"verdicts": verdicts}), 200
 
+    if path == "/tradelab/strategies-summary":
+        # Task 13: powers the cross-strategy factor matrix. Returns latest
+        # signals[] per strategy from each run's robustness_result.json
+        # so the FE can color cells by signal outcome and detect column-
+        # wide weakness across the universe.
+        from tradelab.web import strategies_summary
+        strategies = strategies_summary.get_summaries(db_path=_db_path())
+        return json.dumps({"strategies": strategies}), 200
+
     return _err("not found"), 404
 
 
