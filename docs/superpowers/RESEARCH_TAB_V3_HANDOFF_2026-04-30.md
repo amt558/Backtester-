@@ -10,9 +10,9 @@
 - **Branches (cross-repo):**
   - tradelab repo: `feat/research-tab-v3` (in `C:\TradingScripts\tradelab\`)
   - parent repo: `feat/research-tab-v3` (in `C:\TradingScripts\`)
-- **Done:** Tasks 0, 1, 2, 3, 4, 5, 6. Eight tradelab commits + one parent-repo commit.
+- **Done:** Tasks 0, 1, 2, 3, 4, 5, 6. Nine tradelab commits + one parent-repo commit.
 - **Next up:** Task 7 — frontend CSS scope + Google Fonts in `command_center.html` (parent repo).
-- **Blocking concern:** none. Last full `tests/web/` run = **373 passed**. Both working trees clean.
+- **Blocking concern:** none. Last full `tests/web/` run = **369 passed**. Both working trees clean.
 - **Don't run pytest via PowerShell** — the prior session hung doing exactly that. Use Bash. (See "Gotcha #1" below.)
 
 ---
@@ -36,8 +36,11 @@ Tasks 1–3 were chosen as a coherent stopping point because:
 ### tradelab repo (`C:\TradingScripts\tradelab\`)
 
 ```
+840fb0f refactor(web): flip DELETE /tradelab/runs/<id> from soft-archive
+        to hard-delete (drops /permanent suffix; idempotent on unknown)       ← Task 5 fixup
+5a8b103 docs(research-v3): handoff updated through Task 6                     ← handoff
 b3c8bcc feat(web): wire 4 Research-v3 routes (qs-metrics, verdict-history,
-        accept activate, permanent delete)                                    ← Task 5
+        accept activate, permanent delete)                                    ← Task 5 (initial)
 bb237b8 feat(web): extend approve_strategy.accept_scored with activate flag   ← Task 4
 9954d18 docs(research-v3): handoff after Task 3 — state, gotchas, recipe      ← handoff
 44f7a81 feat(web): add run_deletion module with atomic delete + JSONL audit   ← Task 3
@@ -116,9 +119,9 @@ The plan-body code blocks for Tasks 4 and 5 were written before the slice-0 surv
 - **GET `/tradelab/runs/<run_id>/qs-metrics`** — unenveloped sub-grid payload via `qs_metrics` module + 4 audit-DB header numbers. 404 on no folder OR no equity curve.
 - **GET `/tradelab/strategies/<id>/verdict-history`** — wraps `verdict_history.get_recent_verdicts`. Empty list (200) for unknown strategies, NOT 404.
 - **POST `/tradelab/accept`** extended with optional `activate: bool` field. Maps `ActivationGateFailed` → 422; existing `CardExistsError` → 409 still works. `_validate_accept_payload` type-checks the new field.
-- **DELETE `/tradelab/runs/<run_id>/permanent`** — NEW route, NOT a replacement. Uses `run_deletion.delete_run_atomic`. The existing `DELETE /tradelab/runs/<run_id>` (soft-archive) is preserved because the FE's `/unarchive` flow depends on it. Pipeline tasks (14/15) will choose between soft-archive and permanent-delete per UX tier — **this is a design decision the user can override later.**
-- Both POST-accept-with-activate and DELETE-permanent broadcast on the existing job-stream broadcaster (`get_broadcaster()`); FE dispatch by event.type is Task 16.
-- **9 new tests.**
+- **DELETE `/tradelab/runs/<run_id>`** — REPLACED soft-archive with hard-delete via `run_deletion.delete_run_atomic`. (Initial `b3c8bcc` added a parallel `/permanent` route; user-driven `840fb0f` flipped the existing route's semantics and removed `/permanent`.) Idempotent: unknown id → 204 (matches the prior contract bulk-delete and stale FE state were calibrated against). The `/unarchive` route + archive primitives stay in place for legacy archived rows; the FE Unarchive button is now dead UX going forward (Tasks 14/15 may clean up).
+- Both POST-accept-with-activate and the new DELETE broadcast on the existing job-stream broadcaster (`get_broadcaster()`); FE dispatch by event.type is Task 16.
+- **9 new tests in the initial commit; net -4 after the semantic flip** (3 `/permanent` tests removed, 1 "row preserved" test removed; 2 tests renamed to reflect new contract).
 
 ### Task 6 — launcher tearsheet pass-through (`421b1294`, parent repo)
 
