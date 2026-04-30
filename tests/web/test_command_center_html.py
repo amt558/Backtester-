@@ -585,6 +585,25 @@ def _live_card_body(html: str) -> str:
 
 
 def _drift_renderer_body(html: str) -> str:
+    """Return the source of the per-tile drift renderer.
+
+    Task 11 extracted the actual logic into renderDriftFor (the bulk
+    renderAllDriftSparklines is now just a fan-out wrapper). Look up
+    renderDriftFor first, falling back to renderAllDriftSparklines for
+    pre-Task-11 source compatibility.
+    """
+    for fn_name in ("function renderDriftFor", "function renderAllDriftSparklines"):
+        idx = html.find(fn_name)
+        if idx > 0:
+            next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+            end = idx + 30 + (next_fn.start() if next_fn else 4000)
+            body = html[idx:end]
+            # Make sure the body actually contains the drift loop, not the
+            # wrapper. The wrapper is short (<300 chars) and delegates.
+            if "/verdict-history" in body or "verdicts.slice" in body:
+                return body
+    # Fall back to the bulk renderer body even if it's the wrapper —
+    # callers will produce the right assertion error.
     idx = html.find("function renderAllDriftSparklines")
     assert idx > 0, "renderAllDriftSparklines function not found"
     next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
@@ -912,3 +931,127 @@ def test_v3_task10_no_old_accept_endpoint_for_live_cards(html: str) -> None:
         "wireResearchLiveCardsClick must not POST to /tradelab/accept "
         "(missing payload fields); use /tradelab/strategies/<id>/activate"
     )
+
+
+# ─── Task 11: Click-to-expand inline (header + 7-cell summary + tab strip)
+
+def test_v3_task11_expanded_tile_html_helper_exists(html: str) -> None:
+    """The expand template must be a discrete function so collapse can
+    re-render the compact tile by calling its complement."""
+    assert "function expandedTileHtml" in html, (
+        "Task 11 expand template helper expandedTileHtml() is missing"
+    )
+
+
+def test_v3_task11_expanded_markup_has_seven_summary_cells(html: str) -> None:
+    """Plan body specifies exactly 7 cells: Verdict, PF, WR, DD, DSR, TE
+    health, K-S. The visual rhythm is fragile to cell count drift, so pin it."""
+    idx = html.find("function expandedTileHtml")
+    assert idx > 0
+    end = idx + 4000
+    body = html[idx:end]
+    # Each cell uses the .ex-cell class — count them.
+    cells = body.count('class="ex-cell"')
+    assert cells == 7, (
+        f"expandedTileHtml must render exactly 7 ex-cell summary cells; got {cells}"
+    )
+    # The seven labels must all be present.
+    for label in ("Verdict", "Profit factor", "Win rate", "Max DD", "DSR", "TE health", "K-S"):
+        assert label in body, f"7-cell summary missing label {label!r}"
+
+
+def test_v3_task11_expanded_markup_has_tab_strip_and_deep_dive(html: str) -> None:
+    """The expand row's tab strip + deep-dive button must both be present.
+    Tearsheet button drives traffic to the existing /tradelab/runs/<id>/tearsheet
+    route — drift breaks the link silently."""
+    idx = html.find("function expandedTileHtml")
+    assert idx > 0
+    body = html[idx:idx + 4000]
+    assert "tab-strip" in body, "Missing tab-strip container in expand template"
+    assert "tab-strip-tabs" in body, "Missing tab-strip-tabs button row"
+    assert "deep-dive-btn" in body, "Missing deep-dive-btn (View full tearsheet)"
+    assert "/tradelab/runs/" in body and "/tearsheet" in body, (
+        "deep-dive-btn must link to /tradelab/runs/<id>/tearsheet"
+    )
+    assert 'class="close-btn"' in body, "Missing collapse close-btn"
+
+
+def test_v3_task11_expand_collapse_helpers_present(html: str) -> None:
+    """expandTile / collapseTile must exist so the click delegate can call
+    them. Without them the tile-click event handler can't toggle state."""
+    assert "function expandTile" in html, "Missing expandTile helper"
+    assert "function collapseTile" in html, "Missing collapseTile helper"
+
+
+def test_v3_task11_strategy_data_cache_populated_at_render_time(html: str) -> None:
+    """expandTile reads from a cache populated by renderLiveCard. Without the
+    cache the expand template can't access symbol/verdict/etc. populated by
+    the runs+metrics fetches that happened during render."""
+    # Cache constant must exist (Map or plain object).
+    assert "strategyDataCache" in html, (
+        "Missing strategyDataCache used by expandTile to read summary fields"
+    )
+    # It must be written-to during the render path. Check for either .set()
+    # (Map) or [key]= (plain object) inside renderLiveCard.
+    idx = html.find("function renderLiveCard")
+    assert idx > 0
+    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
+    end = idx + 30 + (next_fn.start() if next_fn else 8000)
+    body = html[idx:end]
+    assert "strategyDataCache" in body, (
+        "renderLiveCard must populate strategyDataCache so expandTile can read it"
+    )
+
+
+def test_v3_task11_tile_click_handler_in_grid_delegate(html: str) -> None:
+    """The same delegated listener that handles .activate clicks should also
+    handle tile-click for expand. Adding a second listener on the same grid
+    risks event ordering surprises; one delegate is the contract."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 6000]
+    # Tile-click handler must call expandTile/collapseTile.
+    assert ("expandTile(" in body) or ("collapseTile(" in body), (
+        "wireResearchLiveCardsClick must invoke expandTile/collapseTile"
+    )
+    # Must guard: clicking .activate or .close-btn or .deep-dive-btn should
+    # not toggle expand.
+    assert ".close-btn" in body or "close-btn" in body, (
+        "Tile-click handler must guard against close-btn re-entry"
+    )
+
+
+def test_v3_task11_expanded_state_has_css(html: str) -> None:
+    """The visual "expanded" state needs CSS — without it the inserted markup
+    has no layout and the user sees a broken card."""
+    assert ".tile.expanded" in html, (
+        "Missing .tile.expanded CSS rule"
+    )
+    assert ".ex-cell" in html, "Missing .ex-cell CSS rule (7-cell layout)"
+    assert ".ex-summary" in html, "Missing .ex-summary CSS rule (cell grid)"
+    assert ".ex-header" in html, "Missing .ex-header CSS rule"
+
+
+def test_v3_task11_only_one_tile_expanded_at_a_time(html: str) -> None:
+    """Plan spec: 'only one expanded at a time'. The tile-click handler must
+    collapse any other expanded tile before expanding the clicked one."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 6000]
+    # Look for the all-expanded-tiles iteration before expand.
+    assert (
+        ".tile.expanded" in body or "tile.expanded" in body
+    ), "Missing 'collapse all other expanded tiles' iteration"
+
+
+def test_v3_task11_clicking_actions_does_not_toggle_expand(html: str) -> None:
+    """The action buttons (Activate, close-btn, deep-dive-btn, tab buttons)
+    inside a tile must not propagate to the tile-click handler. Either via
+    explicit .closest() guard or via stopPropagation on each button."""
+    idx = html.find("function wireResearchLiveCardsClick")
+    assert idx > 0
+    body = html[idx:idx + 6000]
+    # The plan body uses a closest() guard. The click handler must mention at
+    # least .activate (existing) and .close-btn (Task 11 new).
+    assert ".activate" in body
+    assert "close-btn" in body
