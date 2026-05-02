@@ -40,6 +40,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 markers = [
     "canary_integration: end-to-end canary verification through the robustness suite (slower)",
 ]
