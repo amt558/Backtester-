@@ -193,3 +193,56 @@ def test_wf_decay_signal_absent_when_fewer_than_4_windows():
     wf = WalkForwardResult(strategy="x", n_windows=3, windows=windows, wfe_ratio=0.8)
     v = compute_verdict(_bt(pf=1.6), wf=wf)
     assert not any(s.name == "wf_decay" for s in v.signals)
+
+
+def test_verdict_diagnostics_populated_when_trades_have_mfe():
+    """diagnostics['trade_efficiency'] should be a float when MFE data present."""
+    from tradelab.results import Trade
+
+    bt = BacktestResult(
+        strategy="x", start_date="2024-01-01", end_date="2024-12-31",
+        params={}, metrics=BacktestMetrics(profit_factor=1.6),
+        trades=[
+            Trade(
+                ticker="TEST",
+                entry_date="2024-01-01", exit_date="2024-01-05",
+                entry_price=50.0, exit_price=50.8,
+                shares=100, pnl=80.0, pnl_pct=1.6, bars_held=4,
+                exit_reason="signal", mae_pct=0.0, mfe_pct=2.0,
+            ),
+        ],
+        equity_curve=[],
+    )
+    v = compute_verdict(bt)
+    assert "trade_efficiency" in v.diagnostics
+    assert v.diagnostics["trade_efficiency"] is not None
+    # ideal $ = 0.02*100*50 = 100; captured = 80 → ratio 0.8
+    assert abs(v.diagnostics["trade_efficiency"] - 0.8) < 0.001
+
+
+def test_verdict_diagnostics_trade_efficiency_none_when_no_mfe():
+    """diagnostics['trade_efficiency'] should be None for trades without MFE."""
+    from tradelab.results import Trade
+    bt = BacktestResult(
+        strategy="x", start_date="2024-01-01", end_date="2024-12-31",
+        params={}, metrics=BacktestMetrics(profit_factor=1.6),
+        trades=[
+            Trade(
+                ticker="TEST",
+                entry_date="2024-01-01", exit_date="2024-01-05",
+                entry_price=50.0, exit_price=50.8, shares=100,
+                pnl=80.0, pnl_pct=1.6, bars_held=4,
+                exit_reason="signal", mae_pct=0.0, mfe_pct=0.0,
+            ),
+        ],
+        equity_curve=[],
+    )
+    v = compute_verdict(bt)
+    assert "trade_efficiency" in v.diagnostics
+    assert v.diagnostics["trade_efficiency"] is None
+
+
+def test_verdict_diagnostics_trade_efficiency_none_when_no_trades():
+    """diagnostics['trade_efficiency'] should be None when bt.trades is empty."""
+    v = compute_verdict(_bt(pf=1.6))  # _bt() helper builds empty trades
+    assert v.diagnostics.get("trade_efficiency") is None

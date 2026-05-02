@@ -22,7 +22,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..results import BacktestResult, WalkForwardResult
-from .diagnostics import compute_wf_decay
+from .diagnostics import compute_wf_decay, compute_trade_efficiency
 from .entry_delay import EntryDelayResult
 from .loso import LOSOResult
 from .monte_carlo import MonteCarloResult
@@ -384,4 +384,9 @@ def compute_verdict(
     if any(s.name == "regime_spread_hard" and s.outcome == "fragile" for s in signals):
         verdict = "FRAGILE"
 
-    return VerdictResult(verdict=verdict, signals=signals)
+    # --- Diagnostics (no aggregation impact, surface for dashboards) ---
+    diagnostics: dict[str, Optional[float]] = {
+        "trade_efficiency": compute_trade_efficiency(bt),
+    }
+
+    return VerdictResult(verdict=verdict, signals=signals, diagnostics=diagnostics)
