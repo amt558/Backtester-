@@ -108,3 +108,88 @@ def test_verdict_result_old_json_without_diagnostics_still_parses():
     old_payload = '{"verdict": "ROBUST", "signals": []}'
     v = VerdictResult.model_validate_json(old_payload)
     assert v.diagnostics == {}
+
+
+def _wf_with_decay(decay_ratio: float) -> "WalkForwardResult":
+    """Build a 6-window WF where late-half PF / early-half PF ≈ decay_ratio."""
+    from tradelab.results import (
+        BacktestMetrics, WalkForwardResult, WalkForwardWindow,
+    )
+
+    def w(idx: int, gp: float, gl: float) -> WalkForwardWindow:
+        pf = (gp / gl) if gl > 0 else 0.0
+        m = BacktestMetrics(
+            total_trades=20, wins=12, losses=8, win_rate=60.0,
+            profit_factor=pf, gross_profit=gp, gross_loss=gl,
+        )
+        return WalkForwardWindow(
+            index=idx,
+            train_start="2022-01-01", train_end="2022-06-30",
+            test_start="2022-07-01", test_end="2022-12-31",
+            train_metrics=None, test_metrics=m, best_params={},
+        )
+
+    # Early half: aggregate PF = 3.0 (300 / 100)
+    early = [w(0, 100, 33), w(1, 100, 33), w(2, 100, 34)]
+    # Late half: aggregate PF = decay_ratio * 3.0
+    late_total_gp = decay_ratio * 3.0 * 100  # late_pf * gl_late
+    late = [
+        w(3, late_total_gp / 3, 33),
+        w(4, late_total_gp / 3, 33),
+        w(5, late_total_gp / 3, 34),
+    ]
+    return WalkForwardResult(
+        strategy="x", n_windows=6, windows=early + late,
+        wfe_ratio=0.8,
+    )
+
+
+def test_wf_decay_signal_emits_fragile_when_decaying():
+    wf = _wf_with_decay(decay_ratio=0.5)  # 50% of early → < 0.70
+    v = compute_verdict(_bt(pf=1.6), wf=wf)
+    decay_signals = [s for s in v.signals if s.name == "wf_decay"]
+    assert len(decay_signals) == 1
+    assert decay_signals[0].outcome == "fragile"
+
+
+def test_wf_decay_signal_emits_robust_when_stable():
+    wf = _wf_with_decay(decay_ratio=1.0)  # equal halves → > 0.90
+    v = compute_verdict(_bt(pf=1.6), wf=wf)
+    decay_signals = [s for s in v.signals if s.name == "wf_decay"]
+    assert len(decay_signals) == 1
+    assert decay_signals[0].outcome == "robust"
+
+
+def test_wf_decay_signal_emits_inconclusive_in_middle_band():
+    wf = _wf_with_decay(decay_ratio=0.80)  # between 0.70 and 0.90
+    v = compute_verdict(_bt(pf=1.6), wf=wf)
+    decay_signals = [s for s in v.signals if s.name == "wf_decay"]
+    assert len(decay_signals) == 1
+    assert decay_signals[0].outcome == "inconclusive"
+
+
+def test_wf_decay_signal_absent_when_wf_is_none():
+    v = compute_verdict(_bt(pf=1.6), wf=None)
+    assert not any(s.name == "wf_decay" for s in v.signals)
+
+
+def test_wf_decay_signal_absent_when_fewer_than_4_windows():
+    from tradelab.results import (
+        BacktestMetrics, WalkForwardResult, WalkForwardWindow,
+    )
+    m = BacktestMetrics(
+        total_trades=20, wins=12, losses=8, win_rate=60.0,
+        profit_factor=1.5, gross_profit=100, gross_loss=66,
+    )
+    windows = [
+        WalkForwardWindow(
+            index=i,
+            train_start="2022-01-01", train_end="2022-06-30",
+            test_start="2022-07-01", test_end="2022-12-31",
+            train_metrics=None, test_metrics=m, best_params={},
+        )
+        for i in range(3)
+    ]
+    wf = WalkForwardResult(strategy="x", n_windows=3, windows=windows, wfe_ratio=0.8)
+    v = compute_verdict(_bt(pf=1.6), wf=wf)
+    assert not any(s.name == "wf_decay" for s in v.signals)

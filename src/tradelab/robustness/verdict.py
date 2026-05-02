@@ -22,6 +22,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..results import BacktestResult, WalkForwardResult
+from .diagnostics import compute_wf_decay
 from .entry_delay import EntryDelayResult
 from .loso import LOSOResult
 from .monte_carlo import MonteCarloResult
@@ -233,6 +234,28 @@ def compute_verdict(
         else:
             signals.append(VerdictSignal(name="wfe", outcome="inconclusive",
                                           reason=f"WFE {wfe:.2f}"))
+
+    # --- wf_decay: rolling OOS PF, half-vs-half ratio ---
+    # Catches temporal decay that aggregate WFE collapses into one ratio.
+    # Requires >= 4 valid windows; emits no signal otherwise.
+    if wf and wf.n_windows >= 4:
+        decay = compute_wf_decay(wf)
+        if decay is not None:
+            if decay >= THRESHOLDS["wf_decay_robust"]:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="robust",
+                    reason=f"Late-half OOS PF is {decay:.0%} of early-half (stable)",
+                ))
+            elif decay < THRESHOLDS["wf_decay_fragile"]:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="fragile",
+                    reason=f"Late-half OOS PF only {decay:.0%} of early-half (decaying)",
+                ))
+            else:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="inconclusive",
+                    reason=f"Late-half OOS PF {decay:.0%} of early-half",
+                ))
 
     # --- S4: Hold-out OOS gate (Generalization, Critical) ---
     # PF on a trailing window the walk-forward training never touched.
