@@ -54,3 +54,28 @@ robustness:
     v = compute_verdict(_bt(pf=2.5), dsr=0.7)
     baseline_signal = next(s for s in v.signals if s.name == "baseline_pf")
     assert baseline_signal.outcome == "inconclusive"
+
+
+def test_robustness_thresholds_includes_wf_decay_defaults():
+    """Pydantic class must expose wf_decay_robust=0.90 and wf_decay_fragile=0.70."""
+    from tradelab.config import RobustnessThresholds
+    t = RobustnessThresholds()
+    assert t.wf_decay_robust == 0.90
+    assert t.wf_decay_fragile == 0.70
+
+
+def test_verdict_fallback_includes_wf_decay_keys():
+    """_FALLBACK_THRESHOLDS dict must contain both wf_decay keys."""
+    from tradelab.robustness.verdict import _FALLBACK_THRESHOLDS
+    assert _FALLBACK_THRESHOLDS["wf_decay_robust"] == 0.90
+    assert _FALLBACK_THRESHOLDS["wf_decay_fragile"] == 0.70
+
+
+def test_yaml_thresholds_resolved_includes_wf_decay():
+    """_resolve_thresholds() must surface wf_decay keys (config or fallback)."""
+    from tradelab.robustness.verdict import _resolve_thresholds
+    th = _resolve_thresholds()
+    assert "wf_decay_robust" in th
+    assert "wf_decay_fragile" in th
+    assert th["wf_decay_robust"] == 0.90
+    assert th["wf_decay_fragile"] == 0.70

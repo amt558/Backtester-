@@ -85,6 +85,10 @@ class RobustnessThresholds(BaseModel):
     # S4: hold-out OOS gate thresholds (PF on the trailing untouched window).
     hold_out_robust_pf: float = 1.50
     hold_out_fragile_pf: float = 1.00
+    # wf_decay (rolling OOS PF, half-vs-half): late-half / early-half ratio.
+    # Below fragile threshold = strategy is decaying across the WF span.
+    wf_decay_robust: float = 0.90
+    wf_decay_fragile: float = 0.70
 
 
 class RobustnessConfig(BaseModel):

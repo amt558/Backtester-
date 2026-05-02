@@ -88,6 +88,11 @@ _FALLBACK_THRESHOLDS = {
     # PF >= robust threshold = robust signal; PF < fragile threshold = fragile.
     "hold_out_robust_pf": 1.50,
     "hold_out_fragile_pf": 1.00,
+    # wf_decay: half-vs-half ratio of aggregate OOS PF across walk-forward
+    # windows. Late-half / early-half. Below fragile = decaying; above robust
+    # = stable. Requires >= 4 valid windows for the signal to emit.
+    "wf_decay_robust": 0.90,
+    "wf_decay_fragile": 0.70,
 }
 
 
