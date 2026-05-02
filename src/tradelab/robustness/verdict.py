@@ -40,6 +40,7 @@ class VerdictResult(BaseModel):
     """Aggregate verdict + the signals that drove it."""
     verdict: str   # ROBUST | INCONCLUSIVE | FRAGILE
     signals: list[VerdictSignal] = Field(default_factory=list)
+    diagnostics: dict[str, Optional[float]] = Field(default_factory=dict)
 
     @property
     def fragile_signals(self) -> list[VerdictSignal]:

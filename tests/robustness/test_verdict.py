@@ -80,3 +80,31 @@ def test_verdict_lists_signals_with_reasons():
     for s in v.signals:
         assert s.name and s.reason
         assert s.outcome in ("robust", "inconclusive", "fragile")
+
+
+def test_verdict_result_has_diagnostics_field_default_empty():
+    """VerdictResult must include a diagnostics dict, default to empty."""
+    from tradelab.robustness.verdict import VerdictResult
+    v = VerdictResult(verdict="ROBUST")
+    assert v.diagnostics == {}
+
+
+def test_verdict_result_diagnostics_round_trips_through_json():
+    """diagnostics field must serialize and deserialize."""
+    from tradelab.robustness.verdict import VerdictResult, VerdictSignal
+    v = VerdictResult(
+        verdict="ROBUST",
+        signals=[VerdictSignal(name="x", outcome="robust", reason="test")],
+        diagnostics={"trade_efficiency": 0.62, "future_metric": None},
+    )
+    payload = v.model_dump_json()
+    parsed = VerdictResult.model_validate_json(payload)
+    assert parsed.diagnostics == {"trade_efficiency": 0.62, "future_metric": None}
+
+
+def test_verdict_result_old_json_without_diagnostics_still_parses():
+    """Backwards compat: JSON written before diagnostics field must still parse."""
+    from tradelab.robustness.verdict import VerdictResult
+    old_payload = '{"verdict": "ROBUST", "signals": []}'
+    v = VerdictResult.model_validate_json(old_payload)
+    assert v.diagnostics == {}
