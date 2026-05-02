@@ -54,3 +54,33 @@ def compute_wf_decay(wf: WalkForwardResult) -> Optional[float]:
     if early_pf is None or late_pf is None or early_pf == 0:
         return None
     return late_pf / early_pf
+
+
+def compute_trade_efficiency(bt: BacktestResult) -> Optional[float]:
+    """
+    Portfolio-level captured / ideal $ ratio across all trades.
+
+    Ideal $ per trade = mfe_pct/100 × shares × entry_price (the dollar
+    profit if we'd exited at the most favorable point). Captured $ = pnl
+    (realized dollar profit/loss).
+
+    Aggregating by sum (not mean of per-trade ratios) is intentional: it
+    naturally weights by trade size, avoids the division-by-tiny-MFE blowup
+    that destroys mean-of-ratios, and gives a single robust number.
+
+    Returns None when:
+      - No trades at all
+      - Total ideal $ is zero (all trades had mfe_pct=0; pre-MFE backtest data)
+
+    Range typically [-0.2, 1.0]:
+      >0.85: tight exits
+       0.5–0.85: normal
+      <0.4: real exit work to do
+    """
+    if not bt.trades:
+        return None
+    ideal = sum((t.mfe_pct / 100.0) * t.shares * t.entry_price for t in bt.trades)
+    captured = sum(t.pnl for t in bt.trades)
+    if ideal == 0:
+        return None
+    return captured / ideal
