@@ -246,3 +246,124 @@ def test_verdict_diagnostics_trade_efficiency_none_when_no_trades():
     """diagnostics['trade_efficiency'] should be None when bt.trades is empty."""
     v = compute_verdict(_bt(pf=1.6))  # _bt() helper builds empty trades
     assert v.diagnostics.get("trade_efficiency") is None
+
+
+def test_reclassification_robust_with_decay_drops_to_inconclusive():
+    """A previously-ROBUST signal mix becomes INCONCLUSIVE when wf_decay flags fragile.
+
+    Builds a strategy that satisfies the original ROBUST aggregation rule
+    (n_robust >= max(3, len/2), n_fragile == 0) and then adds a decaying
+    walk-forward. Expected: verdict drops to INCONCLUSIVE (not FRAGILE,
+    because n_fragile=1 with n_robust>0 doesn't trigger the FRAGILE override).
+    """
+    from tradelab.robustness.param_landscape import ParamLandscapeResult
+    from tradelab.robustness.entry_delay import EntryDelayResult, EntryDelayPoint
+    from tradelab.robustness.loso import LOSOResult, LOSOFold
+
+    bt = _bt(pf=1.6)
+    landscape = ParamLandscapeResult(
+        top_params=["a", "b"], grid_values=[[1, 2], [3, 4]],
+        fitness_grid=[[1.0, 1.0], [1.0, 1.0]],
+        best_fitness=1.0, mean_fitness=1.0, std_fitness=0.01,
+        smoothness_ratio=0.01, cliff_flag=False,
+    )
+    ed = EntryDelayResult(delays=[0, 1], points=[
+        EntryDelayPoint(delay=0, metrics=bt.metrics),
+        EntryDelayPoint(delay=1, metrics=BacktestMetrics(
+            total_trades=100, wins=60, losses=40, win_rate=60.0,
+            profit_factor=1.55,
+        )),
+    ])
+    m_fold = BacktestMetrics(total_trades=50, wins=30, losses=20,
+                              win_rate=60.0, profit_factor=1.55)
+    lo = LOSOResult(
+        folds=[
+            LOSOFold(held_out_symbol="A", metrics=m_fold),
+            LOSOFold(held_out_symbol="B", metrics=m_fold),
+        ],
+        pf_mean=1.55, pf_min=1.5, pf_max=1.6, pf_spread=0.1,
+    )
+    decaying_wf = _wf_with_decay(decay_ratio=0.5)  # fragile
+
+    v = compute_verdict(bt, dsr=0.97, mc=None, landscape=landscape,
+                        entry_delay=ed, loso=lo, wf=decaying_wf)
+    assert v.verdict == "INCONCLUSIVE", (
+        f"expected INCONCLUSIVE (decay drops a previously-ROBUST strategy), "
+        f"got {v.verdict}: {[(s.name, s.outcome) for s in v.signals]}"
+    )
+    # Verify wf_decay is the fragile signal
+    assert any(s.name == "wf_decay" and s.outcome == "fragile" for s in v.signals)
+
+
+def test_reclassification_robust_with_stable_wf_stays_robust():
+    """Same ROBUST mix with stable wf_decay should remain ROBUST."""
+    from tradelab.robustness.param_landscape import ParamLandscapeResult
+    from tradelab.robustness.entry_delay import EntryDelayResult, EntryDelayPoint
+    from tradelab.robustness.loso import LOSOResult, LOSOFold
+
+    bt = _bt(pf=1.6)
+    landscape = ParamLandscapeResult(
+        top_params=["a", "b"], grid_values=[[1, 2], [3, 4]],
+        fitness_grid=[[1.0, 1.0], [1.0, 1.0]],
+        best_fitness=1.0, mean_fitness=1.0, std_fitness=0.01,
+        smoothness_ratio=0.01, cliff_flag=False,
+    )
+    ed = EntryDelayResult(delays=[0, 1], points=[
+        EntryDelayPoint(delay=0, metrics=bt.metrics),
+        EntryDelayPoint(delay=1, metrics=BacktestMetrics(
+            total_trades=100, wins=60, losses=40, win_rate=60.0,
+            profit_factor=1.55,
+        )),
+    ])
+    m_fold = BacktestMetrics(total_trades=50, wins=30, losses=20,
+                              win_rate=60.0, profit_factor=1.55)
+    lo = LOSOResult(
+        folds=[
+            LOSOFold(held_out_symbol="A", metrics=m_fold),
+            LOSOFold(held_out_symbol="B", metrics=m_fold),
+        ],
+        pf_mean=1.55, pf_min=1.5, pf_max=1.6, pf_spread=0.1,
+    )
+    stable_wf = _wf_with_decay(decay_ratio=1.0)  # robust
+
+    v = compute_verdict(bt, dsr=0.97, mc=None, landscape=landscape,
+                        entry_delay=ed, loso=lo, wf=stable_wf)
+    assert v.verdict == "ROBUST", (
+        f"expected ROBUST, got {v.verdict}: "
+        f"{[(s.name, s.outcome) for s in v.signals]}"
+    )
+
+
+def test_full_verdict_json_round_trip_preserves_diagnostics():
+    """Verify a full VerdictResult survives JSON serialization with all new
+    fields including diagnostics dict."""
+    import json
+    from tradelab.results import Trade
+    from tradelab.robustness.verdict import VerdictResult
+
+    bt = BacktestResult(
+        strategy="x", start_date="2024-01-01", end_date="2024-12-31",
+        params={}, metrics=BacktestMetrics(profit_factor=1.6),
+        trades=[Trade(
+            ticker="TEST",
+            entry_date="2024-01-01", exit_date="2024-01-05",
+            entry_price=50.0, exit_price=50.8, shares=100,
+            pnl=80.0, pnl_pct=1.6, bars_held=4,
+            exit_reason="signal", mae_pct=0.0, mfe_pct=2.0,
+        )],
+        equity_curve=[],
+    )
+    wf = _wf_with_decay(decay_ratio=0.5)
+    v = compute_verdict(bt, wf=wf)
+
+    payload = v.model_dump_json()
+    parsed_dict = json.loads(payload)
+    assert "verdict" in parsed_dict
+    assert "signals" in parsed_dict
+    assert "diagnostics" in parsed_dict
+    assert "trade_efficiency" in parsed_dict["diagnostics"]
+
+    parsed = VerdictResult.model_validate_json(payload)
+    assert parsed.verdict == v.verdict
+    assert parsed.diagnostics == v.diagnostics
+    assert len(parsed.signals) == len(v.signals)
