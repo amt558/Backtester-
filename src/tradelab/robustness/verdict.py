@@ -13,6 +13,10 @@ Signals consumed (all optional — missing signals are treated as INCONCLUSIVE):
 - Entry delay: pf_drop_one_bar
 - LOSO: pf_spread
 - Walk-forward: wfe_ratio
+- Walk-forward decay: wf_decay (half-vs-half OOS PF ratio)
+
+Diagnostics surfaced (no aggregation impact):
+- trade_efficiency: portfolio captured / ideal $ ratio (MFE-based)
 """
 from __future__ import annotations
 
@@ -237,7 +241,9 @@ def compute_verdict(
 
     # --- wf_decay: rolling OOS PF, half-vs-half ratio ---
     # Catches temporal decay that aggregate WFE collapses into one ratio.
-    # Requires >= 4 valid windows; emits no signal otherwise.
+    # Outer guard on n_windows is a coarse pre-filter; compute_wf_decay
+    # filters to valid (non-None test_metrics) windows internally and
+    # returns None if fewer than 4 valid remain.
     if wf and wf.n_windows >= 4:
         decay = compute_wf_decay(wf)
         if decay is not None:
