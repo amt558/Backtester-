@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..results import BacktestResult, WalkForwardResult
+from ..results import BacktestResult, WalkForwardResult, WalkForwardWindow
 
 
 def compute_wf_decay(wf: WalkForwardResult) -> Optional[float]:
@@ -40,7 +40,9 @@ def compute_wf_decay(wf: WalkForwardResult) -> Optional[float]:
     first = valid[:n // 2]
     second = valid[n // 2:]
 
-    def _half_pf(half: list) -> Optional[float]:
+    def _half_pf(half: list[WalkForwardWindow]) -> Optional[float]:
+        # gp and gl are non-negative by engine convention: backtest.py defines
+        # gross_profit = sum(winning pnls) and gross_loss = abs(sum(losing pnls)).
         gp = sum(w.test_metrics.gross_profit for w in half)
         gl = sum(w.test_metrics.gross_loss for w in half)
         if gl <= 0:
