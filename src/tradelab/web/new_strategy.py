@@ -265,6 +265,50 @@ def _run_smoke_backtest(strategy) -> tuple[dict, dict]:
     return dict(metrics), equity_by_sym
 
 
+def discover_unregistered_strategies(src_root: Optional[Path] = None) -> list[dict]:
+    """Scan src/tradelab/strategies/ for Strategy subclasses whose module is not
+    yet registered in tradelab.yaml. Returns one record per importable subclass.
+
+    Records: {module, class_name, suggested_name, timeframe, requires_benchmark}.
+    Files that fail to import or define no Strategy subclass are silently skipped
+    (a half-written strategy must never break the scan)."""
+    import importlib
+
+    if src_root is None:
+        src_root = Path("src")
+    try:
+        registered = list_registered_strategies()
+        registered_modules = {getattr(e, "module", None) for e in registered.values()}
+    except Exception:
+        registered_modules = set()
+
+    strat_dir = src_root / "tradelab" / "strategies"
+    out: list[dict] = []
+    if not strat_dir.is_dir():
+        return out
+    for py in sorted(strat_dir.glob("*.py")):
+        if py.name in ("__init__.py", "base.py"):
+            continue
+        module_path = f"tradelab.strategies.{py.stem}"
+        if module_path in registered_modules:
+            continue
+        try:
+            mod = importlib.import_module(module_path)
+        except Exception:
+            continue
+        for v in vars(mod).values():
+            if (isinstance(v, type) and issubclass(v, Strategy)
+                    and v is not Strategy and v.__module__ == module_path):
+                out.append({
+                    "module": module_path,
+                    "class_name": v.__name__,
+                    "suggested_name": py.stem,
+                    "timeframe": getattr(v, "timeframe", "1D"),
+                    "requires_benchmark": bool(getattr(v, "requires_benchmark", False)),
+                })
+    return out
+
+
 def _append_strategy_to_yaml(yaml_path: Path, name: str, class_name: str) -> None:
     """Append a strategy entry to tradelab.yaml under strategies:.
 
