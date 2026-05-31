@@ -34,6 +34,18 @@ class Strategy(ABC):
     #: Parameter search ranges for Optuna. {name: (low, high)}. Subclasses override.
     tunable_params: dict[str, tuple[float, float]] = {}
 
+    #: Opt-in gate-introspection map for the validation suite's Gate Contribution
+    #: Isolation test (tier 3, report-only). Maps a human gate name -> param
+    #: overrides that NEUTRALISE that gate (make its entry condition always-true),
+    #: e.g. {"rs_filter": {"rs_threshold": -1e9}}. The validation harness re-runs
+    #: the backtest once per gate with the override to measure each gate's
+    #: contribution. Empty by default: a strategy that doesn't declare this is
+    #: simply not gate-ablatable (the test reports inconclusive). Declaring it
+    #: NEVER changes runtime behaviour — it is read only by the validation layer,
+    #: never by the engines or compute_verdict. Locked baselines stay frozen
+    #: unless their owner explicitly adds a map.
+    ablatable_gates: dict[str, dict] = {}
+
     def __init__(self, name: Optional[str] = None, params: Optional[dict] = None):
         if name is not None:
             self.name = name

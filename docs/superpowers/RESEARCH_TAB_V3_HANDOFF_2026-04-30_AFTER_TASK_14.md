@@ -16,7 +16,8 @@
 - **Next up:** Task 15 — pipeline delete affordances (4 confirm tiers + cascading event broadcast).
 - **Test baseline:** **455/455** in `tests/web/` (full suite, ~2 min via Bash). Static-HTML test file alone: **131/131** (~0.3s).
 - **Don't run pytest via PowerShell** — see Gotcha #1 in the original handoff. Use Bash.
-- **DEPLOY GAP IS WIDE — read the dedicated section below before any smoke.**
+- **DEPLOY GAP RESOLVED 2026-04-30** — dashboard restarted; new BE routes serving correctly. Expect the gap to re-widen as Task 15+ adds new routes; restart is part of the per-slice loop.
+- **P0 #1 (live-BE smoke for T12/T13/T14) CLEARED 2026-04-30** — see new "Smoke results" section below for evidence + 3 findings worth folding into Task 15 scope.
 
 ---
 
@@ -145,14 +146,44 @@ The pytest suite verifies each handler exhaustively (455 passing tests across BE
 
 ---
 
+## Smoke results 2026-04-30 (after dashboard restart)
+
+The previously stale dashboard process (PID 33844, started before T5/T10/T12/T13) was kept alive when the user "restarted" — a SECOND launcher process bound to a different state, but PID 33844 kept owning port 8877 with old handlers. After killing both stale PIDs and relaunching cleanly, all new BE routes returned 200 with real data.
+
+Verified via Playwright MCP against `http://127.0.0.1:8877/command_center.html` → Research tab.
+
+| Task | Verdict | Key evidence |
+|------|---------|--------------|
+| **T14** pipeline chrome | ✅ PASS | `.pipeline-card`, `.pipeline-toolbar`, `#pipeline-section-header`, `#pipeline-meta` all present; `#researchPipelineTable.pipeline` confirmed; ALL trash titles = `"Delete run"`; 21 live rows rendered |
+| **T13** factor matrix | ✅ PASS | 12 strategies × 8 real signal columns; 117 grid children = 9 header + 12×9 body; cell distribution 9 pass / 8 fail / 79 dim / 9 dimmed-row / 5 column-warn flags; alpha callout reads "Monte Carlo + Param + Entry delay + LOSO + Noise are weak across ≥50%" — matches column-warn columns; tooltips show real reasons ("PF 19.05 ≥ 1.5", "PF drops 54% at +1 bar") |
+| **T12** expanded tile QS+charts | ✅ PASS (via direct loader call — see finding 1) | 8/8 QS cells real numbers + correct ok/warn/fail color classes (Total return +21.9% ok, Sortino 0.67 warn, Avg loss -2.17% fail, Avg hold 12.6d, Avg win +4.49% — confirms Gotcha #17 pct units); 2 SVG charts (drawdown + rolling Sharpe) with linearGradient + paths; heatmap renders 84 cells (7 yrs × 12 mo); zero "no data" stubs |
+
+### Findings to fold into Task 15 scope
+
+1. **Stale Live Card → deleted run (data hygiene, NOT a v3 regression):** `s2_pocket_pivot`'s Live Card references run `fe4757a3-c63e-483a-8909-91fab4612593` which is gone from the audit DB. Initial click triggered the 404 graceful path ("Failed to load: run not found") — correct behavior. To smoke T12's happy path I called `loadQsForExpandedTile(tile, '52724c85-…')` directly with `survivor_canary`'s known-good run_id. **Task 15's Tier-2 cascade work will naturally need to surface and handle these orphan card→run pointers.** Worth adding a "find orphan cards" helper as a sub-task of T15.
+
+2. **Expanded-tile "Factors" tab still shows the placeholder** (`"Factor matrix loads in Task 13."`) inside the per-strategy tab strip. T13 implemented the *cross-strategy* matrix as a separate section — NOT the per-strategy Factors-tab content inside expanded tiles. Decision pending: replace in v3 (new task) or leave for v3.5.
+
+3. **Matrix DOM cell classes use `fm-` prefix** (`fm-cell`, `fm-row-label`, `fm-col-label`, `fm-corner`) — the handover's "Test invariants" pinned the outer `#matrix-*` IDs (correct) but did not pin inner cell class names. Future code that targets matrix cells should use `fm-` prefix. Static-HTML tests already grep for the right strings; adding this as a comment so future readers don't guess `.matrix-cell`.
+
+### Why this matters for next session
+
+- **Smoke is genuine evidence** — pytest 455/455 + this Playwright smoke means v3 chrome through Task 14 is END-TO-END verified, not just unit-verified.
+- **Restart-as-gate workflow validated** — kill stale PIDs → relaunch with `$env:PYTHONUTF8="1"` → probe `/tradelab/strategies-summary` for 200 → smoke. Codify this into the per-slice loop for T15 onward.
+- **Memory `feedback_live_smoke_before_next_slice.md`** is now satisfied for T12-T14. Task 15 inherits clean baseline.
+
+---
+
 ## Known problems & roadmap to fix them
 
 This section is what differentiates "shipped" from "ready to ship." Each item has a severity (P0 = blocks merging v3, P1 = should fix before/right after merge, P2 = longer-term cleanup).
 
 ### P0 (must fix before declaring v3 done)
 
-#### 1. No live-BE smoke for Tasks 12, 13, 14
-**Problem:** All Playwright smoke for Tasks 12/13/14 was against the stale dashboard process. The QS sub-grid was verified by stubbing `fetchJSON` with synthetic data; the matrix was verified the same way. We have **no end-to-end evidence** that:
+#### 1. No live-BE smoke for Tasks 12, 13, 14 — **CLEARED 2026-04-30**
+**Status:** Smoke ran via Playwright MCP after dashboard restart. All three tasks pass against real BE. See "Smoke results 2026-04-30" section below for the full evidence, color-class distribution, real signal tooltips, and the 3 findings folded into Task 15 scope.
+
+**Original problem (kept for context):** All Playwright smoke for Tasks 12/13/14 was against the stale dashboard process. The QS sub-grid was verified by stubbing `fetchJSON` with synthetic data; the matrix was verified the same way. We had **no end-to-end evidence** that:
 - A real `/tradelab/runs/<id>/qs-metrics` response actually populates the 8-cell grid + 3 charts (number formatting, edge cases like NaN, very long drawdown series).
 - A real `/tradelab/strategies-summary` returns the right shape and the matrix renders it correctly (column-warn detection on real data, alpha callout text).
 - The pipeline restyle doesn't break filter behavior under real audit load.

@@ -59,6 +59,18 @@ def run(
     full: bool = typer.Option(False, "--full/--no-full",
                                help="Mega-flag: turns on --optimize, --walkforward, "
                                     "--cost-sweep, and --robustness simultaneously"),
+    validation: bool = typer.Option(False, "--validation/--no-validation",
+                                     help="Run the report-only Validation Suite (tier 1-2: "
+                                          "streaks, expectancy, PF-by-month, drawdown stress, "
+                                          "vol bucketing) and write validation.json. "
+                                          "Auto-enabled by --full. Never affects the verdict."),
+    validation_deep: bool = typer.Option(False, "--validation-deep/--no-validation-deep",
+                                          help="Also run tier-3 validation engine re-runs "
+                                               "(cost sensitivity, gate isolation, random-entry "
+                                               "benchmark). Expensive; NOT enabled by --full."),
+    validation_sims: int = typer.Option(200, help="Random-entry benchmark sims for "
+                                                   "--validation-deep (default 200; each is a "
+                                                   "full backtest)."),
     mc_simulations: int = typer.Option(500, help="Monte Carlo simulations per method"),
     noise_seeds: int = typer.Option(50, help="Noise injection seed count"),
     noise_sigma_bp: float = typer.Option(5.0, help="Noise sigma in basis points"),
@@ -90,6 +102,10 @@ def run(
             walkforward = True
             cost_sweep = True
             robustness = True
+            validation = True   # tier 1-2 are cheap; eager in --full (verdict-neutral)
+        # tier-3 deep validation implies the tier 1-2 report too
+        if validation_deep:
+            validation = True
 
         # --- resolve universe ---
         symbol_list: list[str] = []
@@ -300,6 +316,31 @@ def run(
             (out_dir / "robustness_result.json").write_text(
                 robustness_result.model_dump_json(indent=2), encoding="utf-8",
             )
+
+        # --- Validation Suite (parallel, REPORT-ONLY layer; never the verdict) ---
+        # Tier 1-2 are cheap ledger/equity/parquet scans (eager in --full).
+        # Tier 3 re-runs the engine (opt-in via --validation-deep). Failures here
+        # are non-fatal: a missing validation.json just renders "—" in the panel.
+        if validation:
+            try:
+                from .validation.suite import run_validation_suite
+                vreport = run_validation_suite(bt)
+                if validation_deep:
+                    from .validation.deep import run_validation_suite_deep
+                    _emit.start("validation_deep")
+                    vreport.signals.extend(run_validation_suite_deep(
+                        strat, data, bt, spy_close=spy_close,
+                        start=start, end=end, n_sims=validation_sims,
+                        cost_sweep_result=cost_sweep_result,
+                    ))
+                    _emit.complete("validation_deep")
+                (out_dir / "validation.json").write_text(
+                    vreport.model_dump_json(indent=2), encoding="utf-8",
+                )
+                typer.echo(f"Validation: {out_dir / 'validation.json'} "
+                           f"({len(vreport.signals)} checks)")
+            except Exception as e:
+                typer.echo(f"(Validation suite skipped: {type(e).__name__}: {e})", err=True)
 
         # --- Regenerate reports/index.html + reports/overview.html ---
         # Failures here are non-fatal; they only affect the cross-run views.

@@ -1384,3 +1384,138 @@ def test_v3_task14_trash_button_tooltip_says_delete_not_archive(html: str) -> No
         "Stale 'Archive run' tooltip on trash button — DELETE is hard-delete "
         "since tradelab commit 840fb0f"
     )
+
+
+# ─── Task 15: Pipeline delete affordances (cascade-aware modal) ────────
+
+
+def test_v3_task15_show_delete_confirm_calls_preview_delete(html: str) -> None:
+    """Before opening the modal, showDeleteConfirm must POST to
+    /tradelab/runs/preview-delete with the candidate run_ids so the FE
+    knows whether any live cards are affected (Tier 2 / Tier 4
+    escalation). Otherwise it can't differentiate plain bulk-delete from
+    cascade-delete."""
+    idx = html.find("function showDeleteConfirm")
+    assert idx > 0, "showDeleteConfirm function missing"
+    body = html[idx:idx + 4000]
+    assert "/tradelab/runs/preview-delete" in body, (
+        "showDeleteConfirm must call /tradelab/runs/preview-delete to detect "
+        "cascade before opening the confirm modal"
+    )
+
+
+def test_v3_task15_modal_has_cascade_container(html: str) -> None:
+    """The existing #researchDeleteConfirm modal gains a new
+    #deleteConfirmCascade section that's hidden by default and
+    populated when cascade is non-empty. Hidden default keeps the
+    Tier 1 / Tier 3 (no-cascade) experience visually unchanged."""
+    assert 'id="deleteConfirmCascade"' in html, (
+        "Modal markup missing #deleteConfirmCascade container — needed to "
+        "render the 'Cards affected' list when cascade is non-empty"
+    )
+
+
+def test_v3_task15_disable_and_delete_button_label_present(html: str) -> None:
+    """When cascade is non-empty, a third button labeled 'Disable card + delete'
+    appears so the user can flip affected cards to status='disabled' before
+    the run vanishes — instead of leaving orphan cards with no robustness
+    history (smoke turned up s2_pocket_pivot's card already in this state).
+    The button lives in modal markup (#deleteConfirmDisableGo), revealed
+    by showDeleteConfirm when cascade.length > 0."""
+    idx = html.find('id="deleteConfirmDisableGo"')
+    assert idx > 0, (
+        "Modal markup missing #deleteConfirmDisableGo — needed for the "
+        "Tier 2 / Tier 4 'Disable card + delete' action"
+    )
+    # Read the surrounding button tag (label is the inner text)
+    btn_open  = html.rfind('<button', 0, idx)
+    btn_close = html.find('</button>', idx)
+    assert btn_open > 0 and btn_close > 0
+    btn = html[btn_open:btn_close]
+    assert "Disable card + delete" in btn or "Disable cards + delete" in btn, (
+        "Disable button must carry label 'Disable card + delete' "
+        f"(found tag: {btn[:200]})"
+    )
+
+
+def test_v3_task15_disable_uses_patch_with_status_disabled(html: str) -> None:
+    """The 'Disable card + delete' action must PATCH each affected card_id
+    with {status: 'disabled'} — the existing endpoint at
+    handlers.py:1147 (PATCH /tradelab/cards/<id>) is the canonical
+    disable mechanism. NO new endpoint."""
+    idx = html.find("function showDeleteConfirm")
+    assert idx > 0
+    body = html[idx:idx + 4000]
+    # Either inline or in a sibling helper called from showDeleteConfirm —
+    # so look in a wider window.
+    wider = html[idx:idx + 8000]
+    assert "/tradelab/cards/" in wider and "PATCH" in wider, (
+        "Disable+delete flow must PATCH /tradelab/cards/<id> — confirmed "
+        "endpoint at handlers.py:1147"
+    )
+    assert '"status":"disabled"' in wider or '"status": "disabled"' in wider or "status: 'disabled'" in wider or "status: \"disabled\"" in wider, (
+        "PATCH body must set status to 'disabled' (canonical disable signal)"
+    )
+
+
+def test_v3_task15_cascade_card_id_iteration_in_modal(html: str) -> None:
+    """When cascade is non-empty, the modal body must enumerate the
+    affected card_id / base_name pairs so the user can see WHICH cards
+    are at risk before clicking the destructive button. Just a count
+    isn't enough."""
+    idx = html.find("function showDeleteConfirm")
+    assert idx > 0
+    body = html[idx:idx + 4000]
+    # Look for cascade.map or cascade.forEach (rendering loop) and reference
+    # to base_name (the user-facing identifier).
+    assert ("cascade.map" in body or "cascade.forEach" in body or "for (const" in body), (
+        "showDeleteConfirm must iterate the cascade to render affected cards"
+    )
+    assert "base_name" in body or "card_id" in body, (
+        "Cascade rendering must surface base_name or card_id per affected card"
+    )
+
+
+# ─── Task 15 — Slice 4: stale modal copy fix ───────────────────────
+
+
+def test_v3_task15_stale_archive_copy_removed(html: str) -> None:
+    """The original modal copy at line ~1702 said the audit DB record is
+    'preserved (filtered out of default queries — restorable from the
+    archived_runs table by a developer if needed)'. That described the
+    OLD soft-archive contract. Since 840fb0f, DELETE is HARD-delete:
+    audit row is removed, folder is rmtree'd, deletions.log gets a
+    line. The copy must reflect that."""
+    # The exact stale phrase from the old soft-archive copy:
+    assert "audit DB record is preserved" not in html, (
+        "Stale soft-archive copy in delete-confirm modal — DELETE has been "
+        "hard-delete since 840fb0f. Update the modal description to match."
+    )
+    assert "archived_runs table" not in html, (
+        "Stale reference to archived_runs table — not how delete works since "
+        "840fb0f. Fix modal copy to describe hard-delete + deletions.log."
+    )
+
+
+def test_v3_task15_modal_copy_describes_hard_delete(html: str) -> None:
+    """The new copy must mention either deletions.log or an unmistakable
+    'hard delete' / 'permanent' framing so the user understands the
+    action is non-recoverable."""
+    # Find the modal markup
+    idx = html.find('id="researchDeleteConfirm"')
+    assert idx > 0
+    # Read forward through the modal body
+    end_idx = html.find('</div>', idx + 2000)  # rough end-of-modal scan
+    if end_idx < 0:
+        end_idx = idx + 4000
+    body = html[idx:end_idx + 4000]
+    assert (
+        "deletions.log" in body
+        or "permanently" in body.lower()
+        or "cannot be undone" in body.lower()
+        or "hard delete" in body.lower()
+        or "removed from the audit" in body.lower()
+    ), (
+        "Modal copy must describe DELETE as permanent / hard-delete / "
+        "non-recoverable so users understand the action"
+    )

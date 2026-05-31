@@ -323,6 +323,33 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             "dsr_probability": data.get("dsr_probability"),
         }), 200
 
+    # Validation Suite — parallel, REPORT-ONLY layer (no verdict by design).
+    # Reads validation.json (written by `tradelab run --validation`). 200 with an
+    # empty signals[] for runs that exist but predate / didn't run validation, so
+    # the panel renders "—" silently instead of logging a devtools error.
+    m = re.match(r"^/tradelab/runs/([^/]+)/validation$", path)
+    if m:
+        run_id = m.group(1)
+        lookup = audit_reader.resolve_run_folder(run_id, db_path=_db_path())
+        if lookup.status == "no_run":
+            return _err("run not found"), 404
+        empty = {"run_id": run_id, "strategy": None, "suite_version": None, "signals": []}
+        if lookup.status == "no_folder":
+            return _ok(empty), 200
+        val_path = Path(lookup.folder) / "validation.json"
+        if not val_path.exists():
+            return _ok(empty), 200
+        try:
+            data = json.loads(val_path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as e:
+            return _err(f"validation.json parse failed: {e}"), 500
+        return _ok({
+            "run_id": run_id,
+            "strategy": data.get("strategy"),
+            "suite_version": data.get("suite_version"),
+            "signals": data.get("signals", []),
+        }), 200
+
     if path == "/tradelab/data-freshness":
         return _ok(freshness.get_freshness(cache_root=_cache_root())), 200
 
@@ -899,6 +926,29 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 failed.append({"id": str(run_id), "reason": msg})
 
         return json.dumps({"deleted": deleted, "failed": failed}), 200
+
+    if path == "/tradelab/runs/preview-delete":
+        # Task 15: read-only cascade detection for the FE delete-confirm
+        # modal. Given a list of run_ids, returns each live card whose
+        # scoring_run_id is in the set so the FE can escalate to a
+        # card-aware confirm (Tier 2 / Tier 4).
+        run_ids = payload.get("run_ids")
+        if run_ids is None:
+            return _err("missing run_ids field"), 400
+        if not isinstance(run_ids, list):
+            return _err("run_ids must be a list"), 400
+
+        from tradelab.web import run_cascade
+        cards_path = _cards_path()
+        if not cards_path.exists():
+            return json.dumps({"cascade": []}), 200
+        from tradelab.live.cards import CardRegistry
+        reg = CardRegistry(cards_path)
+        cascade = run_cascade.cards_powered_by_runs(
+            {str(r) for r in run_ids},
+            reg.all_hydrated().values(),
+        )
+        return json.dumps({"cascade": cascade}), 200
 
     if path == "/tradelab/jobs":
         return _post_job(payload)

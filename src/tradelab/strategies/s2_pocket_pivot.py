@@ -41,6 +41,19 @@ class S2PocketPivot(Strategy):
         "trail_tighten_atr": (0.5, 2.0),
     }
 
+    # Opt-in gate map for validation's Gate Contribution Isolation (report-only).
+    # Each override neutralises one of the param-controlled entry gates:
+    #   gate_atr       = ATR_pct <= atr_pct_max        -> huge cap = always pass
+    #   gate_rs        = RS_21d  >= rs_threshold        -> -inf-ish = always pass
+    #   gate_proximity = Close > EMA10 * ema10_proximity-> 0.0      = always pass
+    # (fresh_pp / Trend_OK / Above50 are not param-controlled, so not ablatable
+    # without code changes — deliberately omitted.)
+    ablatable_gates = {
+        "atr_cap":       {"atr_pct_max": 1e9},
+        "rs_filter":     {"rs_threshold": -1e9},
+        "ema_proximity": {"ema10_proximity": 0.0},
+    }
+
     def generate_signals(
         self,
         data: dict[str, pd.DataFrame],
