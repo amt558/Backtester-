@@ -1196,7 +1196,10 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         class_name = (payload.get("class_name") or "").strip()
         if not name or not class_name:
             return _err("name and class_name are required"), 400
-        res = import_discovered(name, class_name)
+        try:
+            res = import_discovered(name, class_name)
+        except Exception as e:
+            return _err(f"import failed: {type(e).__name__}: {e}"), 500
         if res.get("error"):
             return _err(res["error"]), 409
         return _ok(res), 200
