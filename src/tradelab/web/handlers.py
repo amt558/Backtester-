@@ -1048,6 +1048,36 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             traceback.print_exc(file=sys.stderr)
             return _err("accept failed: internal error"), 500
 
+    if path == "/tradelab/strategies/accept":
+        from tradelab.live.cards import CardExistsError, CardRegistry
+        from tradelab.web import approve_strategy
+        required = ("base_name", "symbol", "timeframe", "report_folder", "strategy")
+        missing = [k for k in required if not (payload.get(k) or "").strip()]
+        if missing:
+            return _err(f"missing required fields: {', '.join(missing)}"), 400
+        try:
+            card = approve_strategy.accept_python_run(
+                base_name=payload["base_name"], symbol=payload["symbol"],
+                timeframe=payload["timeframe"], report_folder=payload["report_folder"],
+                verdict=payload.get("verdict", "INCONCLUSIVE"),
+                dsr_probability=payload.get("dsr_probability"),
+                scoring_run_id=payload.get("scoring_run_id", ""),
+                strategy=payload["strategy"],
+                registry=CardRegistry(_cards_path()),
+                reports_root=_reports_root(),
+                activate=bool(payload.get("activate", False)),
+                confirm_non_robust=bool(payload.get("confirm_non_robust", False)),
+            )
+            return _ok(card), 200
+        except approve_strategy.ActivationGateFailed as e:
+            return _err(str(e)), 422
+        except FileNotFoundError:
+            return _err("report folder not found"), 404
+        except CardExistsError as e:
+            return _err(f"card_id {e} already registered"), 409
+        except Exception as e:
+            return _err(f"accept failed: {type(e).__name__}: {e}"), 500
+
     # Task 10: one-click activate. Looks up the strategy's latest run, derives
     # symbol/timeframe from its backtest_result.json, and forwards to
     # accept_scored(activate=True). Reuses every gate, side effect, and SSE

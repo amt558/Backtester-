@@ -51,3 +51,11 @@ def test_accept_python_confirm_overrides_advisory_gate(tmp_path):
         activate=True, confirm_non_robust=True)
     assert card["status"] == "enabled"
     assert card["activated_verdict"] == "FRAGILE"
+
+
+def test_accept_route_requires_fields():
+    import json
+    from tradelab.web import handlers
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/accept", json.dumps({"base_name": "frog"}).encode())
+    assert status == 400
