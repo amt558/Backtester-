@@ -376,6 +376,13 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             return _err(f"registry error: {e}"), 200
         return _ok({"strategies": strategies}), 200
 
+    if path == "/tradelab/strategies/discoverable":
+        from ..web.new_strategy import discover_unregistered_strategies
+        try:
+            return _ok({"strategies": discover_unregistered_strategies()}), 200
+        except Exception as e:
+            return _err(f"discovery failed: {type(e).__name__}: {e}"), 500
+
     if path == "/tradelab/preflight":
         from tradelab.web.preflight import compute_preflight
         return _ok(compute_preflight()), 200
@@ -1182,6 +1189,17 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
 
     if path == "/tradelab/live/panic":
         return handle_panic_post(payload)
+
+    if path == "/tradelab/strategies/import":
+        from ..web.new_strategy import import_discovered
+        name = (payload.get("name") or "").strip()
+        class_name = (payload.get("class_name") or "").strip()
+        if not name or not class_name:
+            return _err("name and class_name are required"), 400
+        res = import_discovered(name, class_name)
+        if res.get("error"):
+            return _err(res["error"]), 409
+        return _ok(res), 200
 
     # Fallback to legacy POST dispatcher for everything else
     return handle_post(path, body), 200

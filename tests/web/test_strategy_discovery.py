@@ -41,3 +41,20 @@ def test_import_discovered_rejects_duplicate(tmp_path, monkeypatch):
     monkeypatch.setattr("tradelab.web.new_strategy._is_registered", lambda n: True)
     res = import_discovered("s2_pocket_pivot", "S2PocketPivot", yaml_path=yaml)
     assert res["error"] is not None and res["registered"] is False
+
+
+def test_discoverable_route_returns_records():
+    import json
+    from tradelab.web import handlers
+    body, status = handlers.handle_get_with_status("/tradelab/strategies/discoverable")
+    assert status == 200
+    data = json.loads(body)["data"]
+    assert "strategies" in data and isinstance(data["strategies"], list)
+
+
+def test_import_route_rejects_missing_fields():
+    import json
+    from tradelab.web import handlers
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/import", json.dumps({"name": "x"}).encode())
+    assert status == 400
