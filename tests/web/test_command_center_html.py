@@ -1519,3 +1519,17 @@ def test_v3_task15_modal_copy_describes_hard_delete(html: str) -> None:
         "Modal copy must describe DELETE as permanent / hard-delete / "
         "non-recoverable so users understand the action"
     )
+
+
+def test_import_modal_has_discovery_dropdown_and_no_pine_csv(html: str) -> None:
+    assert 'id="importStrategySelect"' in html
+    assert 'id="importStrategyBtn"' in html
+    assert "/tradelab/strategies/discoverable" in html
+    assert "/tradelab/strategies/import" in html
+    assert 'id="scorePineFileInput"' not in html
+    assert 'id="scoreCsvFileInput"' not in html
+
+
+def test_no_pine_or_csv_score_triggers_in_ui(html: str) -> None:
+    assert "scoreCsvTextarea" not in html
+    assert "scorePineTextarea" not in html
