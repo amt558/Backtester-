@@ -18,3 +18,26 @@ def test_discovery_finds_unregistered_strategy_files(tmp_path, monkeypatch):
     assert rec["module"] == "tradelab.strategies.viprasol_v83"
     assert rec["timeframe"] == "1D"
     assert rec["requires_benchmark"] is True
+
+
+def test_import_discovered_appends_yaml_entry(tmp_path, monkeypatch):
+    from tradelab.web.new_strategy import import_discovered
+    yaml = tmp_path / "tradelab.yaml"
+    yaml.write_text("strategies:\n  s2_pocket_pivot:\n    module: tradelab.strategies.s2_pocket_pivot\n    class_name: S2PocketPivot\n    params: {}\n")
+    monkeypatch.setattr("tradelab.web.new_strategy._is_registered", lambda n: False)
+
+    res = import_discovered("viprasol_v83", "ViprasolV83", yaml_path=yaml)
+    assert res["error"] is None and res["registered"] is True
+    text = yaml.read_text()
+    assert "  viprasol_v83:" in text
+    assert "module: tradelab.strategies.viprasol_v83" in text
+    assert "class_name: ViprasolV83" in text
+
+
+def test_import_discovered_rejects_duplicate(tmp_path, monkeypatch):
+    from tradelab.web.new_strategy import import_discovered
+    yaml = tmp_path / "tradelab.yaml"
+    yaml.write_text("strategies:\n")
+    monkeypatch.setattr("tradelab.web.new_strategy._is_registered", lambda n: True)
+    res = import_discovered("s2_pocket_pivot", "S2PocketPivot", yaml_path=yaml)
+    assert res["error"] is not None and res["registered"] is False

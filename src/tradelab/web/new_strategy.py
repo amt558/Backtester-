@@ -309,6 +309,23 @@ def discover_unregistered_strategies(src_root: Optional[Path] = None) -> list[di
     return out
 
 
+def import_discovered(
+    name: str,
+    class_name: str,
+    yaml_path: Optional[Path] = None,
+) -> dict:
+    """Register an already-on-disk discovered strategy by appending its
+    tradelab.yaml entry. `name` MUST equal the file stem (module is
+    tradelab.strategies.<name>). Idempotent; refuses an already-registered name."""
+    name = _normalize_name(name)
+    if _is_registered(name):
+        return {"error": f"'{name}' is already registered", "registered": False}
+    if yaml_path is None:
+        yaml_path = Path("tradelab.yaml")
+    _append_strategy_to_yaml(yaml_path, name, class_name)
+    return {"error": None, "registered": True, "name": name}
+
+
 def _append_strategy_to_yaml(yaml_path: Path, name: str, class_name: str) -> None:
     """Append a strategy entry to tradelab.yaml under strategies:.
 
