@@ -1533,3 +1533,9 @@ def test_import_modal_has_discovery_dropdown_and_no_pine_csv(html: str) -> None:
 def test_no_pine_or_csv_score_triggers_in_ui(html: str) -> None:
     assert "scoreCsvTextarea" not in html
     assert "scorePineTextarea" not in html
+
+
+def test_import_modal_has_test_button_firing_full_run(html: str) -> None:
+    assert 'id="importTestBtn"' in html
+    assert "run --full" in html
+    assert "/tradelab/jobs" in html
