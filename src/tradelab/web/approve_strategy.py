@@ -284,3 +284,66 @@ def accept_scored(
     if activate:
         result["activated_at"] = created_at
     return result
+
+
+def accept_python_run(
+    *,
+    base_name: str,
+    symbol: str,
+    timeframe: str,
+    report_folder: str,
+    verdict: str,
+    dsr_probability: Optional[float],
+    scoring_run_id: str,
+    strategy: str,
+    registry: _CardRegistry,
+    reports_root: Path = Path("reports"),
+    activate: bool = False,
+    confirm_non_robust: bool = False,
+    mode: str = "paper",
+) -> dict:
+    """Promote a tested Python-strategy run to a live card. No strategy.pine /
+    pine_archive. ADVISORY gating: activating a non-ROBUST verdict requires
+    confirm_non_robust=True else ActivationGateFailed. Paper-mode by default."""
+    rf = Path(report_folder).resolve()
+    rr = Path(reports_root).resolve()
+    try:
+        rf.relative_to(rr)
+    except ValueError as exc:
+        raise FileNotFoundError(f"report folder {rf} is not under reports_root {rr}") from exc
+    if not rf.exists() or not rf.is_dir():
+        raise FileNotFoundError(f"report folder not found: {rf}")
+
+    normalized_verdict = (verdict or "").strip().upper()
+    if activate and normalized_verdict != "ROBUST" and not confirm_non_robust:
+        raise ActivationGateFailed(
+            f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
+            f"Re-submit with confirm_non_robust=true to accept anyway."
+        )
+
+    version = registry.next_version_for(base_name)
+    card_id = f"{base_name}-v{version}"
+    created_at = _datetime.now(_timezone.utc).isoformat(timespec="seconds")
+    card = {
+        "card_id": card_id,
+        "secret": _secrets.token_urlsafe(24),
+        "symbol": symbol,
+        "status": "enabled" if activate else "disabled",
+        "quantity": None,
+        "created_at": created_at,
+        "base_name": base_name,
+        "version": version,
+        "timeframe": timeframe,
+        "verdict": verdict,
+        "dsr_probability": dsr_probability,
+        "report_folder": str(rf).replace("\\", "/"),
+        "scoring_run_id": scoring_run_id,
+        "strategy": strategy,
+        "mode": mode,
+        "source": "python",
+    }
+    if activate:
+        card["activated_at"] = created_at
+        card["activated_verdict"] = normalized_verdict
+    registry.create(card_id, card)
+    return card
