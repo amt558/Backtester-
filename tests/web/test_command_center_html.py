@@ -1539,3 +1539,8 @@ def test_import_modal_has_test_button_firing_full_run(html: str) -> None:
     assert 'id="importTestBtn"' in html
     assert "run --full" in html
     assert "/tradelab/jobs" in html
+
+
+def test_accept_flow_posts_to_strategies_accept(html: str) -> None:
+    assert "/tradelab/strategies/accept" in html
+    assert "confirm_non_robust" in html
