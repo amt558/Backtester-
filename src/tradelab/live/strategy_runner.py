@@ -38,8 +38,10 @@ def safety_block_reason(config: dict, *, daily_pnl: float, is_entry: bool) -> Op
     breached daily_loss_limit halts new ENTRIES (exits still allowed)."""
     alpaca = config.get("alpaca", {}) or {}
     trading = config.get("trading", {}) or {}
-    if not (alpaca.get("paper_trading", True) is True):
-        return "paper_trading is not True (live trading is disabled in this engine)"
+    # Fail CLOSED: anything that is not the bool True (missing key, False, None,
+    # 1, "true") blocks. A missing/garbage paper flag must never fire orders.
+    if alpaca.get("paper_trading") is not True:
+        return "paper_trading is not True (missing/non-True blocks all orders)"
     if bool(trading.get("kill_switch", False)):
         return "kill_switch is engaged"
     limit = trading.get("daily_loss_limit")
@@ -48,7 +50,9 @@ def safety_block_reason(config: dict, *, daily_pnl: float, is_entry: bool) -> Op
             if float(daily_pnl) <= float(limit):
                 return f"daily loss {daily_pnl:.0f} breached limit {float(limit):.0f}"
         except (TypeError, ValueError):
-            pass
+            # Fail CLOSED on an unreadable P&L: block new entries rather than
+            # risk opening into an unknown loss state (exits stay allowed).
+            return f"daily P&L unreadable ({daily_pnl!r}) — blocking entry"
     return None
 
 
