@@ -1544,3 +1544,10 @@ def test_import_modal_has_test_button_firing_full_run(html: str) -> None:
 def test_accept_flow_posts_to_strategies_accept(html: str) -> None:
     assert "/tradelab/strategies/accept" in html
     assert "confirm_non_robust" in html
+
+
+# ─── Phase-4 Task 5: allocation_usd card field ─────────────────────────
+
+
+def test_overview_card_has_allocation_input(html: str) -> None:
+    assert "allocation_usd" in html

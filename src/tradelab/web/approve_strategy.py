@@ -301,6 +301,7 @@ def accept_python_run(
     activate: bool = False,
     confirm_non_robust: bool = False,
     mode: str = "paper",
+    allocation_usd: Optional[float] = None,
 ) -> dict:
     """Promote a tested Python-strategy run to a live card. No strategy.pine /
     pine_archive. ADVISORY gating: activating a non-ROBUST verdict requires
@@ -341,6 +342,7 @@ def accept_python_run(
         "strategy": strategy,
         "mode": mode,
         "source": "python",
+        "allocation_usd": allocation_usd,
     }
     if activate:
         card["activated_at"] = created_at

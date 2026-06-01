@@ -1067,6 +1067,7 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 reports_root=_reports_root(),
                 activate=bool(payload.get("activate", False)),
                 confirm_non_robust=bool(payload.get("confirm_non_robust", False)),
+                allocation_usd=payload.get("allocation_usd"),
             )
             return _ok(card), 200
         except approve_strategy.ActivationGateFailed as e:
@@ -1417,7 +1418,7 @@ def _inject_default_params(code: str, new_defaults: dict) -> str:
 _ALLOWED_PATCH_FIELDS = {
     "status", "quantity", "cadence", "daily_limit",
     "cooldown_seconds", "allow_collision", "allow_naked_short",
-    "capital", "max_positions",
+    "capital", "max_positions", "allocation_usd",
 }
 _ALLOWED_STATUSES = {"enabled", "disabled"}
 _ALLOWED_CADENCES = {"intraday", "daily", "weekly", "manual"}
@@ -1450,6 +1451,10 @@ def _validate_patch_card_payload(payload: dict) -> Optional[str]:
         v = payload["capital"]
         if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0):
             return "capital must be a non-negative number or null"
+    if "allocation_usd" in payload:
+        v = payload["allocation_usd"]
+        if v is not None and (not isinstance(v, (int, float)) or isinstance(v, bool) or v < 0):
+            return "allocation_usd must be a non-negative number or null"
     if "max_positions" in payload:
         v = payload["max_positions"]
         if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 0):
