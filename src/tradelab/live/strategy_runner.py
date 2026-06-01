@@ -50,3 +50,23 @@ def safety_block_reason(config: dict, *, daily_pnl: float, is_entry: bool) -> Op
         except (TypeError, ValueError):
             pass
     return None
+
+
+def reconcile_card(*, card: dict, desired: str, actual_qty: int, price: float,
+                   bar_date: str, submit_fn) -> dict:
+    """Reconcile one card's desired position with its actual Alpaca position by
+    placing at most ONE market order via submit_fn. Idempotent: a card already
+    in its desired state is a no-op. submit_fn(symbol, side, quantity,
+    client_order_id) is injected (real or mock)."""
+    symbol = card["symbol"]
+    cid = card["card_id"]
+    if desired == "long" and actual_qty <= 0:
+        qty = size_qty(card.get("allocation_usd"), price)
+        if qty <= 0:
+            return {"action": "skip", "reason": "allocation/price yields 0 shares"}
+        submit_fn(symbol, "buy", qty, client_order_id=f"{cid}-{bar_date}-buy")
+        return {"action": "buy", "qty": qty}
+    if desired == "flat" and actual_qty > 0:
+        submit_fn(symbol, "sell", actual_qty, client_order_id=f"{cid}-{bar_date}-sell")
+        return {"action": "sell", "qty": actual_qty}
+    return {"action": "none"}
