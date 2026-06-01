@@ -18,6 +18,16 @@ from .param_landscape import ParamLandscapeResult, run_param_landscape
 from .verdict import VerdictResult, compute_verdict
 
 
+class RobustnessInputError(ValueError):
+    """The input backtest cannot be meaningfully tested for robustness.
+
+    Raised on an empty trade set: Monte Carlo resampling and LOSO have nothing
+    to draw from and would otherwise crash deep inside a trade-dependent step
+    with a cryptic error. Failing loudly here lets the run record a definite
+    terminal state with a human-readable reason instead of vanishing.
+    """
+
+
 class RobustnessSuiteResult(BaseModel):
     """Bundle of all robustness outputs + the aggregate verdict."""
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -58,6 +68,17 @@ def run_robustness_suite(
               Useful when iterating on reporting without waiting for the
               full suite to finish each time.
     """
+    # Fail loudly on an empty trade set BEFORE any trade-dependent step.
+    # Monte Carlo / LOSO resample the trade list; with zero trades they crash
+    # deep with no clear reason. Surface a human-readable terminal reason.
+    n_trades = backtest_result.metrics.total_trades
+    if not n_trades or n_trades <= 0:
+        raise RobustnessInputError(
+            f"0 trades — nothing to test: strategy "
+            f"'{backtest_result.strategy}' produced no trades over "
+            f"{start or 'data start'}..{end or 'data end'}"
+        )
+
     skip = set(skip or [])
 
     mc = None

@@ -49,6 +49,7 @@ class Job:
     progress_log: Optional[str] = None
     last_event_summary: Optional[str] = None
     error_tail: Optional[str] = None  # last 100 lines of stderr if failed
+    log_path: Optional[str] = None    # combined stdout+stderr sink (never DEVNULL)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -150,11 +151,21 @@ class JobManager:
         _atomic_write_json(self._state_path(), data)
 
 
-    def submit(self, strategy: str, command: str, argv: list[str]) -> tuple[str, JobStatus]:
+    def submit(
+        self,
+        strategy: str,
+        command: str,
+        argv: list[str],
+        log_path: Optional[str] = None,
+    ) -> tuple[str, JobStatus]:
         """Submit a new job. Returns (job_id, status) where status is RUNNING or QUEUED.
 
         Raises DuplicateJobError if a job with the same (strategy, command)
         is already RUNNING or QUEUED.
+
+        log_path: if given, the job's combined stdout+stderr is written there
+        when the process exits (never DEVNULL). Default None preserves the
+        original PIPE-only behaviour.
         """
         with self._lock:
             # dedupe
@@ -175,12 +186,16 @@ class JobManager:
             if "--progress-log" not in argv_with_log:
                 argv_with_log.extend(["--progress-log", str(progress_path)])
 
+            if log_path:
+                Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+
             job = Job(
                 id=job_id,
                 strategy=strategy,
                 command=command,
                 argv=argv_with_log,
                 progress_log=str(progress_path),
+                log_path=str(log_path) if log_path else None,
             )
             self._jobs[job_id] = job
 
@@ -231,10 +246,25 @@ class JobManager:
         proc = self._processes.get(job_id)
         if proc is None:
             return
+        # log_path is immutable after submit, so reading it without the lock is safe.
+        job0 = self._jobs.get(job_id)
+        log_path = job0.log_path if job0 else None
         try:
-            stderr_bytes = proc.communicate()[1] or b""
+            stdout_bytes, stderr_bytes = proc.communicate()
+            stdout_bytes = stdout_bytes or b""
+            stderr_bytes = stderr_bytes or b""
         except Exception:
-            stderr_bytes = b""
+            stdout_bytes, stderr_bytes = b"", b""
+        # Persist the combined stream so a failed run leaves a trail (never DEVNULL).
+        if log_path:
+            try:
+                with open(log_path, "wb") as f:
+                    if stdout_bytes:
+                        f.write(stdout_bytes)
+                    if stderr_bytes:
+                        f.write(stderr_bytes)
+            except OSError:
+                pass
         # Subprocess has exited. The tailer may be mid-poll-wait and could
         # miss the final emitted events (the 'done' line written microseconds
         # before exit). Stop the tailer now so its final drain pass reads

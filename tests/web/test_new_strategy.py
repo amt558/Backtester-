@@ -122,3 +122,87 @@ def test_validate_accepts_hyphen_and_uppercase_input(
     )
     # Past name stage (no name error) — failed at discover stage
     assert result["stage"] == "discover"
+
+
+# Code carrying an em-dash + curly quotes in a comment. On Windows, write_text()
+# without encoding= writes cp1252 (em-dash → byte 0x97), which the UTF-8 source
+# importer then rejects with "invalid start byte". The staged write must be UTF-8.
+UNICODE_COMMENT_CODE = (
+    '# strategy notes — entry on a pullback to the “demand” zone\n'
+    'from tradelab.strategies.base import Strategy\n'
+    'import pandas as pd\n'
+    '\n'
+    'class MyUnicode(Strategy):\n'
+    '    default_params = {}\n'
+    '    def generate_signals(self, data, spy_close=None):\n'
+    '        return {}\n'
+)
+
+
+def test_staged_write_uses_utf8_encoding(
+    fake_tradelab_root: Path, monkeypatch
+):
+    """Task B: the staged write must pass encoding='utf-8' explicitly.
+
+    Asserted at the write contract (not via a decode symptom) so it fails on
+    any platform: on a cp1252-default box the missing encoding corrupts the
+    em-dash; this test catches the omission even where the default is UTF-8.
+    """
+    monkeypatch.setattr(new_strategy, "_is_registered", lambda n: False)
+
+    import pathlib
+
+    orig_write_text = pathlib.Path.write_text
+    encodings: list = []
+
+    def _record(self, data, *args, **kwargs):
+        encodings.append(kwargs.get("encoding"))
+        return orig_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "write_text", _record)
+
+    new_strategy.validate_and_stage(
+        name="my_unicode",
+        code=UNICODE_COMMENT_CODE,
+        staging_root=fake_tradelab_root / ".cache" / "new_strategy_staging",
+        src_root=fake_tradelab_root / "src",
+    )
+
+    assert encodings, "validate_and_stage never wrote the staged file"
+    assert encodings[0] == "utf-8", (
+        f"staged write used encoding={encodings[0]!r}; must be 'utf-8' so non-ASCII "
+        f"source survives a cp1252-default Windows host"
+    )
+
+
+# A pasted strategy that imports its base class by its real name. Stage 3 must
+# count only the subclass DEFINED in the staged module, not the imported base.
+IMPORTED_BASE_CODE = (
+    'from tradelab.strategies.simple import SimpleStrategy\n'
+    'import pandas as pd\n'
+    '\n'
+    'class MyDip(SimpleStrategy):\n'
+    '    default_params = {\n'
+    '        "stop_atr_mult": 1.5, "trail_tight_mult": 1.0,\n'
+    '        "trail_wide_mult": 2.0, "trail_tighten_atr": 1.5,\n'
+    '    }\n'
+    '    def entry_signal(self, row, prev, params, prev2=None):\n'
+    '        return False\n'
+)
+
+
+def test_stage3_excludes_imported_base_class(
+    fake_tradelab_root: Path, monkeypatch
+):
+    """Task C: `from ...simple import SimpleStrategy` must not make discovery
+    report two Strategy subclasses — only the module-defined one counts."""
+    monkeypatch.setattr(new_strategy, "_is_registered", lambda n: False)
+    result = new_strategy.validate_and_stage(
+        name="my_dip",
+        code=IMPORTED_BASE_CODE,
+        staging_root=fake_tradelab_root / ".cache" / "new_strategy_staging",
+        src_root=fake_tradelab_root / "src",
+    )
+    # Must get PAST discover with exactly one subclass — not the "found 2" error.
+    assert result["stage"] != "discover", result
+    assert "expected exactly one" not in (result.get("error") or ""), result

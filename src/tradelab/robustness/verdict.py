@@ -113,10 +113,17 @@ def compute_verdict(
     loso: Optional[LOSOResult] = None,
     wf: Optional[WalkForwardResult] = None,
     noise: Optional[NoiseInjectionResult] = None,
+    overrides: Optional[dict] = None,
 ) -> VerdictResult:
     # Read thresholds from config on each call so yaml edits take effect
     # without a process restart.
     THRESHOLDS = _resolve_thresholds()
+    # ADVISORY, opt-in: layer caller-supplied overrides on top of the resolved
+    # thresholds for THIS call only. A fresh dict — never mutates the resolved
+    # config, the module-level THRESHOLDS, or the yaml. Default None = today's
+    # behaviour, byte-for-byte (the frozen test_verdict.py is the regression).
+    if overrides:
+        THRESHOLDS = {**THRESHOLDS, **overrides}
     signals: list[VerdictSignal] = []
 
     # --- Edge baseline ---

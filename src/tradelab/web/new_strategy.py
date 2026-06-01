@@ -80,7 +80,10 @@ def validate_and_stage(
     staging_file = staging_root / f"{name}.py"
 
     # Stage 2: import
-    staging_file.write_text(code)
+    # encoding="utf-8" is required: without it Path.write_text uses the host's
+    # locale (cp1252 on Windows), corrupting em-dashes / smart quotes into bytes
+    # the UTF-8 source importer rejects ("invalid start byte 0x97").
+    staging_file.write_text(code, encoding="utf-8")
     try:
         mod = _import_file(name, staging_file)
     except Exception as e:
@@ -92,9 +95,13 @@ def validate_and_stage(
         }
 
     # Stage 3: discover
+    # v.__module__ == mod.__name__ scopes discovery to classes DEFINED in the
+    # staged module, so `from ...simple import SimpleStrategy` (an imported base)
+    # isn't miscounted as a second strategy. Mirrors discover_unregistered_strategies().
     strategy_classes = [
         v for v in vars(mod).values()
         if isinstance(v, type) and issubclass(v, Strategy) and v is not Strategy
+        and v.__module__ == mod.__name__
     ]
     if len(strategy_classes) != 1:
         staging_file.unlink(missing_ok=True)
@@ -240,11 +247,19 @@ def _run_smoke_backtest(strategy) -> tuple[dict, dict]:
             f"no smoke_5 data in cache for {smoke_universe} "
             f"at timeframe {strategy.timeframe} — refresh data first"
         )
-    spy_close = None
-    if strategy.requires_benchmark and "SPY" in ticker_data:
-        spy_close = ticker_data["SPY"].set_index("Date")["Close"]
+    # Enrich exactly like the full run (cli_run) does. Raw parquet has no ATR,
+    # and the engine skips every entry/exit on a NaN-ATR bar, so an un-enriched
+    # smoke backtest produces zero trades for ANY strategy. enrich_universe adds
+    # ATR/RSI/SMA50/... and handles the SPY benchmark for RS_21d internally.
+    from tradelab.marketdata.enrich import enrich_universe
 
-    result = run_backtest(strategy, ticker_data, spy_close=spy_close)
+    enriched = enrich_universe(ticker_data, benchmark="SPY")
+
+    spy_close = None
+    if strategy.requires_benchmark and "SPY" in enriched:
+        spy_close = enriched["SPY"].set_index("Date")["Close"]
+
+    result = run_backtest(strategy, enriched, spy_close=spy_close)
     metrics = getattr(result, "metrics", {}) or {}
     # Build per-symbol equity curves from the strategy's signals for visual overlay
     equity_by_sym: dict[str, list] = {}

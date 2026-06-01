@@ -109,6 +109,10 @@ def _src_root() -> Path:
     return Path("src")
 
 
+def _new_strategy_jobs_root() -> Path:
+    return Path(".cache") / "new_strategy_jobs"
+
+
 def _staging_root() -> Path:
     return Path(".cache") / "new_strategy_staging"
 
@@ -193,6 +197,168 @@ def _get_job_manager():
     """Indirection to allow monkeypatching in tests."""
     from tradelab.web import get_job_manager
     return get_job_manager()
+
+
+def _read_log_tail(log_path: Optional[str], max_lines: int = 100) -> str:
+    """Last max_lines of a per-run log file, or "" if unreadable/absent."""
+    if not log_path:
+        return ""
+    try:
+        lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:])
+
+
+def _start_robustness_job(name: str) -> dict:
+    """Submit `run <name> --robustness` through the JobManager with a per-run
+    log file. Replaces the old fire-and-forget DEVNULL Popen so the run has a
+    real id, queue position, state, and a non-DEVNULL log to surface failures.
+
+    Returns envelope fields merged into the POST response.
+    """
+    from tradelab.web import jobs as jobs_mod
+
+    canonical = new_strategy._normalize_name(name)
+    argv = _build_tradelab_argv(canonical, "run --robustness")
+    if argv is None:
+        return {
+            "robustness_started": False,
+            "robustness_error": f"could not build robustness argv for {canonical!r}",
+            "canonical_name": canonical,
+        }
+    log_path = _new_strategy_jobs_root() / f"{canonical}.log"
+    jm = _get_job_manager()
+    try:
+        job_id, status = jm.submit(
+            canonical, "run --robustness", argv, log_path=str(log_path)
+        )
+    except jobs_mod.DuplicateJobError as e:
+        return {
+            "robustness_started": True,
+            "job_id": e.existing_job_id,
+            "status": "queued",
+            "canonical_name": canonical,
+            "robustness_note": "already in flight",
+        }
+    return {
+        "robustness_started": True,
+        "job_id": job_id,
+        "status": status.value if hasattr(status, "value") else str(status),
+        "canonical_name": canonical,
+    }
+
+
+def _new_strategy_job_status(name: str) -> Tuple[str, int]:
+    """Consolidated status for a candidate's robustness run: state, stage,
+    log tail, and (once done) the audit run_id + verdict."""
+    canonical = new_strategy._normalize_name(name)
+    jm = _get_job_manager()
+    candidates = [
+        j for j in jm.list_jobs()
+        if getattr(j, "strategy", None) == canonical and "robustness" in getattr(j, "command", "")
+    ]
+    if not candidates:
+        return _err(f"no robustness job for {canonical!r}", data={"name": canonical}), 404
+
+    # Newest by (started_at, id) — started_at is 1s-resolution so id breaks ties.
+    job = sorted(candidates, key=lambda j: (j.started_at or "", j.id))[-1]
+    raw = job.status.value if hasattr(job.status, "value") else str(job.status)
+    # Endpoint contract is queued|running|done|failed; collapse the rest to failed.
+    state = {"cancelled": "failed", "interrupted": "failed"}.get(raw, raw)
+    log_tail = _read_log_tail(job.log_path) or (job.error_tail or "")
+
+    out: dict = {
+        "name": canonical,
+        "state": state,
+        "stage": job.last_event_summary,
+        "started_at": job.started_at,
+        "finished_at": job.ended_at,
+        "log_tail": log_tail,
+        "job_id": job.id,
+    }
+    if state == "failed":
+        out["error"] = job.error_tail or log_tail or f"job exited with code {job.exit_code}"
+    if state == "done":
+        # Best-effort: attach the candidate's latest audit run_id + verdict.
+        try:
+            runs = audit_reader.history_for_strategy(canonical, limit=1, db_path=_db_path())
+            if runs:
+                out["run_id"] = runs[0].get("run_id")
+                out["verdict"] = runs[0].get("verdict")
+        except Exception:
+            pass
+    return _ok(out), 200
+
+
+def _new_strategy_advisory_verdict(payload: dict) -> Tuple[str, int]:
+    """ADVISORY, candidate-only: recompute a completed run's verdict under
+    caller-supplied threshold overrides and return it labelled as advisory.
+
+    Read-only by construction — it loads the run's backtest_result.json +
+    robustness_result.json, recomputes in memory, and writes NOTHING. It
+    cannot touch the stored verdict, the yaml, the THRESHOLDS dict, or create
+    a card, so it is impossible to apply to a registered/locked strategy's
+    persisted verdict.
+    """
+    from tradelab.results import BacktestResult
+    from tradelab.robustness.suite import RobustnessSuiteResult
+    from tradelab.robustness.verdict import compute_verdict
+
+    folder_str = (payload.get("report_folder") or "").strip()
+    if not folder_str:
+        return _err("report_folder required"), 400
+    overrides = payload.get("overrides") or {}
+    if not isinstance(overrides, dict):
+        return _err("overrides must be an object of threshold numbers"), 400
+    # Only accept numeric override values; silently drop anything else.
+    clean = {
+        str(k): float(v)
+        for k, v in overrides.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    }
+
+    rr = _reports_root().resolve()
+    p = Path(folder_str)
+    if p.is_absolute():
+        rf = p.resolve()
+    elif folder_str.startswith("reports"):
+        rf = (rr.parent / folder_str).resolve()
+    else:
+        rf = (rr / folder_str).resolve()
+    try:
+        rf.relative_to(rr)
+    except ValueError:
+        return _err("report_folder is not under the reports root"), 400
+
+    bt_path = rf / "backtest_result.json"
+    rob_path = rf / "robustness_result.json"
+    if not bt_path.exists() or not rob_path.exists():
+        return _err("run is missing backtest_result.json or robustness_result.json"), 404
+    try:
+        bt = BacktestResult.model_validate_json(bt_path.read_text(encoding="utf-8"))
+        rob = RobustnessSuiteResult.model_validate_json(rob_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return _err(f"could not load run results: {type(e).__name__}: {e}"), 500
+
+    # Candidate runs are scored without walk-forward, so wf=None faithfully
+    # reconstructs the canonical inputs; with no overrides advisory == canonical.
+    advisory = compute_verdict(
+        bt,
+        dsr=rob.dsr_probability,
+        mc=rob.monte_carlo,
+        landscape=rob.param_landscape,
+        entry_delay=rob.entry_delay,
+        loso=rob.loso,
+        noise=rob.noise_injection,
+        overrides=clean or None,
+    )
+    return _ok({
+        "advisory": True,
+        "canonical_verdict": rob.verdict.verdict,
+        "advisory_verdict": advisory.verdict,
+        "overrides": clean,
+    }), 200
 
 
 # ─── Public entry points ─────────────────────────────────────────────
@@ -367,6 +533,10 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
             "running_id": jm._running_id,
             "queue": list(jm._queue),
         }), 200
+
+    m = re.match(r"^/tradelab/new-strategy/job/([^/]+)$", path)
+    if m:
+        return _new_strategy_job_status(m.group(1))
 
     if path == "/tradelab/strategies":
         from tradelab.registry import list_registered_strategies
@@ -775,6 +945,12 @@ def handle_post(path: str, body: bytes) -> str:
         except KeyError as e:
             return _err(f"missing required field: {e}")
 
+    if path == "/tradelab/new-strategy/advisory-verdict":
+        # handle_post returns the 200-envelope body; the error field carries
+        # any failure (consistent with the other POSTs here).
+        body, _status = _new_strategy_advisory_verdict(payload)
+        return body
+
     if path == "/tradelab/new-strategy":
         action = payload.get("action", "test")
         name = payload.get("name", "")
@@ -808,18 +984,12 @@ def handle_post(path: str, body: bytes) -> str:
             )
             if reg.get("error"):
                 return _err(reg["error"])
-            # Kick off background robustness run; don't wait.
-            # Use the normalized canonical form so the CLI can find the strategy.
-            canonical = new_strategy._normalize_name(name)
-            subprocess.Popen(
-                [sys.executable, "-m", "tradelab.cli", "run", canonical, "--robustness"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            # Kick off background robustness run through the tracked job system
+            # (id, queue, state, non-DEVNULL log) — not fire-and-forget.
+            rob = _start_robustness_job(name)
             return _ok({
                 "final_path": reg["final_path"],
-                "robustness_started": True,
-                "canonical_name": canonical,
+                **rob,
             })
 
         if action == "discard":
@@ -866,11 +1036,8 @@ def handle_post(path: str, body: bytes) -> str:
         )
         if reg["error"]:
             return _err(reg["error"])
-        subprocess.Popen(
-            [sys.executable, "-m", "tradelab.cli", "run", new_name, "--robustness"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        return _ok({"final_path": reg["final_path"]})
+        rob = _start_robustness_job(new_name)
+        return _ok({"final_path": reg["final_path"], **rob})
 
     if path == "/tradelab/refresh-data":
         # Fire-and-forget: launcher polls /tradelab/data-freshness afterward

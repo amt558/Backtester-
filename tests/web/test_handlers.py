@@ -265,8 +265,15 @@ class BaseStrat(Strategy):
     monkeypatch.setattr(handlers, "_staging_root", lambda: fake_tradelab_root / ".cache" / "new_strategy_staging")
     monkeypatch.setattr(handlers, "_yaml_path", lambda: yaml_path)
 
-    # Stub subprocess.Popen — no CLI run during test
-    monkeypatch.setattr(handlers.subprocess, "Popen", lambda *a, **kw: None)
+    # The variant's robustness run is now a tracked job, not a fire-and-forget
+    # Popen. Stub the job manager so no real subprocess spawns during the test.
+    from tradelab.web.jobs import JobStatus
+
+    class _FakeJM:
+        def submit(self, strategy, command, argv, log_path=None):
+            return ("jid-test", JobStatus.RUNNING)
+
+    monkeypatch.setattr(handlers, "_get_job_manager", lambda: _FakeJM())
 
     # Skip the smoke_5 backtest by mocking validate_and_stage to succeed instantly
     def fake_validate(name, code, staging_root, src_root):
