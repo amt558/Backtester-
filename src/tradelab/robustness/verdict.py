@@ -13,6 +13,10 @@ Signals consumed (all optional — missing signals are treated as INCONCLUSIVE):
 - Entry delay: pf_drop_one_bar
 - LOSO: pf_spread
 - Walk-forward: wfe_ratio
+- Walk-forward decay: wf_decay (half-vs-half OOS PF ratio)
+
+Diagnostics surfaced (no aggregation impact):
+- trade_efficiency: portfolio captured / ideal $ ratio (MFE-based)
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..results import BacktestResult, WalkForwardResult
+from .diagnostics import compute_wf_decay, compute_trade_efficiency
 from .entry_delay import EntryDelayResult
 from .loso import LOSOResult
 from .monte_carlo import MonteCarloResult
@@ -40,6 +45,7 @@ class VerdictResult(BaseModel):
     """Aggregate verdict + the signals that drove it."""
     verdict: str   # ROBUST | INCONCLUSIVE | FRAGILE
     signals: list[VerdictSignal] = Field(default_factory=list)
+    diagnostics: dict[str, Optional[float]] = Field(default_factory=dict)
 
     @property
     def fragile_signals(self) -> list[VerdictSignal]:
@@ -87,6 +93,11 @@ _FALLBACK_THRESHOLDS = {
     # PF >= robust threshold = robust signal; PF < fragile threshold = fragile.
     "hold_out_robust_pf": 1.50,
     "hold_out_fragile_pf": 1.00,
+    # wf_decay: half-vs-half ratio of aggregate OOS PF across walk-forward
+    # windows. Late-half / early-half. Below fragile = decaying; above robust
+    # = stable. Requires >= 4 valid windows for the signal to emit.
+    "wf_decay_robust": 0.90,
+    "wf_decay_fragile": 0.70,
 }
 
 
@@ -235,6 +246,30 @@ def compute_verdict(
             signals.append(VerdictSignal(name="wfe", outcome="inconclusive",
                                           reason=f"WFE {wfe:.2f}"))
 
+    # --- wf_decay: rolling OOS PF, half-vs-half ratio ---
+    # Catches temporal decay that aggregate WFE collapses into one ratio.
+    # Outer guard on n_windows is a coarse pre-filter; compute_wf_decay
+    # filters to valid (non-None test_metrics) windows internally and
+    # returns None if fewer than 4 valid remain.
+    if wf and wf.n_windows >= 4:
+        decay = compute_wf_decay(wf)
+        if decay is not None:
+            if decay >= THRESHOLDS["wf_decay_robust"]:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="robust",
+                    reason=f"Late-half OOS PF is {decay:.0%} of early-half (stable)",
+                ))
+            elif decay < THRESHOLDS["wf_decay_fragile"]:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="fragile",
+                    reason=f"Late-half OOS PF only {decay:.0%} of early-half (decaying)",
+                ))
+            else:
+                signals.append(VerdictSignal(
+                    name="wf_decay", outcome="inconclusive",
+                    reason=f"Late-half OOS PF {decay:.0%} of early-half",
+                ))
+
     # --- S4: Hold-out OOS gate (Generalization, Critical) ---
     # PF on a trailing window the walk-forward training never touched.
     # Robust threshold passes the gate; fragile threshold flags it; in
@@ -362,4 +397,9 @@ def compute_verdict(
     if any(s.name == "regime_spread_hard" and s.outcome == "fragile" for s in signals):
         verdict = "FRAGILE"
 
-    return VerdictResult(verdict=verdict, signals=signals)
+    # --- Diagnostics (no aggregation impact, surface for dashboards) ---
+    diagnostics: dict[str, Optional[float]] = {
+        "trade_efficiency": compute_trade_efficiency(bt),
+    }
+
+    return VerdictResult(verdict=verdict, signals=signals, diagnostics=diagnostics)

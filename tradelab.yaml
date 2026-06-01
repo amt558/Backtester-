@@ -56,6 +56,8 @@ robustness:
     regime_min_trades_abs: 5
     hold_out_robust_pf: 1.5
     hold_out_fragile_pf: 1.0
+    wf_decay_robust: 0.9
+    wf_decay_fragile: 0.7
   hold_out_window_months: 6  # set to 0 to disable hold-out gate entirely
 strategies:
   s2_pocket_pivot:
