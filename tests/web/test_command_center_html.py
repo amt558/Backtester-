@@ -430,6 +430,57 @@ def test_canary_panel_wired_into_research_load(html: str) -> None:
     )
 
 
+def test_accepts_blocked_selector_targets_live_accept_button(html: str) -> None:
+    """The canary gate only works if a LIVE, ENABLED Accept button carries a
+    class the accepts-blocked CSS selectors target (`button.accept` /
+    `.btn.accept` — see test_canary_accepts_blocked_css_rule_present).
+
+    This guards the exact failure mode that silently killed the gate in the
+    2026-05-01 golden base: the CSS rule was present AND renderCanaryGrid
+    toggled body.accepts-blocked, but the only Accept button there
+    (id="scoreAcceptBtn") carried class="btn primary" (no `accept` token) and
+    was `disabled` — so the selector matched nothing and a MISMATCH disabled
+    no real control. Every other test stayed green. The live file was later
+    fixed (score modal rebuilt as Import Strategy; the surviving Accept
+    buttons carry `action-btn accept` / `btn accept`), but nothing pinned the
+    selector↔button contract — so a future class rename could re-kill the gate
+    silently. This test is that pin.
+
+    Contract: at least one ENABLED <button> whose class contains an `accept`
+    token must exist. A match against a permanently-`disabled` button proves
+    nothing (it can't be clicked regardless), so disabled buttons don't count.
+    """
+    # Every <button ...> opening tag whose class attribute carries an `accept`
+    # token — these are exactly what `button.accept` matches. (Class attrs in
+    # command_center.html are double-quoted only — verified no class='...' usage
+    # exists in the file — so a double-quote pattern is sufficient.)
+    accept_btns = [
+        m.group(0)
+        for m in re.finditer(r"<button\b[^>]*>", html)
+        if re.search(r'class="[^"]*\baccept\b[^"]*"', m.group(0))
+    ]
+    assert accept_btns, (
+        "No <button> carries an `accept` class token — body.accepts-blocked "
+        "(button.accept / .btn.accept) has no live target, so a canary "
+        'MISMATCH would disable nothing. This is how the golden-base gate '
+        'went dead (scoreAcceptBtn carried class="btn primary").'
+    )
+    # Detect the boolean `disabled` ATTRIBUTE, not the substring "disabled".
+    # The token must be preceded by whitespace and followed by whitespace/=/>
+    # so this matches `... disabled>` / `... disabled type=...` / `disabled=""`
+    # but NOT aria-disabled="false", data-disabled-reason=..., or a class token
+    # like "disabled-style". Do NOT loosen this back to r"\bdisabled\b" — that
+    # would mis-classify enabled buttons as disabled and fail on a fine button.
+    enabled = [b for b in accept_btns if not re.search(r"\sdisabled(?=[\s=>])", b)]
+    assert enabled, (
+        "Every Accept button carrying the selector-matched `accept` class is "
+        "`disabled` — a disabled button proves nothing about the gate (it "
+        "cannot be clicked regardless). At least one normally-actionable "
+        "Accept button must carry the class so body.accepts-blocked disables "
+        f"a real control on MISMATCH. Found only: {accept_btns}"
+    )
+
+
 # ─── Research v3 scope (Task 7) ────────────────────────────────────────
 
 
