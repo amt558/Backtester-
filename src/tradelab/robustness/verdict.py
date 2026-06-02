@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..results import BacktestResult, WalkForwardResult
 from .diagnostics import compute_wf_decay, compute_trade_efficiency
@@ -32,6 +32,19 @@ from .loso import LOSOResult
 from .monte_carlo import MonteCarloResult
 from .noise_injection import NoiseInjectionResult
 from .param_landscape import ParamLandscapeResult
+
+
+# Canonical verdict labels — the single source of truth for the three values
+# compute_verdict can emit. The producer (compute_verdict) assigns from these
+# names and VerdictResult validates against VALID_VERDICTS, so the set that is
+# PRODUCED and the set that is ENFORCED cannot diverge. Importers (e.g. the
+# `tradelab robustness` CLI) must import VALID_VERDICTS rather than duplicate
+# the literals, or a hardcoded copy could call a legitimate new value
+# "malformed" and fail the gate for a non-corruption reason.
+VERDICT_ROBUST = "ROBUST"
+VERDICT_INCONCLUSIVE = "INCONCLUSIVE"
+VERDICT_FRAGILE = "FRAGILE"
+VALID_VERDICTS = frozenset({VERDICT_ROBUST, VERDICT_INCONCLUSIVE, VERDICT_FRAGILE})
 
 
 class VerdictSignal(BaseModel):
@@ -46,6 +59,17 @@ class VerdictResult(BaseModel):
     verdict: str   # ROBUST | INCONCLUSIVE | FRAGILE
     signals: list[VerdictSignal] = Field(default_factory=list)
     diagnostics: dict[str, Optional[float]] = Field(default_factory=dict)
+
+    @field_validator("verdict")
+    @classmethod
+    def _verdict_in_valid_set(cls, v: str) -> str:
+        # Hardens the core: a corrupted/typo'd verdict cannot escape the
+        # engine. Rejects anything outside VALID_VERDICTS at construction.
+        if v not in VALID_VERDICTS:
+            raise ValueError(
+                f"verdict must be one of {sorted(VALID_VERDICTS)}, got {v!r}"
+            )
+        return v
 
     @property
     def fragile_signals(self) -> list[VerdictSignal]:
@@ -384,18 +408,18 @@ def compute_verdict(
     n_robust = sum(1 for s in signals if s.outcome == "robust")
 
     if n_fragile >= 2 or (n_fragile >= 1 and n_robust == 0):
-        verdict = "FRAGILE"
+        verdict = VERDICT_FRAGILE
     elif n_fragile == 0 and n_robust >= max(3, len(signals) // 2):
-        verdict = "ROBUST"
+        verdict = VERDICT_ROBUST
     else:
-        verdict = "INCONCLUSIVE"
+        verdict = VERDICT_INCONCLUSIVE
 
     # Hard-gate override: extreme regime concentration forces FRAGILE
     # regardless of the normal aggregation. This exists because a
     # bull-only strategy with otherwise-clean signals shouldn't be
     # allowed to score ROBUST — the edge isn't an edge, it's a regime bet.
     if any(s.name == "regime_spread_hard" and s.outcome == "fragile" for s in signals):
-        verdict = "FRAGILE"
+        verdict = VERDICT_FRAGILE
 
     # --- Diagnostics (no aggregation impact, surface for dashboards) ---
     diagnostics: dict[str, Optional[float]] = {

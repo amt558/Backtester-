@@ -30,6 +30,9 @@ from .registry import (
     instantiate_strategy,
     StrategyNotRegistered,
 )
+# Canonical verdict set — imported, never duplicated, so the CLI cannot drift
+# from the engine's own labels (see robustness/verdict.py).
+from .robustness.verdict import VALID_VERDICTS
 
 
 app = typer.Typer(
@@ -187,6 +190,53 @@ def _load_data_for(strategy_name: str):
         f"[dim]  loaded {len(ticker_data)} symbols in {time.time() - t0:.1f}s[/dim]"
     )
 
+    strat = instantiate_strategy(strategy_name)
+    return strat, ticker_data, spy_close
+
+
+def _load_data_offline(strategy_name: str):
+    """Load strategy + universe from the parquet cache ONLY — never the network.
+
+    The merge gate (cp4) runs offline against ``.cache/ohlcv/1D/`` so it can't
+    burn Twelve Data budget or stall on a missing key. Uses whatever symbols are
+    already cached; does NOT call download_symbols or any data source. An empty
+    cache is a loud Exit(1), not a silent online fetch.
+    """
+    from .marketdata import enrich_universe, list_cached_symbols
+    from .marketdata import cache as _cache
+
+    cached = list_cached_symbols()
+    if not cached:
+        typer.echo(
+            "ENGINE DID NOT PRODUCE A VERDICT: no cached OHLCV under "
+            ".cache/ohlcv/1D/ — populate cache first "
+            "(run `tradelab run --universe <name>` online once).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    import pandas as pd
+
+    cfg = get_config()
+    bench = cfg.benchmarks.primary
+    # Slice every symbol to the SAME [data_start, data_end] window that
+    # _load_data_for / download_symbols apply online. Reading full ragged parquet
+    # spans would feed the backtest a MISALIGNED panel (different end dates per
+    # symbol), which can distort the verdict — not just the trade count — and
+    # would mean the gate validates the engine on data unlike production.
+    start = pd.Timestamp(cfg.defaults.data_start)
+    end = pd.Timestamp(cfg.defaults.data_end)
+    raw = {}
+    for sym in sorted(set([bench] + cached)):
+        df = _cache.read(sym, "1D")
+        if df is None or df.empty:
+            continue
+        mask = (df["Date"] >= start) & (df["Date"] <= end)
+        sliced = df.loc[mask].reset_index(drop=True)
+        if not sliced.empty:
+            raw[sym] = sliced
+    ticker_data = enrich_universe(raw, benchmark=bench)
+    spy_close = ticker_data[bench].set_index("Date")["Close"]
     strat = instantiate_strategy(strategy_name)
     return strat, ticker_data, spy_close
 
@@ -439,10 +489,98 @@ def walkforward_cmd(
 @app.command("robustness")
 def robustness_cmd(
     strategy: str = typer.Argument(..., help="Registered strategy name"),
+    expect: str = typer.Option(
+        None, "--expect",
+        help="Pin the expected verdict (ROBUST/INCONCLUSIVE/FRAGILE). On a clean "
+             "verdict that differs, exit 2 with VERDICT MISMATCH — textually and "
+             "numerically distinct from an engine failure (exit 1).",
+    ),
+    offline: bool = typer.Option(
+        True, "--offline/--no-offline",
+        help="Load data cache-only from .cache/ohlcv/1D/ with no network. Default on; "
+             "this is the gate (cp4) behaviour — keeps the run off the Twelve Data budget.",
+    ),
+    mc_simulations: int = typer.Option(500, help="Monte Carlo simulations."),
 ):
-    """5-test robustness suite. [Session 3]"""
-    console.print(f"[yellow]robustness[/yellow] is a stub — Session 3 will implement it.")
+    """Run the robustness suite and emit an end-to-end verdict (merge-gate cp4).
+
+    Exit codes: 0 = a real verdict was produced (and matched --expect if given);
+    2 = VERDICT MISMATCH (engine clean, label != --expect) [Q-B]; 1 = ENGINE DID
+    NOT PRODUCE A VERDICT (crash / 0 trades / empty cache / malformed) [Q-A].
+    """
     _check_strategy_exists(strategy)
+
+    if expect is not None and expect not in VALID_VERDICTS:
+        typer.echo(
+            f"--expect must be one of {sorted(VALID_VERDICTS)}, got {expect!r}.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        load = _load_data_offline if offline else _load_data_for
+        strat, ticker_data, spy_close = load(strategy)
+
+        from .engines import run_backtest
+        bt = run_backtest(strat, ticker_data, spy_close=spy_close)
+
+        from .robustness import run_robustness_suite, RobustnessInputError
+        try:
+            rr = run_robustness_suite(
+                strat, ticker_data, bt,
+                spy_close=spy_close, mc_n_simulations=mc_simulations,
+            )
+        except RobustnessInputError as e:
+            typer.echo(f"ENGINE DID NOT PRODUCE A VERDICT: {e}", err=True)
+            raise typer.Exit(code=1)
+
+        v = rr.verdict
+        if v.verdict not in VALID_VERDICTS:   # defensive; validator already guards
+            typer.echo(
+                f"ENGINE DID NOT PRODUCE A VERDICT: malformed verdict object "
+                f"(verdict={v.verdict!r}).",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        # --- verdict report (stdout via typer.echo so it is captured / redirect-clean) ---
+        n_rob = sum(1 for s in v.signals if s.outcome == "robust")
+        n_inc = sum(1 for s in v.signals if s.outcome == "inconclusive")
+        n_frag = sum(1 for s in v.signals if s.outcome == "fragile")
+        _print_metrics_table(f"{strategy} — robustness", bt.metrics)
+        typer.echo(
+            f"Verdict: {v.verdict} "
+            f"({n_rob} robust / {n_inc} inconclusive / {n_frag} fragile)"
+        )
+        for s in v.fragile_signals:
+            typer.echo(f"  fragile: {s.name} — {s.reason}")
+
+        if expect is not None:
+            if v.verdict != expect:
+                typer.echo(
+                    f"VERDICT MISMATCH: expected {expect}, got {v.verdict}.",
+                    err=True,
+                )
+                typer.echo(
+                    "This is an EXPECTATION mismatch, not proof of engine corruption "
+                    f"— {strategy}'s legitimate verdict may have moved (data/threshold "
+                    "change). Do NOT 'fix' this by editing the expected value without "
+                    "first confirming the verdict engine is uncorrupted (run cp1+cp2). "
+                    "If the move is legitimate, update the pinned target deliberately "
+                    "and record why.",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+            typer.echo(f"cp4 OK: verdict matches expected ({expect}).")
+
+    except typer.Exit:
+        raise
+    except Exception as e:   # any non-Exit failure = engine did not produce a verdict
+        typer.echo(
+            f"ENGINE DID NOT PRODUCE A VERDICT: {type(e).__name__}: {e}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
 
 from .cli_run import run as _run_cmd; app.command(name="run")(_run_cmd)
