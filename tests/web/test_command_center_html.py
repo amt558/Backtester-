@@ -433,6 +433,7 @@ def test_canary_panel_wired_into_research_load(html: str) -> None:
 # ─── Research v3 scope (Task 7) ────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="discarded v3: v3 editorial Google Fonts link")
 def test_v3_google_fonts_link_present(html: str) -> None:
     """Editorial typography requires Fraunces (display), Geist (sans),
     JetBrains Mono. The Google Fonts <link> must be in <head>."""
@@ -444,12 +445,14 @@ def test_v3_google_fonts_link_present(html: str) -> None:
         assert family in head, f"font family {family!r} missing from Google Fonts URL"
 
 
+@pytest.mark.skip(reason="discarded v3: research-v3-scope style block")
 def test_v3_scope_style_block_present(html: str) -> None:
     """The research-v3 CSS lives in its own <style id='research-v3-scope'>
     block so future edits don't tangle with the existing dashboard styles."""
     assert 'id="research-v3-scope"' in html, "research-v3-scope <style> block missing"
 
 
+@pytest.mark.skip(reason="discarded v3: body.research-v3 --r3-* palette tokens")
 def test_v3_palette_variables_defined_under_body_scope(html: str) -> None:
     """Variables MUST be scoped to body.research-v3, not :root, so the rest
     of the dashboard's palette is unchanged. Checks a sample of the palette
@@ -464,6 +467,7 @@ def test_v3_palette_variables_defined_under_body_scope(html: str) -> None:
         assert token in block, f"palette/font token {token!r} missing from v3 scope"
 
 
+@pytest.mark.skip(reason="discarded v3: research-v3-scope style block")
 def test_v3_scope_does_not_leak_root_variable_names(html: str) -> None:
     """Existing dashboard's :root vars (--bg, --green, etc.) MUST NOT be
     redefined by the v3 scope — that would change every other tab's colors.
@@ -481,6 +485,7 @@ def test_v3_scope_does_not_leak_root_variable_names(html: str) -> None:
         )
 
 
+@pytest.mark.skip(reason="discarded v3: switchTab research-v3 body toggle")
 def test_v3_body_class_toggle_in_switch_tab(html: str) -> None:
     """switchTab must add 'research-v3' to the body class only when the
     Research tab is active, and remove it on every other tab."""
@@ -517,6 +522,7 @@ def test_action_bar_preserves_preflight_chip_ids(html: str) -> None:
         assert f'id="{chip_id}"' in html, f"protected preflight chip ID {chip_id!r} missing"
 
 
+@pytest.mark.skip(reason="discarded v3: v3 .ab-btn action-bar classes")
 def test_action_bar_uses_v3_classes_on_protected_buttons(html: str) -> None:
     """Protected buttons MUST use v3 .ab-btn class so the editorial styling
     applies. Refresh Data is the primary action so it gets .ab-btn.primary."""
@@ -532,6 +538,7 @@ def test_action_bar_uses_v3_classes_on_protected_buttons(html: str) -> None:
         assert "ab-btn" in tag, f"{btn_id} missing .ab-btn class"
 
 
+@pytest.mark.skip(reason="discarded v3: calibration-trust chip + updateCalibrationTrustChip")
 def test_action_bar_has_calibration_trust_chip(html: str) -> None:
     """New chip carrying the 0..1 trust score derived from
     /tradelab/calibration-summary."""
@@ -549,6 +556,7 @@ def test_action_bar_has_calibration_trust_chip(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: canary-status-icon")
 def test_action_bar_has_canary_status_icon(html: str) -> None:
     """⚠ icon hidden by default; renderCanaryGrid toggles it visible when
     any canary status === 'MISMATCH'. Hidden attribute must be present at
@@ -611,6 +619,7 @@ def _drift_renderer_body(html: str) -> str:
     return html[idx:end]
 
 
+@pytest.mark.skip(reason="discarded v3: tile-grid class on researchLiveCards")
 def test_v3_live_cards_grid_uses_tile_grid_class(html: str) -> None:
     """The #researchLiveCards container must carry the .tile-grid class so
     the v3 grid CSS rule (4-col, 14px gap) applies. Note: the plan body
@@ -625,6 +634,7 @@ def test_v3_live_cards_grid_uses_tile_grid_class(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: v3 tile DOM in renderLiveCard")
 def test_v3_render_live_card_emits_tile_structure(html: str) -> None:
     """The renderLiveCard function must emit the v3 tile DOM: tile-head,
     tile-name, tile-meta, verdict pill, drift container, kpis, health-row,
@@ -648,6 +658,7 @@ def test_v3_render_live_card_emits_tile_structure(html: str) -> None:
         )
 
 
+@pytest.mark.skip(reason="discarded v3: v3 four-KPI cells in renderLiveCard")
 def test_v3_render_live_card_emits_four_kpi_cells(html: str) -> None:
     """Tile shows exactly 4 KPIs: PF / WR / DD / DSR. Each rendered as
     .kpi > .l (label) + .v (value, with optional ok/warn/fail color class)."""
@@ -661,6 +672,7 @@ def test_v3_render_live_card_emits_four_kpi_cells(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: v3 te-bar classes in patchTrackingError")
 def test_v3_render_live_card_uses_v3_te_bar_classes(html: str) -> None:
     """v3 te-bar uses .full/.high/.mid/.low (NOT v2 .empty/.green/.amber/.red).
     patchTrackingError must apply the v3 set."""
@@ -676,6 +688,7 @@ def test_v3_render_live_card_uses_v3_te_bar_classes(html: str) -> None:
         )
 
 
+@pytest.mark.skip(reason="discarded v3: v3 ks-dot in renderLiveCard")
 def test_v3_render_live_card_uses_ks_dot_not_ks_tag(html: str) -> None:
     """v3 health-row uses a .ks-dot visual (no text) — the v2 .ks-tag was a
     text label inside its own row. New tile compresses to a single dot."""
@@ -686,6 +699,7 @@ def test_v3_render_live_card_uses_ks_dot_not_ks_tag(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: renderAllDriftSparklines")
 def test_v3_render_all_drift_sparklines_function_defined(html: str) -> None:
     """A function that fetches the verdict-history endpoint per tile and
     paints up to 12 .dot spans into each tile's .drift container."""
@@ -696,6 +710,7 @@ def test_v3_render_all_drift_sparklines_function_defined(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: drift sparkline /verdict-history fetch")
 def test_v3_drift_sparkline_fetches_verdict_history_endpoint(html: str) -> None:
     """The drift renderer must call /tradelab/strategies/<id>/verdict-history
     (Task 2 endpoint). Different URL = different data source = silent break."""
@@ -705,6 +720,7 @@ def test_v3_drift_sparkline_fetches_verdict_history_endpoint(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: drift sparkline 12-dot cap")
 def test_v3_drift_sparkline_caps_at_12_dots(html: str) -> None:
     """Sparkline always renders exactly 12 dots: pad with classless .dot on
     the left when fewer than 12 verdicts are available."""
@@ -728,6 +744,7 @@ def test_v3_render_live_card_escapes_user_strings(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: activateState/activateLabel helpers")
 def test_v3_activate_button_state_helpers_defined(html: str) -> None:
     """activateState and activateLabel helpers map (verdict, has_card) to
     (.enabled|.disabled|.live, label text). Pin both names so Task 10's
@@ -738,6 +755,7 @@ def test_v3_activate_button_state_helpers_defined(html: str) -> None:
     assert pat_label.search(html), "activateLabel helper missing"
 
 
+@pytest.mark.skip(reason="discarded v3: activateState enabled/disabled/live")
 def test_v3_activate_button_state_emits_three_states(html: str) -> None:
     """activateState must return exactly the three v3 states the CSS defines:
     'enabled', 'disabled', 'live' (not 'activating' — that's Task 10's flight
@@ -753,6 +771,7 @@ def test_v3_activate_button_state_emits_three_states(html: str) -> None:
         )
 
 
+@pytest.mark.skip(reason="discarded v3: researchLoadLiveCards -> renderAllDriftSparklines")
 def test_v3_research_load_live_cards_invokes_drift_renderer(html: str) -> None:
     """researchLoadLiveCards must call renderAllDriftSparklines AFTER tiles
     are appended to the DOM (otherwise querySelectorAll('.drift') hits empty)."""
@@ -768,6 +787,7 @@ def test_v3_research_load_live_cards_invokes_drift_renderer(html: str) -> None:
 
 # ─── Task 10: Activate state machine + cross-tab linkage ───────────────
 
+@pytest.mark.skip(reason="discarded v3: wireResearchLiveCardsClick delegate")
 def test_v3_task10_activate_click_handler_wired_to_grid(html: str) -> None:
     """Task 10 wires a delegated click on #researchLiveCards. Without this
     the .activate buttons are inert — silent failure pytest can't catch."""
@@ -787,6 +807,7 @@ def test_v3_task10_activate_click_handler_wired_to_grid(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: POST /strategies/<id>/activate")
 def test_v3_task10_activate_posts_to_strategies_activate_endpoint(html: str) -> None:
     """The Activate flow MUST POST to /tradelab/strategies/<id>/activate.
     Pasting the wrong URL (e.g. /tradelab/accept) silently breaks activation
@@ -807,6 +828,7 @@ def test_v3_task10_activate_posts_to_strategies_activate_endpoint(html: str) -> 
         )
 
 
+@pytest.mark.skip(reason="discarded v3: activate enabled->activating->live transitions")
 def test_v3_task10_activate_state_transitions_present(html: str) -> None:
     """Buttons go enabled → activating → live (or back to enabled on error).
     Each class must appear in the click handler so the visual state matches."""
@@ -824,6 +846,7 @@ def test_v3_task10_activate_state_transitions_present(html: str) -> None:
     assert "toast(" in body, "must surface success/error to user via toast()"
 
 
+@pytest.mark.skip(reason="discarded v3: .activate.activating CSS")
 def test_v3_task10_activating_class_has_css(html: str) -> None:
     """The .activate.activating selector needs a real CSS rule, otherwise
     the in-flight state is invisible to the user."""
@@ -832,6 +855,7 @@ def test_v3_task10_activating_class_has_css(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: switchToOverviewTabAndScrollTo helper")
 def test_v3_task10_switch_to_overview_helper_present(html: str) -> None:
     """The cross-tab cross-jump helper must exist and call switchTab('overview').
     The button on Live state ('● Already live ↗') uses this to navigate."""
@@ -848,6 +872,7 @@ def test_v3_task10_switch_to_overview_helper_present(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: r3-highlight-pulse keyframes")
 def test_v3_task10_highlight_pulse_keyframes_defined(html: str) -> None:
     """The pulse animation must be defined in CSS so the cross-tab jump
     actually animates rather than silently no-op'ing."""
@@ -859,6 +884,7 @@ def test_v3_task10_highlight_pulse_keyframes_defined(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: open-research-btn in overview card")
 def test_v3_task10_open_research_button_in_live_card_template(html: str) -> None:
     """Overview live cards must have an ↗ Research button so users can
     cross-jump back from Overview to Research."""
@@ -876,6 +902,7 @@ def test_v3_task10_open_research_button_in_live_card_template(html: str) -> None
     )
 
 
+@pytest.mark.skip(reason="discarded v3: open-research-btn click delegate")
 def test_v3_task10_open_research_button_click_handler(html: str) -> None:
     """A document-level click delegate must wire .open-research-btn → switchTab.
     Otherwise the button renders but does nothing."""
@@ -897,6 +924,7 @@ def test_v3_task10_open_research_button_click_handler(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: open-research-btn CSS")
 def test_v3_task10_open_research_button_styles_defined(html: str) -> None:
     """The ↗ Research button needs its own CSS rule (positioned, hover state)."""
     assert ".open-research-btn" in html, "Missing .open-research-btn CSS"
@@ -907,6 +935,7 @@ def test_v3_task10_open_research_button_styles_defined(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: tile data-card-id stash post-activate")
 def test_v3_task10_card_id_stashed_on_tile_after_activate(html: str) -> None:
     """After a successful activate, the tile's data-card-id must be set so
     the next click ('Already live ↗') can cross-jump without re-fetch."""
@@ -920,6 +949,7 @@ def test_v3_task10_card_id_stashed_on_tile_after_activate(html: str) -> None:
     ), "tile must persist the new card_id after activate so cross-jump works"
 
 
+@pytest.mark.skip(reason="discarded v3: wireResearchLiveCardsClick activate flow")
 def test_v3_task10_no_old_accept_endpoint_for_live_cards(html: str) -> None:
     """Defense against regression: the Live Cards Activate flow must NOT POST
     to /tradelab/accept (that endpoint requires base_name/symbol/timeframe
@@ -935,6 +965,7 @@ def test_v3_task10_no_old_accept_endpoint_for_live_cards(html: str) -> None:
 
 # ─── Task 11: Click-to-expand inline (header + 7-cell summary + tab strip)
 
+@pytest.mark.skip(reason="discarded v3: expandedTileHtml helper")
 def test_v3_task11_expanded_tile_html_helper_exists(html: str) -> None:
     """The expand template must be a discrete function so collapse can
     re-render the compact tile by calling its complement."""
@@ -943,6 +974,7 @@ def test_v3_task11_expanded_tile_html_helper_exists(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: expanded tile 7 ex-cell summary")
 def test_v3_task11_expanded_markup_has_seven_summary_cells(html: str) -> None:
     """Plan body specifies exactly 7 cells: Verdict, PF, WR, DD, DSR, TE
     health, K-S. The visual rhythm is fragile to cell count drift, so pin it."""
@@ -960,6 +992,7 @@ def test_v3_task11_expanded_markup_has_seven_summary_cells(html: str) -> None:
         assert label in body, f"7-cell summary missing label {label!r}"
 
 
+@pytest.mark.skip(reason="discarded v3: expanded tile tab-strip + deep-dive")
 def test_v3_task11_expanded_markup_has_tab_strip_and_deep_dive(html: str) -> None:
     """The expand row's tab strip + deep-dive button must both be present.
     Tearsheet button drives traffic to the existing /tradelab/runs/<id>/tearsheet
@@ -976,6 +1009,7 @@ def test_v3_task11_expanded_markup_has_tab_strip_and_deep_dive(html: str) -> Non
     assert 'class="close-btn"' in body, "Missing collapse close-btn"
 
 
+@pytest.mark.skip(reason="discarded v3: expandTile/collapseTile helpers")
 def test_v3_task11_expand_collapse_helpers_present(html: str) -> None:
     """expandTile / collapseTile must exist so the click delegate can call
     them. Without them the tile-click event handler can't toggle state."""
@@ -983,6 +1017,7 @@ def test_v3_task11_expand_collapse_helpers_present(html: str) -> None:
     assert "function collapseTile" in html, "Missing collapseTile helper"
 
 
+@pytest.mark.skip(reason="discarded v3: strategyDataCache")
 def test_v3_task11_strategy_data_cache_populated_at_render_time(html: str) -> None:
     """expandTile reads from a cache populated by renderLiveCard. Without the
     cache the expand template can't access symbol/verdict/etc. populated by
@@ -1003,6 +1038,7 @@ def test_v3_task11_strategy_data_cache_populated_at_render_time(html: str) -> No
     )
 
 
+@pytest.mark.skip(reason="discarded v3: tile-expand grid delegate")
 def test_v3_task11_tile_click_handler_in_grid_delegate(html: str) -> None:
     """The same delegated listener that handles .activate clicks should also
     handle tile-click for expand. Adding a second listener on the same grid
@@ -1021,6 +1057,7 @@ def test_v3_task11_tile_click_handler_in_grid_delegate(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: .tile.expanded/.ex-* CSS")
 def test_v3_task11_expanded_state_has_css(html: str) -> None:
     """The visual "expanded" state needs CSS — without it the inserted markup
     has no layout and the user sees a broken card."""
@@ -1032,6 +1069,7 @@ def test_v3_task11_expanded_state_has_css(html: str) -> None:
     assert ".ex-header" in html, "Missing .ex-header CSS rule"
 
 
+@pytest.mark.skip(reason="discarded v3: single-expanded-tile logic")
 def test_v3_task11_only_one_tile_expanded_at_a_time(html: str) -> None:
     """Plan spec: 'only one expanded at a time'. The tile-click handler must
     collapse any other expanded tile before expanding the clicked one."""
@@ -1044,6 +1082,7 @@ def test_v3_task11_only_one_tile_expanded_at_a_time(html: str) -> None:
     ), "Missing 'collapse all other expanded tiles' iteration"
 
 
+@pytest.mark.skip(reason="discarded v3: tile-action propagation guard")
 def test_v3_task11_clicking_actions_does_not_toggle_expand(html: str) -> None:
     """The action buttons (Activate, close-btn, deep-dive-btn, tab buttons)
     inside a tile must not propagate to the tile-click handler. Either via
@@ -1060,6 +1099,7 @@ def test_v3_task11_clicking_actions_does_not_toggle_expand(html: str) -> None:
 # ─── Task 12: QuantStats sub-grid + 3 inline SVG charts ────────────────
 
 
+@pytest.mark.skip(reason="discarded v3: loadQsForExpandedTile")
 def test_v3_task12_load_qs_helper_exists(html: str) -> None:
     """The expanded tile populates its QuantStats tab via this loader.
     Without it, every tile shows the empty placeholder forever."""
@@ -1068,6 +1108,7 @@ def test_v3_task12_load_qs_helper_exists(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: loadQs /qs-metrics fetch")
 def test_v3_task12_load_qs_calls_qs_metrics_endpoint(html: str) -> None:
     """The loader must hit /tradelab/runs/<id>/qs-metrics — the BE route is
     already wired (Task 5). Don't accidentally point at /metrics or /tearsheet."""
@@ -1081,6 +1122,7 @@ def test_v3_task12_load_qs_calls_qs_metrics_endpoint(html: str) -> None:
     assert "encodeURIComponent" in body
 
 
+@pytest.mark.skip(reason="discarded v3: loadQs null-runId empty-state")
 def test_v3_task12_load_qs_handles_null_run_id(html: str) -> None:
     """A strategy with no scored run yet should show an empty-state, not a
     fetch error. The plan spec calls for `<div class="empty">No run data...`."""
@@ -1096,6 +1138,7 @@ def test_v3_task12_load_qs_handles_null_run_id(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: qsGridHtml 8 cells")
 def test_v3_task12_qs_grid_helper_renders_eight_cells(html: str) -> None:
     """The QS sub-grid has 8 stat cells per the plan: Total return, Sharpe,
     Sortino, CAGR, Avg win, Avg loss, Trades, Avg hold."""
@@ -1111,6 +1154,7 @@ def test_v3_task12_qs_grid_helper_renders_eight_cells(html: str) -> None:
         assert label in body, f"qsGridHtml missing the {label!r} stat cell"
 
 
+@pytest.mark.skip(reason="discarded v3: qs-stat/qs-grid classes")
 def test_v3_task12_qs_grid_uses_qs_stat_class(html: str) -> None:
     """Each stat cell carries .qs-stat for styling. The grid wrapper carries
     .qs-grid. Without these classes the CSS layout breaks."""
@@ -1121,6 +1165,7 @@ def test_v3_task12_qs_grid_uses_qs_stat_class(html: str) -> None:
     assert "qs-grid" in body, "qs-grid class missing from grid wrapper"
 
 
+@pytest.mark.skip(reason="discarded v3: drawdownSvg/monthlyHeatmap/rollingSharpeSvg")
 def test_v3_task12_three_chart_helpers_exist(html: str) -> None:
     """Three inline SVG chart helpers per plan: drawdown, monthly heatmap,
     rolling sharpe. Pure SVG (no Chart.js — see reference_command_center_arch_lock.md)."""
@@ -1128,6 +1173,7 @@ def test_v3_task12_three_chart_helpers_exist(html: str) -> None:
         assert fn_name in html, f"Missing {fn_name}"
 
 
+@pytest.mark.skip(reason="discarded v3: inline SVG chart helpers")
 def test_v3_task12_chart_helpers_emit_inline_svg(html: str) -> None:
     """Charts must be inline SVG, not Canvas / Chart.js / d3. The architectural
     lock on command_center.html forbids new build-step deps."""
@@ -1139,6 +1185,7 @@ def test_v3_task12_chart_helpers_emit_inline_svg(html: str) -> None:
         assert "viewBox" in body, f"{fn_name} svg must declare a viewBox for responsive scaling"
 
 
+@pytest.mark.skip(reason="discarded v3: heatmap-grid/heatmap-cell")
 def test_v3_task12_monthly_heatmap_uses_grid_class(html: str) -> None:
     """The heatmap is a CSS grid of colored cells (red/green by sign)."""
     idx = html.find("function monthlyHeatmap")
@@ -1148,6 +1195,7 @@ def test_v3_task12_monthly_heatmap_uses_grid_class(html: str) -> None:
     assert "heatmap-cell" in body, "monthlyHeatmap must use .heatmap-cell per cell"
 
 
+@pytest.mark.skip(reason="discarded v3: expandTile -> loadQsForExpandedTile")
 def test_v3_task12_expand_calls_loader(html: str) -> None:
     """expandTile must invoke loadQsForExpandedTile after writing innerHTML so
     the QuantStats tab populates. Without this, the user sees the empty
@@ -1168,6 +1216,7 @@ def test_v3_task12_placeholder_text_replaced(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: tab-qs/tab-factors swap")
 def test_v3_task12_tab_strip_click_swaps_tabs(html: str) -> None:
     """Clicking the Factors tab should hide .tab-qs and show .tab-factors,
     and vice versa. The wireResearchLiveCardsClick handler owns this logic."""
@@ -1182,6 +1231,7 @@ def test_v3_task12_tab_strip_click_swaps_tabs(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: qs-grid/qs-stat/qs-charts CSS")
 def test_v3_task12_qs_grid_css_present(html: str) -> None:
     """CSS rules must exist for the new grid + chart layout — without them
     the markup renders as a plain stack of unstyled divs."""
@@ -1189,6 +1239,7 @@ def test_v3_task12_qs_grid_css_present(html: str) -> None:
         assert selector in html, f"Missing CSS rule for {selector}"
 
 
+@pytest.mark.skip(reason="discarded v3: heatmap-grid/heatmap-cell CSS")
 def test_v3_task12_heatmap_css_present(html: str) -> None:
     """The heatmap is a fixed-shape CSS grid; the .heatmap-grid rule defines it."""
     for selector in (".heatmap-grid", ".heatmap-cell"):
@@ -1198,6 +1249,7 @@ def test_v3_task12_heatmap_css_present(html: str) -> None:
 # ─── Task 13: Cross-strategy factor matrix ─────────────────────────────
 
 
+@pytest.mark.skip(reason="discarded v3: matrix-card/grid/meta DOM")
 def test_v3_task13_matrix_markup_present(html: str) -> None:
     """The matrix needs three id'd containers in the DOM: the card wrapper,
     the grid (renderFactorMatrix mounts to this), and the meta caption."""
@@ -1205,6 +1257,7 @@ def test_v3_task13_matrix_markup_present(html: str) -> None:
         assert needle in html, f"Missing matrix DOM hook: {needle}"
 
 
+@pytest.mark.skip(reason="discarded v3: matrix-alpha-callout")
 def test_v3_task13_alpha_callout_present(html: str) -> None:
     """The callout starts hidden and is revealed when ≥1 column-warn fires.
     Without the element renderFactorMatrix's getElementById('matrix-alpha-callout')
@@ -1212,12 +1265,14 @@ def test_v3_task13_alpha_callout_present(html: str) -> None:
     assert 'id="matrix-alpha-callout"' in html, "Missing matrix-alpha-callout div"
 
 
+@pytest.mark.skip(reason="discarded v3: FACTOR_COLUMNS const")
 def test_v3_task13_factor_columns_const_defined(html: str) -> None:
     """FACTOR_COLUMNS drives the column count + labels. Renaming or removing
     it would silently break every cell in the matrix."""
     assert "FACTOR_COLUMNS" in html, "Missing FACTOR_COLUMNS const"
 
 
+@pytest.mark.skip(reason="discarded v3: FACTOR_COLUMNS real signal names")
 def test_v3_task13_factor_columns_use_real_signal_names(html: str) -> None:
     """The plan body's columns (dsr, monte_carlo, oos_pf, regime, sample,
     stability, walk_forward) don't match real verdict.py signal names. The
@@ -1243,6 +1298,7 @@ def test_v3_task13_factor_columns_use_real_signal_names(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: classifyOutcome helper")
 def test_v3_task13_classify_outcome_function_defined(html: str) -> None:
     """classifyOutcome maps signal.outcome → cell color class. Needs to handle
     robust/marginal/fragile/inconclusive (lowercase) per the BE contract."""
@@ -1257,6 +1313,7 @@ def test_v3_task13_classify_outcome_function_defined(html: str) -> None:
     assert "toLowerCase" in body
 
 
+@pytest.mark.skip(reason="discarded v3: renderFactorMatrix + /strategies-summary")
 def test_v3_task13_render_factor_matrix_function_defined(html: str) -> None:
     """The matrix is built by renderFactorMatrix(); it must exist + fetch
     /tradelab/strategies-summary."""
@@ -1268,6 +1325,7 @@ def test_v3_task13_render_factor_matrix_function_defined(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: renderFactorMatrix call site")
 def test_v3_task13_render_factor_matrix_invoked_on_load(html: str) -> None:
     """The matrix needs to render when the Research tab loads. Either via
     researchLoadAll() or alongside researchLoadLiveCards()."""
@@ -1281,6 +1339,7 @@ def test_v3_task13_render_factor_matrix_invoked_on_load(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: matrix-grid 8-col CSS")
 def test_v3_task13_matrix_grid_css_handles_eight_columns(html: str) -> None:
     """The CSS grid template was hardcoded to 7 columns in the original v3
     sketch — must be updated to 8 to match real signal count."""
@@ -1317,6 +1376,7 @@ def test_v3_task13_classify_outcome_treats_inconclusive_as_marginal_or_dim(html:
 # ─── Task 14: Pipeline restyle ─────────────────────────────────────────
 
 
+@pytest.mark.skip(reason="discarded v3: pipeline-card wrapper")
 def test_v3_task14_pipeline_card_wrapper_present(html: str) -> None:
     """The Research Pipeline section gets the v3 .pipeline-card chrome so
     the existing CSS rules at body.research-v3 #research .pipeline-card
@@ -1326,6 +1386,7 @@ def test_v3_task14_pipeline_card_wrapper_present(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: pipeline-toolbar wrapper")
 def test_v3_task14_pipeline_toolbar_wrapper_present(html: str) -> None:
     """Filter row should sit inside .pipeline-toolbar so the v3 toolbar CSS
     (border-bottom, gap, font) applies. The v2 .research-filters div can
@@ -1335,6 +1396,7 @@ def test_v3_task14_pipeline_toolbar_wrapper_present(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: pipeline class on researchPipelineTable")
 def test_v3_task14_pipeline_table_has_pipeline_class(html: str) -> None:
     """The CSS rule body.research-v3 #research table.pipeline targets
     .pipeline (not .table). Without the class, the v3 table styling
@@ -1354,6 +1416,7 @@ def test_v3_task14_pipeline_table_has_pipeline_class(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: pipeline-section-header/meta")
 def test_v3_task14_section_header_for_pipeline(html: str) -> None:
     """A v3 section header sits between the matrix and the pipeline card so
     the user can see 'Research Pipeline' as a labeled landmark, with the
@@ -1389,6 +1452,7 @@ def test_v3_task14_trash_button_tooltip_says_delete_not_archive(html: str) -> No
 # ─── Task 15: Pipeline delete affordances (cascade-aware modal) ────────
 
 
+@pytest.mark.skip(reason="discarded v3: showDeleteConfirm -> preview-delete")
 def test_v3_task15_show_delete_confirm_calls_preview_delete(html: str) -> None:
     """Before opening the modal, showDeleteConfirm must POST to
     /tradelab/runs/preview-delete with the candidate run_ids so the FE
@@ -1404,6 +1468,7 @@ def test_v3_task15_show_delete_confirm_calls_preview_delete(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: deleteConfirmCascade container")
 def test_v3_task15_modal_has_cascade_container(html: str) -> None:
     """The existing #researchDeleteConfirm modal gains a new
     #deleteConfirmCascade section that's hidden by default and
@@ -1415,6 +1480,7 @@ def test_v3_task15_modal_has_cascade_container(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: deleteConfirmDisableGo button")
 def test_v3_task15_disable_and_delete_button_label_present(html: str) -> None:
     """When cascade is non-empty, a third button labeled 'Disable card + delete'
     appears so the user can flip affected cards to status='disabled' before
@@ -1438,6 +1504,7 @@ def test_v3_task15_disable_and_delete_button_label_present(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: disable+delete PATCH /cards status")
 def test_v3_task15_disable_uses_patch_with_status_disabled(html: str) -> None:
     """The 'Disable card + delete' action must PATCH each affected card_id
     with {status: 'disabled'} — the existing endpoint at
@@ -1458,6 +1525,7 @@ def test_v3_task15_disable_uses_patch_with_status_disabled(html: str) -> None:
     )
 
 
+@pytest.mark.skip(reason="discarded v3: cascade iteration in showDeleteConfirm")
 def test_v3_task15_cascade_card_id_iteration_in_modal(html: str) -> None:
     """When cascade is non-empty, the modal body must enumerate the
     affected card_id / base_name pairs so the user can see WHICH cards
