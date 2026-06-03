@@ -109,3 +109,39 @@ def fake_parquet_cache(fake_tradelab_root: Path) -> Path:
 def fake_strategies_dir(fake_tradelab_root: Path) -> Path:
     """Empty tradelab strategies src dir."""
     return fake_tradelab_root / "src" / "tradelab" / "strategies"
+
+
+@pytest.fixture
+def write_backtest_result():
+    """Factory: write a minimal VALID backtest_result.json into a report
+    folder, built from the real BacktestResult model (model_dump_json) so
+    model drift can't silently invalidate the fixture (disqualifier-floor
+    Step 3). net_pnl defaults positive → the floor passes; pass net_pnl<=0
+    to force a BLOCKED route. Returns the written file's Path.
+    """
+    def _write(
+        folder,
+        *,
+        net_pnl: float = 240.0,
+        symbol: str = "AMZN",
+        timeframe: str = "1H",
+        strategy: str = "frog",
+        start_date: str = "2024-01-01",
+        end_date: str = "2026-04-20",
+    ) -> Path:
+        from tradelab.results import BacktestMetrics, BacktestResult
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        bt = BacktestResult(
+            strategy=strategy,
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            metrics=BacktestMetrics(net_pnl=net_pnl),
+        )
+        path = folder / "backtest_result.json"
+        path.write_text(bt.model_dump_json(indent=2), encoding="utf-8")
+        return path
+
+    return _write

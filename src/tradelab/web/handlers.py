@@ -1199,6 +1199,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 except Exception:
                     pass
             return _ok(data), 200
+        except approve_strategy.PromotionBlocked as e:
+            body = {"error": str(e), "data": None, "state": "BLOCKED", "blockers": e.blockers}
+            return json.dumps(body), 422
         except approve_strategy.ActivationGateFailed as e:
             return _err(str(e)), 422
         except FileNotFoundError as e:
@@ -1237,6 +1240,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 allocation_usd=payload.get("allocation_usd"),
             )
             return _ok(card), 200
+        except approve_strategy.PromotionBlocked as e:
+            body = {"error": str(e), "data": None, "state": "BLOCKED", "blockers": e.blockers}
+            return json.dumps(body), 422
         except approve_strategy.ActivationGateFailed as e:
             return _err(str(e)), 422
         except FileNotFoundError:
@@ -1334,6 +1340,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             except Exception:
                 pass
             return _ok(data), 200
+        except approve_strategy.PromotionBlocked as e:
+            body = {"error": str(e), "data": None, "state": "BLOCKED", "blockers": e.blockers}
+            return json.dumps(body), 422
         except approve_strategy.ActivationGateFailed as e:
             return _err(str(e)), 422
         except CardExistsError as e:

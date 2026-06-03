@@ -6,10 +6,11 @@ from tradelab.web.approve_strategy import accept_python_run, ActivationGateFaile
 from tradelab.web import handlers
 
 
-def _run_folder(tmp_path: Path) -> Path:
+def _run_folder(tmp_path: Path, write_backtest_result) -> Path:
+    # Step 3: activate=True now fail-closed-reads backtest_result.json, so the
+    # folder needs a VALID one (positive net_pnl → disqualifier floor clean).
     rf = tmp_path / "reports" / "frog_2026-05-31_120000"
-    rf.mkdir(parents=True)
-    (rf / "backtest_result.json").write_text("{}")
+    write_backtest_result(rf)
     return rf
 
 
@@ -19,8 +20,8 @@ def _registry(tmp_path: Path) -> CardRegistry:
     return CardRegistry(cj)
 
 
-def test_accept_python_creates_disabled_card(tmp_path):
-    rf = _run_folder(tmp_path); reg = _registry(tmp_path)
+def test_accept_python_creates_disabled_card(tmp_path, write_backtest_result):
+    rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
     card = accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
         verdict="INCONCLUSIVE", dsr_probability=0.4, scoring_run_id="run-1",
@@ -34,8 +35,8 @@ def test_accept_python_creates_disabled_card(tmp_path):
     assert reg.get("frog-v1") is not None
 
 
-def test_accept_python_advisory_gate_blocks_non_robust_activate(tmp_path):
-    rf = _run_folder(tmp_path); reg = _registry(tmp_path)
+def test_accept_python_advisory_gate_blocks_non_robust_activate(tmp_path, write_backtest_result):
+    rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
     with pytest.raises(ActivationGateFailed):
         accept_python_run(
             base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
@@ -44,8 +45,8 @@ def test_accept_python_advisory_gate_blocks_non_robust_activate(tmp_path):
             activate=True, confirm_non_robust=False)
 
 
-def test_accept_python_confirm_overrides_advisory_gate(tmp_path):
-    rf = _run_folder(tmp_path); reg = _registry(tmp_path)
+def test_accept_python_confirm_overrides_advisory_gate(tmp_path, write_backtest_result):
+    rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
     card = accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
         verdict="FRAGILE", dsr_probability=None, scoring_run_id="run-1",

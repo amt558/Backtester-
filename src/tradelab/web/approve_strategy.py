@@ -154,6 +154,75 @@ class ActivationGateFailed(Exception):
 AlreadyActivated = _CardExistsError
 
 
+# ─── Promotion routing (disqualifier-floor Step 3) ───────────────────
+#
+# Converts the binary "!= ROBUST" freeze into a three-way route. The
+# floor (hard_disqualifiers) lives in the fenced verdict module; this
+# code only CONSUMES it — compute_verdict and the floor are untouched.
+#
+#   BLOCKED  — a hard disqualifier tripped. Non-overridable: not even
+#              confirm_non_robust passes it.
+#   CLEAR    — verdict is ROBUST and no disqualifier tripped.
+#   ADVISORY — everything else (FRAGILE/INCONCLUSIVE, floor clean):
+#              the human + Claude review tier.
+
+ROUTE_BLOCKED = "BLOCKED"
+ROUTE_ADVISORY = "ADVISORY"
+ROUTE_CLEAR = "CLEAR"
+
+
+class PromotionBlocked(ActivationGateFailed):
+    """A hard disqualifier tripped: activation is frozen and CANNOT be
+    overridden (confirm_non_robust does not apply). Subclasses
+    ActivationGateFailed so existing handler catches still map to 422."""
+
+    def __init__(self, message: str, blockers: list[str]):
+        super().__init__(message)
+        self.blockers = list(blockers)
+
+
+def _load_bt_metrics(report_folder: Path):
+    """Load BacktestMetrics from <report_folder>/backtest_result.json.
+
+    Fail-closed: if the file is missing or unreadable we cannot prove
+    the disqualifier floor passes, so activation is refused — never
+    silently skipped (the hollow-check failure class).
+    """
+    bt_path = report_folder / "backtest_result.json"
+    if not bt_path.exists():
+        raise ActivationGateFailed(
+            "cannot verify disqualifier floor: backtest_result.json "
+            f"missing in {report_folder}"
+        )
+    try:
+        from tradelab.results import BacktestResult
+        bt = BacktestResult.model_validate_json(
+            bt_path.read_text(encoding="utf-8")
+        )
+    except Exception as e:
+        raise ActivationGateFailed(
+            "cannot verify disqualifier floor: backtest_result.json "
+            f"unreadable: {type(e).__name__}: {e}"
+        ) from e
+    return bt.metrics
+
+
+def route_promotion(verdict, bt_metrics, dsr):
+    """Pure three-way route. Returns (route, blockers).
+
+    blockers is hard_disqualifiers' token list (DISQ_*); non-empty
+    forces BLOCKED regardless of verdict — a ROBUST verdict cannot
+    paper over a tripped floor.
+    """
+    from tradelab.robustness.verdict import hard_disqualifiers
+    fatal = hard_disqualifiers(bt_metrics, dsr)
+    if fatal:
+        return ROUTE_BLOCKED, fatal
+    if (verdict or "").strip().upper() == "ROBUST":
+        return ROUTE_CLEAR, []
+    return ROUTE_ADVISORY, []
+
+
 def accept_scored(
     *,
     base_name: str,
@@ -200,13 +269,24 @@ def accept_scored(
             "report folder has no strategy.pine — re-score with Pine source"
         )
 
-    # Gate before any side effects when activating.
+    # Three-way promotion route (Step 3). Gate before any side effects.
     normalized_verdict = (verdict or "").strip().upper()
-    if activate and normalized_verdict != "ROBUST":
-        raise ActivationGateFailed(
-            f"Activation requires ROBUST verdict; got "
-            f"{normalized_verdict or 'unknown'}"
+    route = None
+    if activate:
+        route, fatal = route_promotion(
+            normalized_verdict, _load_bt_metrics(rf), dsr_probability
         )
+        if route == ROUTE_BLOCKED:
+            raise PromotionBlocked(
+                "Activation blocked by hard disqualifiers: "
+                f"{', '.join(fatal)}. Non-overridable.",
+                fatal,
+            )
+        if route == ROUTE_ADVISORY:
+            raise ActivationGateFailed(
+                f"Activation requires ROBUST verdict; got "
+                f"{normalized_verdict or 'unknown'}"
+            )
 
     version = registry.next_version_for(base_name)
     card_id = f"{base_name}-v{version}"
@@ -247,6 +327,8 @@ def accept_scored(
             "created_at":       created_at,
             "report_folder":    str(rf).replace("\\", "/"),
         }
+        if activate:
+            verdict_snapshot["promotion_route"] = route
         (archive_dir / "verdict.json").write_text(
             _json.dumps(verdict_snapshot, indent=2), encoding="utf-8",
         )
@@ -270,6 +352,7 @@ def accept_scored(
         if activate:
             card["activated_at"] = created_at
             card["activated_verdict"] = normalized_verdict
+            card["promotion_route"] = route
         registry.create(card_id, card)
     except Exception:
         # Rollback the pine archive dir so a retry can re-create it cleanly.
@@ -316,11 +399,22 @@ def accept_python_run(
         raise FileNotFoundError(f"report folder not found: {rf}")
 
     normalized_verdict = (verdict or "").strip().upper()
-    if activate and normalized_verdict != "ROBUST" and not confirm_non_robust:
-        raise ActivationGateFailed(
-            f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
-            f"Re-submit with confirm_non_robust=true to accept anyway."
+    route = None
+    if activate:
+        route, fatal = route_promotion(
+            normalized_verdict, _load_bt_metrics(rf), dsr_probability
         )
+        if route == ROUTE_BLOCKED:
+            raise PromotionBlocked(
+                "Activation blocked by hard disqualifiers: "
+                f"{', '.join(fatal)}. confirm_non_robust does not apply.",
+                fatal,
+            )
+        if route == ROUTE_ADVISORY and not confirm_non_robust:
+            raise ActivationGateFailed(
+                f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
+                f"Re-submit with confirm_non_robust=true to accept anyway."
+            )
 
     version = registry.next_version_for(base_name)
     card_id = f"{base_name}-v{version}"
@@ -347,5 +441,6 @@ def accept_python_run(
     if activate:
         card["activated_at"] = created_at
         card["activated_verdict"] = normalized_verdict
+        card["promotion_route"] = route
     registry.create(card_id, card)
     return card
