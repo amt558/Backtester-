@@ -9,7 +9,6 @@ from __future__ import annotations
 import enum
 import json
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -348,12 +347,16 @@ class JobManager:
                 return False
             job.status = JobStatus.CANCELLED  # set before signaling so _watch sees it
             self._persist()
-        # release lock before signaling — kill is potentially slow
+        # Release lock before signaling — kill is potentially slow.
+        # Windows note: the child is spawned DETACHED_PROCESS (no console), so
+        # console ctrl events (CTRL_BREAK/CTRL_C via GenerateConsoleCtrlEvent)
+        # can never reach it — the old os.kill(pid, CTRL_BREAK_EVENT) here was
+        # a silent no-op and cancel only worked via the 5s proc.kill()
+        # escalation below. proc.terminate() (TerminateProcess on Windows,
+        # SIGTERM on POSIX) is the only reliable direct mechanism; no grace
+        # period is lost because none ever existed.
         try:
-            if sys.platform == "win32":
-                os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
-            else:
-                proc.terminate()
+            proc.terminate()
         except OSError:
             pass
         try:
@@ -409,19 +412,57 @@ def _ts() -> str:
 
 
 def _pid_alive(pid: int) -> bool:
-    """Cross-platform liveness check."""
+    """Cross-platform liveness check.
+
+    WARNING (Windows): never use os.kill(pid, 0) here. signal.CTRL_C_EVENT == 0
+    on Windows, so os.kill(pid, 0) calls GenerateConsoleCtrlEvent — it is NOT a
+    liveness probe, it BROADCASTS Ctrl+C to the caller's own console process
+    group. This asynchronously killed the test runner / dashboard console
+    (root cause of the 2026-06-03 "terminal crashes", see
+    SESSION_2026-06-03b_step3-5-LANDED_crash-root-cause.md §3).
+    """
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _win_pid_alive(pid)
     try:
-        if sys.platform == "win32":
-            # On Windows, os.kill(pid, 0) raises if dead, returns None if alive
-            os.kill(pid, 0)
-            return True
-        else:
-            os.kill(pid, 0)
-            return True
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True  # process exists but is owned by another user
     except (OSError, ProcessLookupError):
         return False
+
+
+def _win_pid_alive(pid: int) -> bool:
+    """Windows liveness check via OpenProcess + WaitForSingleObject. No signals.
+
+    WaitForSingleObject(handle, 0) == WAIT_TIMEOUT means the process is still
+    running. This is correct even when another process holds an open handle to
+    an already-exited process (where a bare OpenProcess success would lie).
+    """
+    import ctypes
+
+    SYNCHRONIZE = 0x00100000
+    WAIT_TIMEOUT = 0x00000102
+    ERROR_ACCESS_DENIED = 5
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if not handle:
+        # ACCESS_DENIED → process exists but isn't ours → alive.
+        # Anything else (e.g. ERROR_INVALID_PARAMETER) → no such process.
+        return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _atomic_write_json(target: Path, data: dict) -> None:

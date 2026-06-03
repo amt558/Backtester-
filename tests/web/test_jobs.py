@@ -161,15 +161,54 @@ def test_queue_promotes_next_on_exit(jm):
     assert jm._queue == []
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="CTRL_BREAK_EVENT is Windows-specific")
-def test_cancel_running_job_uses_ctrl_break_then_kill(jm):
-    """Spawn a long_running fake CLI, cancel it, verify status flips to CANCELLED."""
+def test_cancel_running_job_terminates_process(jm):
+    """Spawn a long_running fake CLI, cancel it, verify status flips to CANCELLED.
+
+    Windows: the child is spawned DETACHED_PROCESS (no console), so console
+    ctrl events (CTRL_BREAK) can never reach it — cancel() must use
+    proc.terminate() directly and complete well under the old 5s
+    proc.kill() escalation timeout.
+    """
     job_id, _ = jm.submit("momo", "run", _fake_argv("long_running"))
     # Give it a moment to actually start
     time.sleep(0.5)
+    t0 = time.monotonic()
     assert jm.cancel(job_id) is True
     assert jm.wait_for_terminal(job_id, timeout=10)
+    assert time.monotonic() - t0 < 4.0  # terminate() landed; no 5s escalation
     assert jm.get(job_id).status == jobs.JobStatus.CANCELLED
+
+
+def test_pid_alive_own_pid_is_true():
+    assert jobs._pid_alive(os.getpid()) is True
+
+
+def test_pid_alive_nonpositive_pid_is_false():
+    assert jobs._pid_alive(0) is False
+    assert jobs._pid_alive(-1) is False
+
+
+def test_pid_alive_exited_child_is_false():
+    """An exited child must read as dead — even on Windows where our Popen
+    object still holds an open handle to the dead process (the
+    WaitForSingleObject check handles this; a bare OpenProcess would lie)."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait(timeout=10)
+    assert jobs._pid_alive(proc.pid) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Ctrl+C broadcast regression guard")
+def test_pid_alive_never_calls_os_kill_on_windows(monkeypatch):
+    """Regression guard for the 2026-06-03 crash root cause: on Windows
+    signal.CTRL_C_EVENT == 0, so os.kill(pid, 0) BROADCASTS Ctrl+C to the
+    caller's own console instead of probing liveness. _pid_alive must never
+    call os.kill on win32 — for any input."""
+    def _boom(*args, **kwargs):
+        raise AssertionError("_pid_alive must not call os.kill on Windows")
+    monkeypatch.setattr(jobs.os, "kill", _boom)
+    assert jobs._pid_alive(os.getpid()) is True   # alive path
+    assert jobs._pid_alive(999999) is False       # dead path
+    assert jobs._pid_alive(0) is False            # guard path
 
 
 def test_cancel_queued_job_removes_from_queue(jm):
