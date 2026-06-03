@@ -9,6 +9,7 @@ Response envelope: {"error": null|str, "data": <payload>}.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import subprocess
@@ -21,6 +22,8 @@ from urllib.parse import parse_qs, urlparse
 from tradelab.audit import archive
 from tradelab.canaries.runtime import run_canary_check
 from tradelab.web import audit_reader, cards_view, freshness, new_strategy, ranges, whatif
+
+_log = logging.getLogger(__name__)
 
 
 # Allowed (strategy-agnostic) commands the web tracker can launch.
@@ -135,6 +138,50 @@ def _alerts_log_path() -> Path:
 
 def _receiver_health_url() -> str:
     return "http://127.0.0.1:8878/health"
+
+
+def _resolve_server_dsr(scoring_run_id: str, client_dsr, db_path: Path):
+    """Server-authoritative DSR for the activation gate (Step 3.5).
+
+    The accept handlers take ``dsr_probability`` from the CLIENT payload. The
+    floor's DSR_NEGATIVE blocker trips only on ``dsr < 0``; ``dsr=None`` does
+    NOT trip (missing-data semantics). So a payload that OMITS dsr (-> None) or
+    SPOOFS a clean value over a stored negative skips the floor — gate present
+    but not wired to what it protects. This resolves dsr from the audit row
+    keyed by ``scoring_run_id`` and routes on THAT; the client value never
+    reaches the floor when a stored value exists.
+
+    Decision (b) (reviewing session, 2026-06-03): when the run/dsr can't be
+    resolved (no row, or a NULL dsr column), fall back to ``None`` — never the
+    client value. Legitimate missing data still passes the floor; omission and
+    spoofing are both dead. Mirrors the server-side resolution the
+    ``/tradelab/strategies/<id>/activate`` path already performs, and must use
+    the same ``db_path`` (``_db_path()``), not a cwd-relative default.
+    """
+    if not scoring_run_id:
+        # No run reference -> nothing to resolve server-side. The activate /
+        # accept flows always carry a scoring_run_id; a path with no run id is
+        # out of scope (do not invent a lookup for it).
+        return client_dsr
+    from tradelab.audit.history import get_run
+    row = get_run(scoring_run_id, db_path=db_path)
+    server_dsr = row.dsr_probability if row is not None else None
+    if server_dsr is not None:
+        if client_dsr is not None and client_dsr != server_dsr:
+            _log.warning(
+                "DSR override: client dsr_probability=%r discarded; routing on "
+                "stored value %r for scoring_run_id=%s",
+                client_dsr, server_dsr, scoring_run_id,
+            )
+        return server_dsr
+    # No stored value (missing row or NULL dsr) -> decision (b): None.
+    if client_dsr is not None:
+        _log.warning(
+            "DSR discard: client dsr_probability=%r dropped to None (no stored "
+            "value for scoring_run_id=%s); floor uses missing-data semantics",
+            client_dsr, scoring_run_id,
+        )
+    return None
 
 
 def _ngrok_api_url() -> str:
@@ -1173,6 +1220,20 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         err = _validate_accept_payload(payload)
         if err:
             return _err(err), 400
+        # Step 3.5: server-authoritative DSR on the activation gate. An empty
+        # scoring_run_id on an activating accept is itself a bypass door (skip
+        # resolution -> floor sees the client value), so require it BEFORE
+        # resolution. Non-activating accepts keep the client value (out of
+        # scope — the floor never runs).
+        activate = bool(payload.get("activate", False))
+        scoring_run_id = payload.get("scoring_run_id", "")
+        if activate and not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
+            return _err("scoring_run_id required for activation"), 422
+        dsr_probability = payload.get("dsr_probability")
+        if activate:
+            dsr_probability = _resolve_server_dsr(
+                scoring_run_id, dsr_probability, _db_path()
+            )
         try:
             registry = CardRegistry(_cards_path())
             data = approve_strategy.accept_scored(
@@ -1181,12 +1242,12 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 timeframe=payload["timeframe"],
                 report_folder=payload["report_folder"],
                 verdict=payload.get("verdict", "INCONCLUSIVE"),
-                dsr_probability=payload.get("dsr_probability"),
-                scoring_run_id=payload.get("scoring_run_id", ""),
+                dsr_probability=dsr_probability,
+                scoring_run_id=scoring_run_id,
                 registry=registry,
                 pine_archive_root=_pine_archive_root(),
                 reports_root=_reports_root(),
-                activate=bool(payload.get("activate", False)),
+                activate=activate,
             )
             if payload.get("activate"):
                 # Notify FE listeners (Task 16 wires the dispatch on the FE side).
@@ -1225,17 +1286,30 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         missing = [k for k in required if not (payload.get(k) or "").strip()]
         if missing:
             return _err(f"missing required fields: {', '.join(missing)}"), 400
+        # Step 3.5: identical server-authoritative DSR treatment as
+        # /tradelab/accept (condition a — no residual surface on the Python
+        # path). Require scoring_run_id for activation, then resolve dsr from
+        # the audit row; never route on the client value when activating.
+        activate = bool(payload.get("activate", False))
+        scoring_run_id = payload.get("scoring_run_id", "")
+        if activate and not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
+            return _err("scoring_run_id required for activation"), 422
+        dsr_probability = payload.get("dsr_probability")
+        if activate:
+            dsr_probability = _resolve_server_dsr(
+                scoring_run_id, dsr_probability, _db_path()
+            )
         try:
             card = approve_strategy.accept_python_run(
                 base_name=payload["base_name"], symbol=payload["symbol"],
                 timeframe=payload["timeframe"], report_folder=payload["report_folder"],
                 verdict=payload.get("verdict", "INCONCLUSIVE"),
-                dsr_probability=payload.get("dsr_probability"),
-                scoring_run_id=payload.get("scoring_run_id", ""),
+                dsr_probability=dsr_probability,
+                scoring_run_id=scoring_run_id,
                 strategy=payload["strategy"],
                 registry=CardRegistry(_cards_path()),
                 reports_root=_reports_root(),
-                activate=bool(payload.get("activate", False)),
+                activate=activate,
                 confirm_non_robust=bool(payload.get("confirm_non_robust", False)),
                 allocation_usd=payload.get("allocation_usd"),
             )

@@ -249,6 +249,12 @@ def accept_scored(
       FileExistsError: target pine_archive dir already exists.
       CardExistsError: registry refuses duplicate (caller re-computes version).
       ActivationGateFailed: activate=True but verdict isn't ROBUST.
+
+    Trust contract (Step 3.5): on the activation path (activate=True),
+    dsr_probability MUST be a server-resolved value, not raw client input.
+    The handler resolves it from the audit row keyed by scoring_run_id (see
+    handlers._resolve_server_dsr) before calling this function; passing a
+    client-supplied dsr here on an activating accept reopens the floor bypass.
     """
     # Paranoid path check — report_folder must live under reports_root.
     rf = Path(report_folder).resolve()
@@ -388,7 +394,12 @@ def accept_python_run(
 ) -> dict:
     """Promote a tested Python-strategy run to a live card. No strategy.pine /
     pine_archive. ADVISORY gating: activating a non-ROBUST verdict requires
-    confirm_non_robust=True else ActivationGateFailed. Paper-mode by default."""
+    confirm_non_robust=True else ActivationGateFailed. Paper-mode by default.
+
+    Trust contract (Step 3.5): on the activation path (activate=True),
+    dsr_probability MUST be a server-resolved value, not raw client input —
+    the handler resolves it from the audit row keyed by scoring_run_id before
+    calling this function (see handlers._resolve_server_dsr)."""
     rf = Path(report_folder).resolve()
     rr = Path(reports_root).resolve()
     try:
