@@ -25,7 +25,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..results import BacktestResult, WalkForwardResult
+from ..results import BacktestMetrics, BacktestResult, WalkForwardResult
 from .diagnostics import compute_wf_decay, compute_trade_efficiency
 from .entry_delay import EntryDelayResult
 from .loso import LOSOResult
@@ -45,6 +45,15 @@ VERDICT_ROBUST = "ROBUST"
 VERDICT_INCONCLUSIVE = "INCONCLUSIVE"
 VERDICT_FRAGILE = "FRAGILE"
 VALID_VERDICTS = frozenset({VERDICT_ROBUST, VERDICT_INCONCLUSIVE, VERDICT_FRAGILE})
+
+
+# Hard disqualifier-floor tokens — non-overridable promotion blockers that sit
+# FAR below the verdict engine's own FRAGILE thresholds. These are computed by
+# hard_disqualifiers() ALONGSIDE compute_verdict (never inside it): the verdict
+# aggregation is advisory and overridable; the floor is not. A tripped token
+# means "cannot promote, full stop", independent of the categorical verdict.
+DISQ_DSR_NEG = "DSR_NEGATIVE"
+DISQ_NEG_EXPECT = "NEG_NET_EXPECTANCY"
 
 
 class VerdictSignal(BaseModel):
@@ -137,6 +146,31 @@ def _resolve_thresholds() -> dict:
 
 # Backwards-compat module-level name; tests may inspect it.
 THRESHOLDS = _FALLBACK_THRESHOLDS
+
+
+def hard_disqualifiers(bt: BacktestMetrics, dsr: Optional[float]) -> list[str]:
+    """Non-overridable promotion blockers, evaluated independently of the
+    categorical verdict.
+
+    Returns the tripped DISQ_* tokens (empty list = nothing fatal = eligible
+    for advisory review). Pure: no side effects, no model mutation, and a
+    deterministic token order (expectancy before DSR).
+
+    Floor semantics — both blockers sit far below the verdict's own FRAGILE
+    thresholds, so a clean verdict can never paper over them:
+      - NEG_NET_EXPECTANCY: the post-cost bottom line is non-positive. Uses
+        net_pnl, which the backtest engine accumulates from per-trade pnl
+        already net of commission (entry+exit); profit_factor is a gross ratio
+        and is deliberately NOT used here.
+      - DSR_NEGATIVE: deflated Sharpe is strictly negative. None means missing
+        data (not disqualified) and exactly 0.0 does not trip.
+    """
+    blockers: list[str] = []
+    if bt.net_pnl <= 0:
+        blockers.append(DISQ_NEG_EXPECT)
+    if dsr is not None and dsr < 0.0:
+        blockers.append(DISQ_DSR_NEG)
+    return blockers
 
 
 def compute_verdict(
