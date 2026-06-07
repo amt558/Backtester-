@@ -55,34 +55,44 @@ def _write_junit(path: Path, failing=(), passing=()) -> Path:
     return path
 
 
-def test_only_tracked_reds_passes(tmp_path):
-    """Exactly the 3 tracked B2 reds failing (plus green tests) -> confined, exit 0."""
+# TRACKED_B2_REDS is empty post-B2 (cp3 is a clean binary). The confinement
+# LOGIC is still worth testing, so the behavioural tests below monkeypatch a
+# synthetic tracked ID rather than relying on the (now-empty) production set --
+# otherwise they would pass vacuously and silently stop guarding the gate.
+_FAKE_TRACKED = ("tests/web/test_command_center_html.py::test_fake_confined_red",)
+
+
+def test_only_tracked_reds_passes(tmp_path, monkeypatch):
+    """Only the (synthetic) tracked reds failing, plus green tests -> confined, exit 0."""
     confine = _load_confine()
+    monkeypatch.setattr(confine, "TRACKED_B2_REDS", _FAKE_TRACKED)
     junit = _write_junit(
         tmp_path / "j.xml",
-        failing=confine.TRACKED_B2_REDS,
+        failing=_FAKE_TRACKED,
         passing=["tests/robustness/test_verdict.py::test_engine_ok"],
     )
     assert confine.main(["--junitxml", str(junit)]) == 0
 
 
-def test_extra_failure_in_other_file_fails(tmp_path):
-    """A failure outside the web file is always real -> exit non-zero."""
+def test_extra_failure_in_other_file_fails(tmp_path, monkeypatch):
+    """A failure outside the confined set (other file) is always real -> exit non-zero."""
     confine = _load_confine()
+    monkeypatch.setattr(confine, "TRACKED_B2_REDS", _FAKE_TRACKED)
     junit = _write_junit(
         tmp_path / "j.xml",
-        failing=list(confine.TRACKED_B2_REDS)
+        failing=list(_FAKE_TRACKED)
         + ["tests/robustness/test_verdict.py::test_regression"],
     )
     assert confine.main(["--junitxml", str(junit)]) != 0
 
 
-def test_untracked_failure_inside_web_file_fails(tmp_path):
-    """A 4th failure inside the web file that is NOT a tracked red -> exit non-zero."""
+def test_untracked_failure_inside_web_file_fails(tmp_path, monkeypatch):
+    """A failure inside the web file that is NOT confined -> exit non-zero."""
     confine = _load_confine()
+    monkeypatch.setattr(confine, "TRACKED_B2_REDS", _FAKE_TRACKED)
     junit = _write_junit(
         tmp_path / "j.xml",
-        failing=list(confine.TRACKED_B2_REDS)
+        failing=list(_FAKE_TRACKED)
         + ["tests/web/test_command_center_html.py::test_some_new_assertion"],
     )
     assert confine.main(["--junitxml", str(junit)]) != 0
@@ -101,17 +111,36 @@ def test_all_green_passes(tmp_path):
     assert confine.main(["--junitxml", str(junit)]) == 0
 
 
-def test_tracked_reds_are_exactly_three_and_pinned_once():
-    """The tracked-red list is the single source of truth: exactly 3 web-file IDs."""
+def test_empty_tracked_reds_means_any_failure_fails(tmp_path):
+    """Clean-binary property: with the REAL (now-empty) TRACKED_B2_REDS, ANY
+    failure -- even a former B2 red -- is unconfined and fails cp3. This is what
+    'cp3 is a clean binary' means post-B2."""
     confine = _load_confine()
-    assert len(confine.TRACKED_B2_REDS) == 3
-    assert len(set(confine.TRACKED_B2_REDS)) == 3
-    for nodeid in confine.TRACKED_B2_REDS:
-        assert nodeid.startswith("tests/web/test_command_center_html.py::"), nodeid
+    assert confine.TRACKED_B2_REDS == ()  # this test is only meaningful while empty
+    junit = _write_junit(
+        tmp_path / "j.xml",
+        failing=[
+            "tests/web/test_command_center_html.py"
+            "::test_v3_task14_trash_button_tooltip_says_delete_not_archive"
+        ],
+        passing=["tests/robustness/test_verdict.py::test_engine_ok"],
+    )
+    assert confine.main(["--junitxml", str(junit)]) != 0
+
+
+def test_tracked_reds_empty_clean_binary():
+    """Post-B2 the confinement list is EMPTY: cp3 is a clean binary with no
+    confined exceptions. (Was 'exactly three' while the B2 reds were pinned.)"""
+    confine = _load_confine()
+    assert confine.TRACKED_B2_REDS == ()
+    assert isinstance(confine.TRACKED_B2_REDS, tuple)
 
 
 def test_tracked_reds_match_live_test_ids():
-    """Pinned IDs must be real, collectable tests -- guards against drift/typos."""
+    """Any pinned tracked red must be a real, collectable test -- guards against
+    drift/typos. With the list empty (clean binary) this also asserts the live
+    collection mechanism itself still works, so the guard re-activates correctly
+    if IDs are ever re-pinned."""
     confine = _load_confine()
     result = subprocess.run(
         [
@@ -124,6 +153,9 @@ def test_tracked_reds_match_live_test_ids():
         text=True,
     )
     collected = result.stdout
+    assert "test_command_center_html" in collected, (
+        "live collection mechanism broken -- cannot validate pinned tracked reds"
+    )
     for nodeid in confine.TRACKED_B2_REDS:
         assert nodeid in collected, (
             f"pinned tracked red not found in live collection: {nodeid}"

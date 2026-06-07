@@ -2,14 +2,14 @@
 
 Parses a pytest ``--junitxml`` report and enforces the cp3 contract:
 
-    Any failure outside ``tests/web/test_command_center_html.py`` is real.
-    Inside that file, any failure that is NOT one of the 3 tracked B2
-    delete-safety reds is real.
+    The full suite must be green. Any failing test whose nodeid is not in
+    ``TRACKED_B2_REDS`` is a real failure and fails the gate.
 
-In other words, the gate PASSES (exit 0) iff the set of failing tests is a
-subset of ``TRACKED_B2_REDS``. The 3 reds are KNOWN-RED and *confined* by the
-gate -- they are deliberately not fixed here (see the verdict.py fence and the
-B2 copy-fix board item). Any other failure, in any file, fails the gate.
+``TRACKED_B2_REDS`` is the (small, normally empty) set of KNOWN-RED tests the
+gate is permitted to wave through. As of B2 it is **empty** -- the 3
+delete-safety reds went green when the live ``command_center.html`` copy was
+fixed -- so cp3 is now a *clean binary*: it passes (exit 0) iff the suite has
+zero failures. See the A1 coupling note on ``TRACKED_B2_REDS`` below.
 
 Usage:
     python scripts/gate_confine.py --junitxml .cache/full_suite_gate.xml
@@ -21,16 +21,26 @@ import sys
 import xml.etree.ElementTree as ET
 
 # ---------------------------------------------------------------------------
-# Single source of truth: the 3 tracked B2 delete-safety reds.
-# Pinned here ONCE. tests/gate/test_gate_targets.py asserts this list still
-# matches the live, collectable test IDs -- so a rename/typo trips a test
-# rather than silently widening what the gate will wave through.
+# Tracked B2 delete-safety reds: now EMPTY. The 3 reds went green when B2 fixed
+# the delete-safety copy in the live command_center.html.
+#
+# A1 COUPLING -- read before you panic at a fresh-checkout cp3 failure:
+# the copy fix that makes those 3 web tests green rides UNCOMMITTED in the
+# PARENT repo's live C:\TradingScripts\command_center.html (the served file the
+# web tests read), consistent with how that file has been treated across the
+# whole arc (WP5 included). cp3 is now a clean binary: it expects ZERO confined
+# reds. So a clean checkout / revert of the live command_center.html would
+# re-red the 3 delete-safety tests and cp3 would FAIL here -- that is the
+# expected, self-explaining symptom of a missing uncommitted parent-repo fix,
+# NOT a regression in this script. Re-apply the live HTML delete-copy fix (see
+# the B2 handoff) to restore green. When the parent-repo drift is resolved as
+# its own session (the eventual A2 path), the fix becomes committed and this
+# coupling goes away.
+#
+# tests/gate/test_gate_targets.py asserts this stays empty (clean binary) and
+# exercises the confinement LOGIC against a synthetic tracked ID.
 # ---------------------------------------------------------------------------
-TRACKED_B2_REDS = (
-    "tests/web/test_command_center_html.py::test_v3_task14_trash_button_tooltip_says_delete_not_archive",
-    "tests/web/test_command_center_html.py::test_v3_task15_stale_archive_copy_removed",
-    "tests/web/test_command_center_html.py::test_v3_task15_modal_copy_describes_hard_delete",
-)
+TRACKED_B2_REDS: tuple[str, ...] = ()
 
 
 def _nodeid(classname: str, name: str) -> str:
@@ -68,12 +78,12 @@ def main(argv: list[str] | None = None) -> int:
 
     unconfined = unconfined_failures(args.junitxml)
     if unconfined:
-        print("cp3 FAIL: unconfined failure(s) outside the 3 tracked B2 reds:")
+        print("cp3 FAIL: unconfined failure(s) -- full suite must be green (no confined reds):")
         for nodeid in unconfined:
             print(f"  - {nodeid}")
         return 1
 
-    print("cp3 PASS: full suite clean except the 3 confined B2 delete-safety reds.")
+    print("cp3 PASS: full suite clean -- no confined reds (clean binary).")
     return 0
 
 
