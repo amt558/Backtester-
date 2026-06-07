@@ -1503,7 +1503,6 @@ def test_v3_task14_trash_button_tooltip_says_delete_not_archive(html: str) -> No
 # ─── Task 15: Pipeline delete affordances (cascade-aware modal) ────────
 
 
-@pytest.mark.skip(reason="discarded v3: showDeleteConfirm -> preview-delete")
 def test_v3_task15_show_delete_confirm_calls_preview_delete(html: str) -> None:
     """Before opening the modal, showDeleteConfirm must POST to
     /tradelab/runs/preview-delete with the candidate run_ids so the FE
@@ -1519,7 +1518,6 @@ def test_v3_task15_show_delete_confirm_calls_preview_delete(html: str) -> None:
     )
 
 
-@pytest.mark.skip(reason="discarded v3: deleteConfirmCascade container")
 def test_v3_task15_modal_has_cascade_container(html: str) -> None:
     """The existing #researchDeleteConfirm modal gains a new
     #deleteConfirmCascade section that's hidden by default and
@@ -1531,7 +1529,6 @@ def test_v3_task15_modal_has_cascade_container(html: str) -> None:
     )
 
 
-@pytest.mark.skip(reason="discarded v3: deleteConfirmDisableGo button")
 def test_v3_task15_disable_and_delete_button_label_present(html: str) -> None:
     """When cascade is non-empty, a third button labeled 'Disable card + delete'
     appears so the user can flip affected cards to status='disabled' before
@@ -1555,7 +1552,6 @@ def test_v3_task15_disable_and_delete_button_label_present(html: str) -> None:
     )
 
 
-@pytest.mark.skip(reason="discarded v3: disable+delete PATCH /cards status")
 def test_v3_task15_disable_uses_patch_with_status_disabled(html: str) -> None:
     """The 'Disable card + delete' action must PATCH each affected card_id
     with {status: 'disabled'} — the existing endpoint at
@@ -1576,7 +1572,6 @@ def test_v3_task15_disable_uses_patch_with_status_disabled(html: str) -> None:
     )
 
 
-@pytest.mark.skip(reason="discarded v3: cascade iteration in showDeleteConfirm")
 def test_v3_task15_cascade_card_id_iteration_in_modal(html: str) -> None:
     """When cascade is non-empty, the modal body must enumerate the
     affected card_id / base_name pairs so the user can see WHICH cards
