@@ -1670,3 +1670,29 @@ def test_accept_flow_posts_to_strategies_accept(html: str) -> None:
 
 def test_overview_card_has_allocation_input(html: str) -> None:
     assert "allocation_usd" in html
+
+
+# ─── WP5: research-tab renders the ADVISORY promotion tier ─────────────
+
+
+def test_wp5_accept_flow_keys_advisory_off_422_state(html: str) -> None:
+    """WP5: the live accept handler (acceptRunAsCard) must give a 422 carrying
+    state=='ADVISORY' a distinct treatment, wired to the response body — not a
+    free-floating constant elsewhere in the file."""
+    idx = html.find("async function acceptRunAsCard")
+    assert idx > 0, "acceptRunAsCard not found"
+    body = html[idx:idx + 3500]
+    assert "ADVISORY" in body, "acceptRunAsCard does not handle the ADVISORY tier"
+    assert ".state" in body or "state ===" in body or "state==" in body, (
+        "ADVISORY handling not wired to the 422 body.state field — assert the "
+        "wiring, not a bare constant"
+    )
+
+
+def test_wp5_advisory_copy_present_in_accept_flow(html: str) -> None:
+    """WP5 decision (C): the reviewable framing copy must appear inside the
+    accept handler so a human sees 'didn't clear, not floor-blocked'."""
+    idx = html.find("async function acceptRunAsCard")
+    assert idx > 0
+    body = html[idx:idx + 3500]
+    assert "reviewable" in body.lower(), "ADVISORY reviewable framing copy missing"

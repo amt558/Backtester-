@@ -503,3 +503,128 @@ def test_accept_python_omitted_run_id_blocks_activation(tmp_path, monkeypatch, w
     parsed = json.loads(raw)
     assert status == 422, raw
     assert "scoring_run_id required for activation" in (parsed.get("error") or "")
+
+
+# ─── WP5: ADVISORY gets its own 422 envelope (AdvisoryRefused) ───────────
+#
+# Step 3 routed ADVISORY distinctly but the gate still raised a plain
+# ActivationGateFailed, so the handler returned a bare {error} 422 that a
+# fail-closed refusal also produced — indistinguishable to the FE. WP5 adds
+# AdvisoryRefused(ActivationGateFailed) so the handler can stamp
+# state=="ADVISORY" ADDITIVELY (parallel to BLOCKED) while gate-message strings
+# stay BYTE-IDENTICAL. _load_bt_metrics fail-closed refusals MUST stay plain
+# ActivationGateFailed so they are never mislabeled reviewable.
+
+# byte-frozen gate strings — must never drift:
+_PINE_ADVISORY_MSG = "Activation requires ROBUST verdict; got FRAGILE"
+_PY_ADVISORY_MSG = (
+    "Verdict is FRAGILE (not ROBUST). "
+    "Re-submit with confirm_non_robust=true to accept anyway."
+)
+
+
+def test_advisory_refused_is_activation_gate_subclass():
+    cls = approve_strategy.AdvisoryRefused
+    assert issubclass(cls, ActivationGateFailed)
+    # sibling of PromotionBlocked — neither is an ancestor of the other
+    assert not issubclass(cls, PromotionBlocked)
+    assert not issubclass(PromotionBlocked, cls)
+
+
+def test_accept_scored_advisory_raises_advisory_refused_byte_identical(tmp_path):
+    scored = _score_once(tmp_path)
+    reg = _registry(tmp_path)
+    with pytest.raises(approve_strategy.AdvisoryRefused) as exc:
+        approve_strategy.accept_scored(
+            base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+            report_folder=scored["report_folder"], verdict="FRAGILE",
+            dsr_probability=scored["dsr_probability"],
+            scoring_run_id=scored["scoring_run_id"], registry=reg,
+            pine_archive_root=tmp_path / "pine_archive",
+            reports_root=tmp_path / "reports", activate=True,
+            db_path=tmp_path / "audit.db",
+        )
+    assert str(exc.value) == _PINE_ADVISORY_MSG
+
+
+def test_accept_python_advisory_raises_advisory_refused_byte_identical(tmp_path, write_backtest_result):
+    rf = _py_folder(tmp_path, write_backtest_result, net_pnl=240.0)
+    reg = _registry(tmp_path)
+    with pytest.raises(approve_strategy.AdvisoryRefused) as exc:
+        approve_strategy.accept_python_run(
+            base_name="frog", symbol="AAPL", timeframe="1D",
+            report_folder=str(rf), verdict="FRAGILE",
+            dsr_probability=None, scoring_run_id="run-1", strategy="frog",
+            registry=reg, reports_root=tmp_path / "reports",
+            activate=True, confirm_non_robust=False,
+            db_path=tmp_path / "audit.db",
+        )
+    assert str(exc.value) == _PY_ADVISORY_MSG
+
+
+def test_fail_closed_refusal_is_not_advisory(tmp_path):
+    """The guard: a missing backtest_result.json is a FAIL-CLOSED refusal, not
+    the ADVISORY route. It must raise plain ActivationGateFailed and must NOT be
+    an AdvisoryRefused — else the handler would mislabel it state=='ADVISORY'."""
+    scored = _score_once(tmp_path)
+    reg = _registry(tmp_path)
+    (Path(scored["report_folder"]) / "backtest_result.json").unlink()
+    with pytest.raises(ActivationGateFailed) as exc:
+        approve_strategy.accept_scored(
+            base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
+            report_folder=scored["report_folder"], verdict="FRAGILE",
+            dsr_probability=scored["dsr_probability"],
+            scoring_run_id=scored["scoring_run_id"], registry=reg,
+            pine_archive_root=tmp_path / "pine_archive",
+            reports_root=tmp_path / "reports", activate=True,
+            db_path=tmp_path / "audit.db",
+        )
+    assert not isinstance(exc.value, approve_strategy.AdvisoryRefused)
+
+
+def test_handler_python_advisory_422_state_advisory(tmp_path, monkeypatch, write_backtest_result):
+    """/tradelab/strategies/accept: FRAGILE + clean floor, no confirm -> 422
+    state=='ADVISORY', NO blockers key, message byte-identical to the frozen
+    Python-path gate string."""
+    handlers, scored = _score_via_handler(tmp_path, monkeypatch)
+    _set_stored_dsr(tmp_path / "audit.db", scored["scoring_run_id"], 0.5, verdict="FRAGILE")
+    write_backtest_result(Path(scored["report_folder"]), net_pnl=500.0,
+                          symbol="AMZN", timeframe="1H")
+    raw, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/accept", _py_accept_body(scored, verdict="FRAGILE"))
+    body = json.loads(raw)
+    assert status == 422, raw
+    assert body["state"] == "ADVISORY"
+    assert "blockers" not in body
+    assert body["error"] == _PY_ADVISORY_MSG
+
+
+def test_handler_pine_advisory_422_state_advisory(tmp_path, monkeypatch, write_backtest_result):
+    """/tradelab/accept (Pine path): FRAGILE + clean floor -> 422
+    state=='ADVISORY' with the byte-identical Pine gate string."""
+    handlers, scored = _score_via_handler(tmp_path, monkeypatch)
+    _set_stored_dsr(tmp_path / "audit.db", scored["scoring_run_id"], 0.5, verdict="FRAGILE")
+    write_backtest_result(Path(scored["report_folder"]), net_pnl=500.0,
+                          symbol="AMZN", timeframe="1H")
+    raw, status = handlers.handle_post_with_status(
+        "/tradelab/accept", _accept_body(scored, verdict="FRAGILE"))
+    body = json.loads(raw)
+    assert status == 422, raw
+    assert body["state"] == "ADVISORY"
+    assert "blockers" not in body
+    assert body["error"] == _PINE_ADVISORY_MSG
+
+
+def test_handler_blocked_envelope_unchanged_by_wp5(tmp_path, monkeypatch, write_backtest_result):
+    """Regression guard: BLOCKED still returns state=='BLOCKED' WITH blockers —
+    WP5's ADVISORY addition must not alter the BLOCKED shape."""
+    handlers, scored = _score_via_handler(tmp_path, monkeypatch)
+    _set_stored_dsr(tmp_path / "audit.db", scored["scoring_run_id"], -0.2, verdict="ROBUST")
+    write_backtest_result(Path(scored["report_folder"]), net_pnl=500.0,
+                          symbol="AMZN", timeframe="1H")
+    raw, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/accept", _py_accept_body(scored))
+    body = json.loads(raw)
+    assert status == 422, raw
+    assert body["state"] == "BLOCKED"
+    assert "DSR_NEGATIVE" in body["blockers"]

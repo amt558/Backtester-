@@ -181,6 +181,15 @@ class PromotionBlocked(ActivationGateFailed):
         self.blockers = list(blockers)
 
 
+class AdvisoryRefused(ActivationGateFailed):
+    """The promotion route is ADVISORY (FRAGILE/INCONCLUSIVE, floor clean):
+    not floor-blocked, but didn't clear the ROBUST bar — the human + Claude
+    review tier. Subclasses ActivationGateFailed so existing handler catches
+    still map to 422; the handler stamps state=='ADVISORY' additively. Distinct
+    from a fail-closed refusal (plain ActivationGateFailed) so the latter is
+    never mislabeled reviewable."""
+
+
 def _load_bt_metrics(report_folder: Path):
     """Load BacktestMetrics from <report_folder>/backtest_result.json.
 
@@ -321,7 +330,7 @@ def accept_scored(
                 path="pine", verdict=normalized_verdict, promotion_route=route,
                 blockers=[], override_used=False, activated=False,
             )
-            raise ActivationGateFailed(
+            raise AdvisoryRefused(
                 f"Activation requires ROBUST verdict; got "
                 f"{normalized_verdict or 'unknown'}"
             )
@@ -472,7 +481,7 @@ def accept_python_run(
                 path="python", verdict=normalized_verdict, promotion_route=route,
                 blockers=[], override_used=False, activated=False,
             )
-            raise ActivationGateFailed(
+            raise AdvisoryRefused(
                 f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
                 f"Re-submit with confirm_non_robust=true to accept anyway."
             )
