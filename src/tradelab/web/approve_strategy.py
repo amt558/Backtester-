@@ -223,6 +223,27 @@ def route_promotion(verdict, bt_metrics, dsr):
     return ROUTE_ADVISORY, []
 
 
+def _log_ledger(db_path, **kw) -> None:
+    """Fail-OPEN verdict-ledger write (WP4 Slice A).
+
+    A ledger failure must NEVER block or reverse a promotion. This protects
+    EVERY call site identically — including the pre-raise BLOCKED and
+    ADVISORY-refused writes, where a ledger exception must not convert the
+    intended PromotionBlocked / ActivationGateFailed (422) into a 500. Catch
+    everything, log it loudly (never silently swallow), and let the caller's
+    original control flow — return or raise — stand.
+    """
+    import logging
+    try:
+        from tradelab.audit.verdict_ledger import log_decision
+        log_decision(db_path=db_path, **kw)
+    except Exception as e:  # noqa: BLE001 — fail-open is the whole point
+        logging.getLogger(__name__).error(
+            "verdict-ledger write failed (promotion unaffected): %s: %s",
+            type(e).__name__, e,
+        )
+
+
 def accept_scored(
     *,
     base_name: str,
@@ -236,6 +257,7 @@ def accept_scored(
     pine_archive_root: Path = Path("pine_archive"),
     reports_root: Path = Path("reports"),
     activate: bool = False,
+    db_path: Path = _DEFAULT_DB_PATH,
 ) -> dict:
     """Promote a scored report folder to an immutable card + pine_archive record.
 
@@ -283,12 +305,22 @@ def accept_scored(
             normalized_verdict, _load_bt_metrics(rf), dsr_probability
         )
         if route == ROUTE_BLOCKED:
+            _log_ledger(
+                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+                path="pine", verdict=normalized_verdict, promotion_route=route,
+                blockers=fatal, override_used=False, activated=False,
+            )
             raise PromotionBlocked(
                 "Activation blocked by hard disqualifiers: "
                 f"{', '.join(fatal)}. Non-overridable.",
                 fatal,
             )
         if route == ROUTE_ADVISORY:
+            _log_ledger(
+                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+                path="pine", verdict=normalized_verdict, promotion_route=route,
+                blockers=[], override_used=False, activated=False,
+            )
             raise ActivationGateFailed(
                 f"Activation requires ROBUST verdict; got "
                 f"{normalized_verdict or 'unknown'}"
@@ -372,6 +404,12 @@ def accept_scored(
     }
     if activate:
         result["activated_at"] = created_at
+        # CLEAR success (BLOCKED/ADVISORY already raised above).
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="pine", verdict=normalized_verdict, promotion_route=route,
+            blockers=[], override_used=False, activated=True,
+        )
     return result
 
 
@@ -391,6 +429,7 @@ def accept_python_run(
     confirm_non_robust: bool = False,
     mode: str = "paper",
     allocation_usd: Optional[float] = None,
+    db_path: Path = _DEFAULT_DB_PATH,
 ) -> dict:
     """Promote a tested Python-strategy run to a live card. No strategy.pine /
     pine_archive. ADVISORY gating: activating a non-ROBUST verdict requires
@@ -416,12 +455,23 @@ def accept_python_run(
             normalized_verdict, _load_bt_metrics(rf), dsr_probability
         )
         if route == ROUTE_BLOCKED:
+            _log_ledger(
+                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+                path="python", verdict=normalized_verdict, promotion_route=route,
+                blockers=fatal, override_used=bool(confirm_non_robust),
+                activated=False,
+            )
             raise PromotionBlocked(
                 "Activation blocked by hard disqualifiers: "
                 f"{', '.join(fatal)}. confirm_non_robust does not apply.",
                 fatal,
             )
         if route == ROUTE_ADVISORY and not confirm_non_robust:
+            _log_ledger(
+                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+                path="python", verdict=normalized_verdict, promotion_route=route,
+                blockers=[], override_used=False, activated=False,
+            )
             raise ActivationGateFailed(
                 f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
                 f"Re-submit with confirm_non_robust=true to accept anyway."
@@ -454,4 +504,12 @@ def accept_python_run(
         card["activated_verdict"] = normalized_verdict
         card["promotion_route"] = route
     registry.create(card_id, card)
+    if activate:
+        # CLEAR, or ADVISORY passed via confirm_non_robust (BLOCKED and
+        # ADVISORY-refused already raised above).
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="python", verdict=normalized_verdict, promotion_route=route,
+            blockers=[], override_used=bool(confirm_non_robust), activated=True,
+        )
     return card

@@ -109,6 +109,7 @@ def test_accept_scored_clear_stamps_promotion_route(tmp_path):
         scoring_run_id=scored["scoring_run_id"], registry=reg,
         pine_archive_root=tmp_path / "pine_archive",
         reports_root=tmp_path / "reports", activate=True,
+        db_path=tmp_path / "audit.db",
     )
     card = reg.get(result["card_id"])
     assert card["promotion_route"] == "CLEAR"
@@ -130,6 +131,7 @@ def test_accept_scored_advisory_raises_gate_not_blocked(tmp_path):
             scoring_run_id=scored["scoring_run_id"], registry=reg,
             pine_archive_root=tmp_path / "pine_archive",
             reports_root=tmp_path / "reports", activate=True,
+            db_path=tmp_path / "audit.db",
         )
     assert not isinstance(exc.value, PromotionBlocked)
 
@@ -147,6 +149,7 @@ def test_accept_scored_blocked_raises_promotion_blocked(tmp_path, write_backtest
             scoring_run_id=scored["scoring_run_id"], registry=reg,
             pine_archive_root=tmp_path / "pine_archive",
             reports_root=tmp_path / "reports", activate=True,
+            db_path=tmp_path / "audit.db",
         )
     assert "NEG_NET_EXPECTANCY" in exc.value.blockers
     assert reg.get("smoke-amzn-v1") is None
@@ -186,6 +189,7 @@ def test_accept_python_confirm_does_not_pass_blocked(tmp_path, write_backtest_re
             dsr_probability=None, scoring_run_id="run-1", strategy="frog",
             registry=reg, reports_root=tmp_path / "reports",
             activate=True, confirm_non_robust=True,
+            db_path=tmp_path / "audit.db",
         )
     assert "NEG_NET_EXPECTANCY" in exc.value.blockers
     assert reg.get("frog-v1") is None
@@ -201,6 +205,7 @@ def test_accept_python_confirm_passes_advisory_and_stamps_route(tmp_path, write_
         dsr_probability=None, scoring_run_id="run-1", strategy="frog",
         registry=reg, reports_root=tmp_path / "reports",
         activate=True, confirm_non_robust=True,
+        db_path=tmp_path / "audit.db",
     )
     assert card["status"] == "enabled"
     assert card["promotion_route"] == "ADVISORY"

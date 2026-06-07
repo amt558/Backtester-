@@ -1248,6 +1248,7 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 pine_archive_root=_pine_archive_root(),
                 reports_root=_reports_root(),
                 activate=activate,
+                db_path=_db_path(),
             )
             if payload.get("activate"):
                 # Notify FE listeners (Task 16 wires the dispatch on the FE side).
@@ -1312,6 +1313,7 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 activate=activate,
                 confirm_non_robust=bool(payload.get("confirm_non_robust", False)),
                 allocation_usd=payload.get("allocation_usd"),
+                db_path=_db_path(),
             )
             return _ok(card), 200
         except approve_strategy.PromotionBlocked as e:
@@ -1403,6 +1405,7 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 pine_archive_root=_pine_archive_root(),
                 reports_root=_reports_root(),
                 activate=True,
+                db_path=_db_path(),
             )
             # Notify FE listeners (Task 16 wires SSE listener on the FE side).
             try:
