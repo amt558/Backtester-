@@ -24,21 +24,26 @@ import xml.etree.ElementTree as ET
 # Tracked B2 delete-safety reds: now EMPTY. The 3 reds went green when B2 fixed
 # the delete-safety copy in the live command_center.html.
 #
-# A1 COUPLING -- read before you panic at a fresh-checkout cp3 failure:
-# the copy fix that makes those 3 web tests green rides UNCOMMITTED in the
-# PARENT repo's live C:\TradingScripts\command_center.html (the served file the
-# web tests read), consistent with how that file has been treated across the
-# whole arc (WP5 included). cp3 is now a clean binary: it expects ZERO confined
-# reds. So a clean checkout / revert of the live command_center.html would
-# re-red the 3 delete-safety tests and cp3 would FAIL here -- that is the
-# expected, self-explaining symptom of a missing uncommitted parent-repo fix,
-# NOT a regression in this script. Re-apply the live HTML delete-copy fix (see
-# the B2 handoff) to restore green. When the parent-repo drift is resolved as
-# its own session (the eventual A2 path), the fix becomes committed and this
-# coupling goes away.
+# A1 COUPLING -- now RESOLVED (reduced, not erased). The copy fix that makes
+# those 3 web tests green was committed to the PARENT repo on 2026-06-07 (A2):
+# branch ``validation-suite`` commit ab939648, capturing only the WP5+B2 hunks
+# of C:\TradingScripts\command_center.html (the served file the web tests read).
+# So a working-tree reset/checkout of command_center.html ON THAT BRANCH now
+# restores the fix from the commit instead of wiping it -- the everyday
+# "reset/clean re-reds cp3" exposure is CLOSED.
 #
-# tests/gate/test_gate_targets.py asserts this stays empty (clean binary) and
-# exercises the confinement LOGIC against a synthetic tracked ID.
+# Two residual caveats remain (why this is "reduced, not erased"):
+#   1. The parent repo has NO remote -- this is local-only durability, with no
+#      off-machine backup of the fix.
+#   2. The web tests read the working-tree file on whatever branch is checked
+#      out. Checking out a DIFFERENT branch (e.g. main) would supply a
+#      command_center.html without the fix and re-red the 3 delete-safety tests
+#      -- the expected, self-explaining symptom of a wrong checkout, NOT a
+#      regression in this script. Re-apply the fix or return to validation-suite.
+#
+# cp3 remains a clean binary: it expects ZERO confined reds (TRACKED_B2_REDS
+# empty). tests/gate/test_gate_targets.py asserts this stays empty and exercises
+# the confinement LOGIC against a synthetic tracked ID.
 # ---------------------------------------------------------------------------
 TRACKED_B2_REDS: tuple[str, ...] = ()
 
