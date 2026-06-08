@@ -42,10 +42,16 @@ def delete_run_atomic(
     run_id: str,
     db_path: Optional[Path] = None,
     log_path: Optional[Path] = None,
+    cascaded_card_ids: Optional[list] = None,
 ) -> dict:
     """Delete a run end-to-end. Returns a manifest dict.
 
     Raises RunNotFound if run_id is not in the DB.
+
+    cascaded_card_ids (Phase 1 audit slice C): the card_ids the client-side
+    cascade actually disabled before requesting this delete. Recorded as-is on
+    the deletions.log entry for reconstructability — record-only, no
+    re-derivation here. Defaults to [] for body-less / legacy callers.
     """
     db = Path(db_path) if db_path else _default_db_path()
     log = Path(log_path) if log_path else _default_log_path()
@@ -79,6 +85,7 @@ def delete_run_atomic(
         "strategy": strategy,
         "deleted_by": "ui",
         "paths_removed": paths_removed,
+        "cascaded_card_ids": cascaded_card_ids or [],
     }
     with log.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")

@@ -121,3 +121,38 @@ def test_default_log_path_used_when_unspecified(workspace, monkeypatch):
     )
     delete_run_atomic("r1", db_path=workspace["db"])
     assert custom_log.exists()
+
+
+def test_atomic_delete_records_cascaded_card_ids(workspace):
+    """Phase 1 (audit slice C): the cards the FE actually disabled are recorded
+    on the run's deletions.log entry as cascaded_card_ids (record-only, 1B)."""
+    delete_run_atomic(
+        "r1",
+        db_path=workspace["db"],
+        log_path=workspace["log"],
+        cascaded_card_ids=["card-aaa", "card-bbb"],
+    )
+
+    entry = json.loads(workspace["log"].read_text().strip())
+    assert entry["cascaded_card_ids"] == ["card-aaa", "card-bbb"]
+
+
+def test_atomic_delete_defaults_cascaded_card_ids_empty(workspace):
+    """Back-compat (1A always-present): omitting cascaded_card_ids writes [],
+    and the five existing fields stay byte-stable (no rename/reshape)."""
+    delete_run_atomic("r1", db_path=workspace["db"], log_path=workspace["log"])
+
+    entry = json.loads(workspace["log"].read_text().strip())
+    # New field present and defaulted.
+    assert entry["cascaded_card_ids"] == []
+    # Existing five fields unchanged.
+    assert entry["run_id"] == "r1"
+    assert entry["strategy"] == "virpo-mu-v1"
+    assert entry["deleted_by"] == "ui"
+    assert "ts" in entry
+    assert "paths_removed" in entry
+    # Nothing else added or renamed.
+    assert set(entry) == {
+        "ts", "run_id", "strategy", "deleted_by", "paths_removed",
+        "cascaded_card_ids",
+    }

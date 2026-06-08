@@ -116,3 +116,27 @@ def test_delete_idempotent_on_second_call(tmp_path: Path, monkeypatch) -> None:
     assert log_path.exists()
     lines = [l for l in log_path.read_text(encoding="utf-8").splitlines() if l.strip()]
     assert len(lines) == 1
+
+
+def test_delete_with_body_threads_cascaded_card_ids(tmp_path: Path, monkeypatch) -> None:
+    """Phase 1: a DELETE body carrying cascaded_card_ids (the cards the FE
+    actually disabled) is threaded through the handler into the run's
+    deletions.log entry. Today the runs route falls through to the body-less
+    variant and drops the body — so this is red until the seam threads it."""
+    folder = tmp_path / "reports" / "s2_run"
+    folder.mkdir(parents=True)
+    (folder / "dashboard.html").write_text("<html></html>")
+    db = tmp_path / "history.db"
+    _seed_run(db, "run-1", str(folder))
+    monkeypatch.setattr(handlers, "_db_path", lambda: db)
+    monkeypatch.chdir(tmp_path)  # default deletions.log is cwd-relative
+
+    body = json.dumps({"cascaded_card_ids": ["card-xyz"]}).encode()
+    out, status = handlers.handle_delete_with_status_with_body(
+        "/tradelab/runs/run-1", body
+    )
+    assert status == 204
+
+    log_path = tmp_path / "data" / "deletions.log"
+    entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert entry["cascaded_card_ids"] == ["card-xyz"]

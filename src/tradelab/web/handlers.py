@@ -1136,6 +1136,10 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         deleted: list[str] = []
         failed: list[dict] = []
         for run_id in run_ids:
+            # Phase 1 scope: per-run cascade attribution for bulk delete is
+            # intentionally deferred to a later slice — bulk records
+            # cascaded_card_ids: [] (no regression vs today). Single-run delete
+            # carries accurate cascade audit via handle_delete_with_status_with_body.
             del_body, status = _delete_run(str(run_id))
             if status == 204:
                 deleted.append(str(run_id))
@@ -1994,7 +1998,16 @@ def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, in
             return _err("card not found"), 404
         return _ok({"deleted": card_id}), 200
 
-    # Fall through to body-less variant for legacy routes
+    # Phase 1 (audit slice C): single-run delete threads cascaded_card_ids
+    # (the cards the FE actually disabled) from the body into the deletions.log
+    # entry. Record-only — the server does NOT re-derive or re-disable here.
+    # A missing/empty body resolves to [], so a body-less DELETE is unchanged.
+    rm = re.match(r"^/tradelab/runs/([^/]+)$", path)
+    if rm:
+        cascaded = payload.get("cascaded_card_ids") or []
+        return _delete_run(rm.group(1), cascaded_card_ids=cascaded)
+
+    # Fall through to body-less variant for any remaining legacy routes
     return handle_delete_with_status(path)
 
 
@@ -2054,7 +2067,7 @@ def _qs_metrics_response(run_id: str, folder: Path) -> tuple[str, int]:
     return json.dumps(payload), 200
 
 
-def _delete_run(run_id: str) -> tuple[str, int]:
+def _delete_run(run_id: str, cascaded_card_ids: list | None = None) -> tuple[str, int]:
     """Hard-delete a run: DB row + report folder + JSONL audit log entry.
 
     Idempotent: if the run is already gone (or the DB hasn't been created
@@ -2074,7 +2087,9 @@ def _delete_run(run_id: str) -> tuple[str, int]:
 
     from tradelab.web import run_deletion
     try:
-        manifest = run_deletion.delete_run_atomic(run_id, db_path=db)
+        manifest = run_deletion.delete_run_atomic(
+            run_id, db_path=db, cascaded_card_ids=cascaded_card_ids
+        )
     except run_deletion.RunNotFound:
         return "", 204  # idempotent
     except OSError as e:
