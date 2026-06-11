@@ -434,3 +434,69 @@ def test_post_accept_with_invalid_activate_type_returns_400(
     assert "activate" in json.loads(body)["error"]
 
 
+# ── Research-tab "Test strategy" routes (registered-strategy scoring) ──
+
+def test_handle_universes_route_returns_sorted_names(monkeypatch):
+    class _Cfg:
+        universes = {"smoke_5": [], "big_tech_15": []}
+    import tradelab.config as _config
+    monkeypatch.setattr(_config, "get_config", lambda: _Cfg())
+    monkeypatch.setattr(handlers, "_resolve_active_universe", lambda: "smoke_5")
+    body, status = handlers.handle_get_with_status("/tradelab/universes")
+    data = json.loads(body)
+    assert status == 200
+    assert data["error"] is None
+    assert data["data"]["universes"] == ["big_tech_15", "smoke_5"]
+    assert data["data"]["active"] == "smoke_5"
+
+
+def test_handle_score_unregistered_returns_404(monkeypatch):
+    import tradelab.registry as _registry
+    monkeypatch.setattr(_registry, "list_registered_strategies", lambda: {"foo": object()})
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score", json.dumps({"name": "nope"}).encode())
+    data = json.loads(body)
+    assert status == 404
+    assert "not registered" in (data["error"] or "")
+
+
+def test_handle_score_registered_starts_job(monkeypatch):
+    import tradelab.registry as _registry
+    monkeypatch.setattr(_registry, "list_registered_strategies",
+                        lambda: {"donchian_trend_strict": object()})
+    captured = {}
+    def fake_job(name, universe=None, offline=True):
+        captured["name"] = name
+        captured["universe"] = universe
+        captured["offline"] = offline
+        return {"robustness_started": True, "job_id": "jid",
+                "status": "queued", "canonical_name": name}
+    monkeypatch.setattr(handlers, "_start_robustness_job", fake_job)
+    class _Cfg:
+        universes = {"big_tech_15": []}
+    import tradelab.config as _config
+    monkeypatch.setattr(_config, "get_config", lambda: _Cfg())
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_strict", "universe": "big_tech_15"}).encode())
+    data = json.loads(body)
+    assert status == 200
+    assert data["error"] is None
+    assert data["data"]["robustness_started"] is True
+    assert captured == {"name": "donchian_trend_strict", "universe": "big_tech_15", "offline": True}
+
+
+def test_handle_score_unknown_universe_returns_400(monkeypatch):
+    import tradelab.registry as _registry
+    monkeypatch.setattr(_registry, "list_registered_strategies",
+                        lambda: {"donchian_trend_strict": object()})
+    class _Cfg:
+        universes = {"big_tech_15": []}
+    import tradelab.config as _config
+    monkeypatch.setattr(_config, "get_config", lambda: _Cfg())
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_strict", "universe": "no_such"}).encode())
+    data = json.loads(body)
+    assert status == 400
+    assert "unknown universe" in (data["error"] or "")

@@ -193,6 +193,44 @@ strategies:
     description: User-added strategy (via ns)
     status: registered
     params: {}
+  donchian_trend_loose:
+    module: tradelab.strategies.donchian_trend_loose
+    class_name: DonchianTrendLoose
+    description: Donchian breakout, long-only, light regime gate (Above50). Gate-tuned
+      template; loose variant for regime_spread comparison.
+    status: registered
+    params:
+      breakout_len: 55
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 2.0
+      trail_tighten_atr: 1.5
+  donchian_trend_strict:
+    module: tradelab.strategies.donchian_trend_strict
+    class_name: DonchianTrendStrict
+    description: Donchian breakout, long-only, strict regime gate (Trend_OK AND Above200).
+      Gate-tuned template; strict variant for regime_spread comparison.
+    status: registered
+    params:
+      breakout_len: 55
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 2.0
+      trail_tighten_atr: 1.5
+  rs_momentum_rotation:
+    module: tradelab.strategies.rs_momentum_rotation
+    class_name: RsMomentumRotation
+    description: Cross-sectional RS_21d momentum rotation, long-only, top-fraction
+      with trend + market regime filter. Gate-tuned best-fit archetype.
+    status: registered
+    params:
+      top_frac: 0.40
+      rs_min: 0.0
+      market_filter: 1.0
+      stop_atr_mult: 1.5
+      trail_tight_mult: 1.0
+      trail_wide_mult: 2.0
+      trail_tighten_atr: 1.5
 universes:
   magnificent_7:
   - SPY

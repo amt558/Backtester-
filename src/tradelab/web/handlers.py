@@ -74,7 +74,9 @@ def _resolve_active_universe() -> str:
     return ""
 
 
-def _build_tradelab_argv(strategy: str, command: str) -> Optional[list]:
+def _build_tradelab_argv(
+    strategy: str, command: str, universe: Optional[str] = None, offline: bool = False
+) -> Optional[list]:
     """Build the subprocess argv for a (strategy, command) pair.
 
     Returns None if the command is not in _ALLOWED_COMMANDS.
@@ -90,11 +92,13 @@ def _build_tradelab_argv(strategy: str, command: str) -> Optional[list]:
         return None
     cmd_argv = _ALLOWED_COMMANDS[command]
     universe_args: list = []
-    universe = _resolve_active_universe()
+    if not (universe and re.match(r"^[a-z0-9_]+$", universe)):
+        universe = _resolve_active_universe()
     if universe:
         universe_args = ["--universe", universe]
+    offline_args = ["--offline"] if offline else []
     # tradelab CLI is `python -m tradelab.cli <subcommand> <strategy> [flags]`
-    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:], *universe_args]
+    return [sys.executable, "-m", "tradelab.cli", cmd_argv[0], strategy, *cmd_argv[1:], *universe_args, *offline_args]
 
 
 # ─── Configurable roots (monkeypatched in tests) ─────────────────────
@@ -257,7 +261,7 @@ def _read_log_tail(log_path: Optional[str], max_lines: int = 100) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-def _start_robustness_job(name: str) -> dict:
+def _start_robustness_job(name: str, universe: Optional[str] = None, offline: bool = False) -> dict:
     """Submit `run <name> --robustness` through the JobManager with a per-run
     log file. Replaces the old fire-and-forget DEVNULL Popen so the run has a
     real id, queue position, state, and a non-DEVNULL log to surface failures.
@@ -267,7 +271,7 @@ def _start_robustness_job(name: str) -> dict:
     from tradelab.web import jobs as jobs_mod
 
     canonical = new_strategy._normalize_name(name)
-    argv = _build_tradelab_argv(canonical, "run --robustness")
+    argv = _build_tradelab_argv(canonical, "run --robustness", universe=universe, offline=offline)
     if argv is None:
         return {
             "robustness_started": False,
@@ -592,6 +596,15 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except Exception as e:
             return _err(f"registry error: {e}"), 200
         return _ok({"strategies": strategies}), 200
+
+    if path == "/tradelab/universes":
+        # Universe names for the Research-tab Test control's universe picker.
+        from tradelab.config import get_config
+        try:
+            names = sorted(get_config().universes.keys())
+        except Exception as e:
+            return _err(f"config error: {e}"), 200
+        return _ok({"universes": names, "active": _resolve_active_universe()}), 200
 
     if path == "/tradelab/strategies/discoverable":
         from ..web.new_strategy import discover_unregistered_strategies
@@ -1499,6 +1512,37 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err(f"import failed: {type(e).__name__}: {e}"), 500
         if res.get("error"):
             return _err(res["error"]), 409
+        return _ok(res), 200
+
+    if path == "/tradelab/strategies/score":
+        # Launch a robustness scoring run for an ALREADY-REGISTERED strategy
+        # (the Research-tab "Test" control). Reuses the same tracked job path
+        # as New Strategy / Save Variant; the result lands in the audit DB and
+        # surfaces in the Research Pipeline. Optional `universe` overrides the
+        # active one for this run only.
+        name = (payload.get("name") or "").strip()
+        universe = (payload.get("universe") or "").strip() or None
+        offline = bool(payload.get("offline", True))
+        if not name:
+            return _err("name is required"), 400
+        from tradelab.registry import list_registered_strategies
+        try:
+            registered = list_registered_strategies()
+        except Exception as e:
+            return _err(f"registry error: {e}"), 500
+        if name not in registered:
+            return _err(f"strategy not registered: {name!r}"), 404
+        if universe:
+            from tradelab.config import get_config
+            try:
+                known = set(get_config().universes.keys())
+            except Exception as e:
+                return _err(f"config error: {e}"), 500
+            if universe not in known:
+                return _err(f"unknown universe: {universe!r}"), 400
+        res = _start_robustness_job(name, universe=universe, offline=offline)
+        if not res.get("robustness_started"):
+            return _err(res.get("robustness_error") or "could not start scoring run"), 500
         return _ok(res), 200
 
     # Fallback to legacy POST dispatcher for everything else

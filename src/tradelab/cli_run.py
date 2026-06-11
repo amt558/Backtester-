@@ -34,6 +34,38 @@ from .reporting import (
 )
 
 
+def _load_symbols_offline(symbol_list: list) -> dict:
+    """Read RAW OHLCV for the requested symbols from the parquet cache ONLY (no
+    network). Slices each symbol to the configured [data_start, data_end] window
+    (the same window the offline gate path uses) and returns a dict shaped like
+    download_symbols() output, so the normal enrich/backtest path follows.
+    Uncached/empty symbols are skipped; an all-empty result is the caller's
+    Exit(1)."""
+    import pandas as pd
+    from .config import get_config
+    from .marketdata import list_cached_symbols
+    from .marketdata import cache as _cache
+
+    cfg = get_config()
+    bench = cfg.benchmarks.primary
+    cached = set(list_cached_symbols())
+    want = list(dict.fromkeys([bench, *symbol_list]))
+    start = pd.Timestamp(cfg.defaults.data_start)
+    end = pd.Timestamp(cfg.defaults.data_end)
+    raw: dict = {}
+    for sym in want:
+        if sym not in cached:
+            continue
+        df = _cache.read(sym, "1D")
+        if df is None or df.empty:
+            continue
+        mask = (df["Date"] >= start) & (df["Date"] <= end)
+        sliced = df.loc[mask].reset_index(drop=True)
+        if not sliced.empty:
+            raw[sym] = sliced
+    return raw
+
+
 def run(
     strategy: str = typer.Argument(..., help="Strategy name (from registry)"),
     symbols: str = typer.Option("", help="Comma-separated tickers, or @file.txt"),
@@ -87,6 +119,12 @@ def run(
     progress_log: str = typer.Option(
         "", "--progress-log",
         help="Path to JSONL file for stage progress events (used by the web Job Tracker)."
+    ),
+    offline: bool = typer.Option(
+        False, "--offline/--no-offline",
+        help="Load OHLCV from the .cache parquet ONLY (no network download). "
+             "Use when scoring a registered strategy against already-cached data "
+             "(mirrors the gate's offline path). Empty cache for the symbols exits 1.",
     ),
 ) -> None:
     """
@@ -147,23 +185,49 @@ def run(
         if not end:
             end = datetime.now().strftime("%Y-%m-%d")
 
+        if offline:
+            # The offline loader slices the cache to the CONFIG window (same
+            # as the gate's offline path), so adopt that window as the run
+            # window — otherwise the PIT check (and WF/hold-out math) would
+            # validate against a --start the loaded data cannot satisfy.
+            from .config import get_config
+            _defaults = get_config().defaults
+            if (start, end) != (_defaults.data_start, _defaults.data_end):
+                typer.echo(
+                    f"Offline: cache is sliced to the config window "
+                    f"{_defaults.data_start} -> {_defaults.data_end}; "
+                    f"adopting it as the run window (--start/--end ignored)."
+                )
+            start, end = _defaults.data_start, _defaults.data_end
+
         typer.echo(f"Symbols: {symbol_list}")
         typer.echo(f"Window:  {start} -> {end}")
 
-        # --- download ---
-        typer.echo("Downloading / reading cache ...")
-        try:
-            data = download_symbols(
-                symbol_list, start=start, end=end,
-                allow_yfinance_fallback=allow_yfinance_fallback,
-            )
-        except MissingTwelveDataKey as e:
-            typer.echo(str(e), err=True)
-            raise typer.Exit(4)
+        # --- load data: offline (cache-only) or download ---
+        if offline:
+            typer.echo("Loading from cache (offline) ...")
+            data = _load_symbols_offline(symbol_list)
+            if not data:
+                typer.echo(
+                    "No cached data for the requested symbols under .cache/ohlcv/1D/ "
+                    "- populate the cache first (run once online, or click Refresh Data).",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        else:
+            typer.echo("Downloading / reading cache ...")
+            try:
+                data = download_symbols(
+                    symbol_list, start=start, end=end,
+                    allow_yfinance_fallback=allow_yfinance_fallback,
+                )
+            except MissingTwelveDataKey as e:
+                typer.echo(str(e), err=True)
+                raise typer.Exit(4)
 
-        if not data:
-            typer.echo("No data retrieved for any symbol.", err=True)
-            raise typer.Exit(1)
+            if not data:
+                typer.echo("No data retrieved for any symbol.", err=True)
+                raise typer.Exit(1)
 
         # --- PIT inception check ---
         try:

@@ -72,7 +72,7 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
             allow_yfinance_fallback=False,
             tearsheet=False,
             open_dashboard=False,
-            universe="",
+            universe="", offline=False,
         )
 
     assert dl_mock.called
@@ -83,6 +83,65 @@ def test_cli_run_orchestrates_download_backtest_report(monkeypatch, tmp_path):
     assert not launch_mock.called   # --no-open-dashboard
 
 
+def test_cli_run_offline_adopts_config_window_for_pit(monkeypatch, tmp_path):
+    """--offline slices the cache to the CONFIG window (same as the gate's
+    offline path), so the run must adopt that window as its own: the default
+    --start (2020-01-01) must NOT trip the PIT check against cache that
+    legitimately starts at config data_start (2024-04-08)."""
+    from tradelab import cli_run
+
+    monkeypatch.chdir(tmp_path)
+
+    offline_data = {"AAPL": pd.DataFrame({
+        "Date": pd.date_range("2024-04-08", periods=60, freq="B"),
+        "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1000,
+    })}
+
+    cfg = MagicMock()
+    cfg.defaults.data_start = "2024-04-08"
+    cfg.defaults.data_end = "2026-04-14"
+
+    with patch("tradelab.config.get_config", return_value=cfg), \
+         patch("tradelab.cli_run._load_symbols_offline", return_value=offline_data) as off_mock, \
+         patch("tradelab.cli_run.download_symbols") as dl_mock, \
+         patch("tradelab.cli_run.run_backtest", return_value=_minimal_bt()) as bt_mock, \
+         patch("tradelab.cli_run.instantiate_strategy", return_value=MagicMock(name="strat")), \
+         patch("tradelab.cli_run.generate_executive_report") as rep_mock, \
+         patch("tradelab.cli_run.build_dashboard") as dash_mock, \
+         patch("tradelab.cli_run.typer.launch"):
+        rep_mock.return_value = tmp_path / "r.md"
+        dash_mock.return_value = tmp_path / "d.html"
+
+        cli_run.run(
+            strategy="s2_pocket_pivot",
+            symbols="AAPL",
+            start="2020-01-01",
+            end="",
+            offline=True,
+            optimize=False,
+            walkforward=False,
+            n_trials=100,
+            fitness="pf_sqrt_trades_dd",
+            pruner="none",
+            sensitivity_pct=20.0,
+            cost_sweep=False,
+            robustness=False,
+            full=False,
+            mc_simulations=500,
+            noise_seeds=50,
+            noise_sigma_bp=5.0,
+            loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
+            tearsheet=False,
+            open_dashboard=False,
+            universe="",
+        )
+
+    assert off_mock.called
+    assert not dl_mock.called   # offline guarantee: never the download path
+    assert bt_mock.called       # the PIT check must not have killed the run
+
+
 def test_cli_run_exits_on_no_symbols(tmp_path, monkeypatch):
     from tradelab import cli_run
     monkeypatch.chdir(tmp_path)
@@ -90,7 +149,7 @@ def test_cli_run_exits_on_no_symbols(tmp_path, monkeypatch):
         cli_run.run(
             strategy="foo", symbols="", start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
-            universe="", cost_sweep=False, robustness=False, full=False,
+            universe="", offline=False, cost_sweep=False, robustness=False, full=False,
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
@@ -112,7 +171,7 @@ def test_cli_run_resolves_symbol_file(tmp_path, monkeypatch):
             strategy="foo", symbols=f"@{syms_file}",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
-            universe="", cost_sweep=False, robustness=False, full=False,
+            universe="", offline=False, cost_sweep=False, robustness=False, full=False,
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
@@ -130,7 +189,7 @@ def test_cli_run_missing_symbol_file_exits(tmp_path, monkeypatch):
             strategy="foo", symbols="@nonexistent.txt",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
-            universe="", cost_sweep=False, robustness=False, full=False,
+            universe="", offline=False, cost_sweep=False, robustness=False, full=False,
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
@@ -150,7 +209,7 @@ def test_cli_run_exits_on_unknown_strategy(tmp_path, monkeypatch):
             strategy="nonexistent", symbols="AAPL",
             start="2024-01-01", end="2024-12-31",
             optimize=False, walkforward=False, n_trials=100, open_dashboard=False,
-            universe="", cost_sweep=False, robustness=False, full=False,
+            universe="", offline=False, cost_sweep=False, robustness=False, full=False,
             fitness="pf_sqrt_trades_dd", pruner="none", sensitivity_pct=20.0,
             mc_simulations=500,
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,

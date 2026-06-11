@@ -87,6 +87,9 @@ REQUIRED_JS_FUNCTIONS = [
     "subscribeBrowserToasts",
     "fetchSilenceStatus",
     "refreshSilentPills",
+    "researchLoadUniverses",
+    "researchRunTest",
+    "researchTrackTest",
 ]
 
 
@@ -1691,3 +1694,13 @@ def test_wp5_advisory_copy_present_in_accept_flow(html: str) -> None:
     assert idx > 0
     body = html[idx:idx + 3500]
     assert "reviewable" in body.lower(), "ADVISORY reviewable framing copy missing"
+
+
+def test_research_test_controls_present(html: str) -> None:
+    # Research-tab "Test strategy" control + universe picker, wired to the
+    # registered-strategy scoring route. Re-establishes the in-UI scoring
+    # removed in the 2026-05-31 import refactor.
+    assert 'id="researchTestBtn"' in html
+    assert 'id="researchTestUniverse"' in html
+    assert "/tradelab/strategies/score" in html
+    assert "/tradelab/universes" in html
