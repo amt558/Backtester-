@@ -465,7 +465,7 @@ def test_handle_score_registered_starts_job(monkeypatch):
     monkeypatch.setattr(_registry, "list_registered_strategies",
                         lambda: {"donchian_trend_strict": object()})
     captured = {}
-    def fake_job(name, universe=None, offline=True):
+    def fake_job(name, universe=None, offline=True, symbols=None):
         captured["name"] = name
         captured["universe"] = universe
         captured["offline"] = offline
@@ -500,3 +500,109 @@ def test_handle_score_unknown_universe_returns_400(monkeypatch):
     data = json.loads(body)
     assert status == 400
     assert "unknown universe" in (data["error"] or "")
+
+
+# ─── Custom-symbols scoring + cache-aware validation (2026-06-11) ────
+
+
+def _register_loose(monkeypatch):
+    import tradelab.registry as _registry
+    monkeypatch.setattr(_registry, "list_registered_strategies",
+                        lambda: {"donchian_trend_loose": object()})
+
+
+def test_handle_score_accepts_symbols_list(monkeypatch):
+    _register_loose(monkeypatch)
+    captured = {}
+    def fake_job(name, universe=None, offline=True, symbols=None):
+        captured.update(name=name, universe=universe, offline=offline, symbols=symbols)
+        return {"robustness_started": True, "job_id": "jid",
+                "status": "queued", "canonical_name": name}
+    monkeypatch.setattr(handlers, "_start_robustness_job", fake_job)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_loose",
+                    "symbols": ["aapl", " MSFT ", "AAPL", "BRK.B"]}).encode())
+    data = json.loads(body)
+    assert status == 200
+    assert data["error"] is None
+    # normalized: uppercased, stripped, deduped, order preserved
+    assert captured["symbols"] == ["AAPL", "MSFT", "BRK.B"]
+    assert captured["universe"] is None
+
+
+def test_handle_score_rejects_malformed_symbols(monkeypatch):
+    _register_loose(monkeypatch)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_loose",
+                    "symbols": ["AAPL", "BAD;RM"]}).encode())
+    assert status == 400
+    assert "malformed" in (json.loads(body)["error"] or "")
+
+
+def test_handle_score_rejects_universe_plus_symbols(monkeypatch):
+    _register_loose(monkeypatch)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_loose",
+                    "universe": "big_tech_15", "symbols": ["AAPL"]}).encode())
+    assert status == 400
+    assert "not both" in (json.loads(body)["error"] or "")
+
+
+def test_handle_score_rejects_too_many_symbols(monkeypatch):
+    _register_loose(monkeypatch)
+    syms = [f"S{i:03d}" for i in range(51)]
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/score",
+        json.dumps({"name": "donchian_trend_loose", "symbols": syms}).encode())
+    assert status == 400
+    assert "50" in (json.loads(body)["error"] or "")
+
+
+def test_build_argv_with_symbols_emits_symbols_not_universe():
+    argv = handlers._build_tradelab_argv(
+        "foo", "run --robustness", symbols=["AAPL", "MSFT"], offline=True)
+    assert argv is not None
+    assert argv[argv.index("--symbols") + 1] == "AAPL,MSFT"
+    assert "--universe" not in argv
+    assert "--offline" in argv
+
+
+def test_build_argv_rejects_bad_symbol():
+    argv = handlers._build_tradelab_argv(
+        "foo", "run --robustness", symbols=["AAPL", "x; rm"], offline=True)
+    assert argv is None
+
+
+def test_symbols_validate_classifies_cached_uncached_malformed(monkeypatch, tmp_path):
+    cache = tmp_path / "1D"
+    cache.mkdir(parents=True)
+    (cache / "AAPL.parquet").write_bytes(b"x")
+    (cache / "MSFT.parquet").write_bytes(b"x")
+    monkeypatch.setattr(handlers, "_cache_root", lambda: cache)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/symbols/validate",
+        json.dumps({"symbols": ["aapl", "MSFT", "PLTR", "bad!"]}).encode())
+    data = json.loads(body)
+    assert status == 200
+    d = data["data"]
+    assert d["cached"] == ["AAPL", "MSFT"]
+    assert d["uncached"] == ["PLTR"]
+    assert d["malformed"] == ["BAD!"]
+    assert d["ok"] is False
+
+
+def test_symbols_validate_all_cached_is_ok(monkeypatch, tmp_path):
+    cache = tmp_path / "1D"
+    cache.mkdir(parents=True)
+    for s in ("AAPL", "MSFT"):
+        (cache / f"{s}.parquet").write_bytes(b"x")
+    monkeypatch.setattr(handlers, "_cache_root", lambda: cache)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/symbols/validate",
+        json.dumps({"symbols": "AAPL, MSFT"}).encode())
+    d = json.loads(body)["data"]
+    assert d["ok"] is True
+    assert d["uncached"] == [] and d["malformed"] == []

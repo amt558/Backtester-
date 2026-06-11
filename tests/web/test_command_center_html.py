@@ -90,6 +90,8 @@ REQUIRED_JS_FUNCTIONS = [
     "researchLoadUniverses",
     "researchRunTest",
     "researchTrackTest",
+    "researchValidateSymbols",
+    "universeCell",
 ]
 
 
@@ -1722,3 +1724,26 @@ def test_research_test_controls_present(html: str) -> None:
     assert 'id="researchTestUniverse"' in html
     assert "/tradelab/strategies/score" in html
     assert "/tradelab/universes" in html
+
+
+def test_research_custom_symbols_controls_present(html: str) -> None:
+    """Custom-symbols box (2026-06-11): a 'Custom symbols…' choice in the
+    universe picker reveals a text input that is validated cache-aware via
+    /tradelab/symbols/validate — green only when every symbol is well-formed
+    AND cached (an --offline run will genuinely use all of them)."""
+    assert 'id="researchTestSymbols"' in html
+    assert "/tradelab/symbols/validate" in html
+    assert "__custom__" in html
+    # the three validation states must exist as CSS classes
+    for cls in ("sym-ok", "sym-warn", "sym-bad"):
+        assert cls in html, f"validation state class {cls!r} missing"
+
+
+def test_pipeline_has_universe_column(html: str) -> None:
+    """The Runs table renders what each run was scored against (named
+    universe, or 'N syms' with the full list as tooltip for custom runs)."""
+    assert "<th>Universe</th>" in html
+    assert 'colspan="15"' in html
+    assert 'colspan="14"' not in html, (
+        "pipeline colspans must be bumped to 15 to match the new Universe column"
+    )

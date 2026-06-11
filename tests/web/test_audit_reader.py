@@ -190,3 +190,13 @@ def test_baselines_skips_archived_runs(fake_audit_db: Path, fake_run_folder: Pat
 
     baselines = audit_reader.baselines_for_all_strategies(db_path=fake_audit_db)
     assert baselines["s4_inside_day_breakout"]["run_id"] == "run-002"
+
+
+def test_list_runs_dict_includes_universe(tmp_path):
+    """The web reader's SELECT * must surface the universe column so the
+    pipeline's Universe column can render it (None/missing -> FE shows em-dash)."""
+    from tradelab.audit import record_run
+    db = tmp_path / "audit.db"
+    record_run("strat_u", universe="AAPL,MSFT", db_path=db)
+    rows = audit_reader.list_runs(db_path=db)
+    assert rows and rows[0]["universe"] == "AAPL,MSFT"

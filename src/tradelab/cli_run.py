@@ -474,6 +474,7 @@ def run(
                 config_hash=hash_config(bt.params),
                 report_card_markdown=report_path.read_text(encoding="utf-8"),
                 report_card_html_path=str(dashboard_path),
+                universe=universe if universe else ",".join(symbol_list),
             )
             typer.echo(f"Audit:     run_id={run_id[:8]}")
         except Exception as e:

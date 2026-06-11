@@ -39,6 +39,9 @@ _NEW_COLUMNS = (
     ("thresholds_json", "TEXT"),
     ("accepted_bool", "INTEGER"),
     ("reject_reason", "TEXT"),
+    # What the run was scored against: a named universe ("big_tech_15") or
+    # the resolved --symbols comma list ("AAPL,MSFT,..."). NULL on legacy rows.
+    ("universe", "TEXT"),
 )
 
 DEFAULT_DB_PATH = Path("data") / "tradelab_history.db"
@@ -62,6 +65,7 @@ class HistoryRow:
     thresholds_json: Optional[str] = None
     accepted_bool: Optional[int] = None
     reject_reason: Optional[str] = None
+    universe: Optional[str] = None
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -119,6 +123,7 @@ def record_run(
     thresholds: Optional[dict] = None,
     accepted: Optional[bool] = None,
     reject_reason: Optional[str] = None,
+    universe: Optional[str] = None,
     db_path: Path = DEFAULT_DB_PATH,
 ) -> str:
     """
@@ -152,8 +157,9 @@ def record_run(
                 input_data_hash, config_hash,
                 verdict, dsr_probability,
                 report_card_markdown, report_card_html_path,
-                signal_values_json, thresholds_json, accepted_bool, reject_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                signal_values_json, thresholds_json, accepted_bool, reject_reason,
+                universe
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id, ts, strategy_name, strategy_version,
@@ -166,6 +172,7 @@ def record_run(
                 json.dumps(thresholds) if thresholds is not None else None,
                 accepted_bool,
                 reject_reason,
+                universe,
             ),
         )
         conn.commit()
@@ -192,6 +199,7 @@ def _row_to_dataclass(row) -> HistoryRow:
         thresholds_json=row[13],
         accepted_bool=row[14],
         reject_reason=row[15],
+        universe=row[16] if len(row) > 16 else None,
     )
 
 

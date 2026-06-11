@@ -215,3 +215,50 @@ def test_cli_run_exits_on_unknown_strategy(tmp_path, monkeypatch):
             noise_seeds=50, noise_sigma_bp=5.0, loso_trials_per_fold=0,
             allow_yfinance_fallback=False, tearsheet=False,
         )
+
+
+def test_cli_run_records_universe_label(monkeypatch, tmp_path):
+    """The audit row must record what the run was scored against: the named
+    universe when --universe was used, else the resolved --symbols comma list
+    (feeds the pipeline's Universe column)."""
+    from tradelab import cli_run
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("tradelab.cli_run.download_symbols", return_value=_mock_data()), \
+         patch("tradelab.cli_run.run_backtest", return_value=_minimal_bt()), \
+         patch("tradelab.cli_run.instantiate_strategy", return_value=MagicMock(name="strat")), \
+         patch("tradelab.cli_run.generate_executive_report") as rep_mock, \
+         patch("tradelab.cli_run.build_dashboard") as dash_mock, \
+         patch("tradelab.cli_run.record_run", return_value="rid-1") as rec_mock, \
+         patch("tradelab.cli_run.typer.launch"):
+        rep_mock.return_value = tmp_path / "r.md"
+        dash_mock.return_value = tmp_path / "d.html"
+        (tmp_path / "r.md").write_text("# report", encoding="utf-8")
+
+        cli_run.run(
+            strategy="s2_pocket_pivot",
+            symbols="AAPL,MSFT",
+            start="2024-01-01",
+            end="2024-03-31",
+            optimize=False,
+            walkforward=False,
+            n_trials=100,
+            fitness="pf_sqrt_trades_dd",
+            pruner="none",
+            sensitivity_pct=20.0,
+            cost_sweep=False,
+            robustness=False,
+            full=False,
+            mc_simulations=500,
+            noise_seeds=50,
+            noise_sigma_bp=5.0,
+            loso_trials_per_fold=0,
+            allow_yfinance_fallback=False,
+            tearsheet=False,
+            open_dashboard=False,
+            universe="", offline=False,
+        )
+
+    assert rec_mock.called
+    assert rec_mock.call_args.kwargs.get("universe") == "AAPL,MSFT"

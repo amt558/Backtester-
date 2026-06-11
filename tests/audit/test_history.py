@@ -97,3 +97,17 @@ def test_record_run_is_append_only_no_update_path(db):
     r2 = get_run(id_2, db_path=db)
     assert r1.verdict == "ROBUST"
     assert r2.verdict == "FRAGILE"
+
+
+# ─── universe column (custom-symbols slice, 2026-06-11) ─────────────
+
+
+def test_record_run_stores_universe(db):
+    run_id = record_run("strat_x", universe="big_tech_15", db_path=db)
+    row = get_run(run_id, db_path=db)
+    assert row.universe == "big_tech_15"
+
+
+def test_record_run_universe_defaults_to_none(db):
+    run_id = record_run("strat_x", db_path=db)
+    assert get_run(run_id, db_path=db).universe is None
