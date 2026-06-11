@@ -1696,6 +1696,24 @@ def test_wp5_advisory_copy_present_in_accept_flow(html: str) -> None:
     assert "reviewable" in body.lower(), "ADVISORY reviewable framing copy missing"
 
 
+def test_accept_flow_has_no_non_robust_override(html: str) -> None:
+    """2026-06-11 decision: the accept-anyway override is removed from the UI.
+    Only CLEAR-route runs can become cards — a 422 promotion-gate response
+    renders the rejection and stops. No confirmed retry, no confirm_non_robust
+    anywhere in the accept flow (the backend override stays, API-only)."""
+    idx = html.find("async function acceptRunAsCard")
+    assert idx > 0, "acceptRunAsCard not found"
+    body = html[idx:idx + 4500]
+    assert "retryPayload" not in body, (
+        "acceptRunAsCard must not re-post after a 422 promotion gate — the "
+        "accept-anyway override was removed from the UI on 2026-06-11"
+    )
+    assert "confirm_non_robust" not in body, (
+        "the confirm_non_robust override knob must not appear in the UI "
+        "accept flow — accepting non-CLEAR runs is API-only"
+    )
+
+
 def test_research_test_controls_present(html: str) -> None:
     # Research-tab "Test strategy" control + universe picker, wired to the
     # registered-strategy scoring route. Re-establishes the in-UI scoring
