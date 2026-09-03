@@ -28,6 +28,18 @@ class Strategy(ABC):
     #: If True, data layer will load SPY and pass spy_close through generate_signals
     requires_benchmark: bool = False
 
+    #: Tickers this strategy trades, declared in the strategy itself (S2, 2026-09-02),
+    #: the way a Pine strategy is bound to its chart symbol. When non-empty and no
+    #: --universe / --symbols is given, `tradelab run` and the dashboard's smoke and
+    #: robustness runs use exactly these. Empty = pick a universe at run time.
+    symbols: list[str] = []
+
+    #: Set to True on a class that exists to be subclassed (SimpleStrategy, ...).
+    #: Discovery skips classes that carry this marker in their OWN __dict__, so a
+    #: base class is never listed as an importable strategy (S0 finding F7).
+    #: Subclasses do not inherit the exclusion.
+    _tradelab_abstract: bool = False
+
     #: Default parameters. Subclasses override with their actual defaults.
     default_params: dict[str, Any] = {}
 

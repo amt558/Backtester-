@@ -34,6 +34,18 @@ from .reporting import (
 )
 
 
+def _declared_symbols_for(strategy_name: str) -> tuple[list[str], Optional[str]]:
+    """(tickers declared on the registered strategy class, load error). A load
+    error is returned, not swallowed, so the user sees the real reason instead
+    of "No symbols provided"."""
+    try:
+        from .registry import load_strategy_class
+        from .web.new_strategy import declared_symbols
+        return declared_symbols(load_strategy_class(strategy_name)), None
+    except Exception as e:  # noqa: BLE001
+        return [], f"{type(e).__name__}: {e}"
+
+
 def _load_symbols_offline(symbol_list: list) -> dict:
     """Read RAW OHLCV for the requested symbols from the parquet cache ONLY (no
     network). Slices each symbol to the configured [data_start, data_end] window
@@ -147,6 +159,7 @@ def run(
 
         # --- resolve universe ---
         symbol_list: list[str] = []
+        symbols_declared = False   # S2: True when the universe came from the class itself
         if universe:
             # Named universe from tradelab.yaml takes precedence
             from .config import get_config
@@ -176,11 +189,19 @@ def run(
         elif symbols:
             symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
         else:
-            typer.echo(
-                "No symbols provided. Use --symbols, --universe, or --symbols @file.txt.",
-                err=True,
-            )
-            raise typer.Exit(2)
+            # S2: a strategy may declare its own tickers (`symbols = [...]` on the
+            # class). With no --universe/--symbols, those are the run's universe.
+            symbol_list, load_err = _declared_symbols_for(strategy)
+            symbols_declared = bool(symbol_list)
+            if not symbol_list:
+                if load_err:
+                    typer.echo(f"Cannot load strategy '{strategy}': {load_err}", err=True)
+                typer.echo(
+                    "No symbols provided. Use --symbols, --universe, --symbols @file.txt, "
+                    "or declare `symbols = [...]` on the strategy class.",
+                    err=True,
+                )
+                raise typer.Exit(2)
 
         if not end:
             end = datetime.now().strftime("%Y-%m-%d")
@@ -474,7 +495,10 @@ def run(
                 config_hash=hash_config(bt.params),
                 report_card_markdown=report_path.read_text(encoding="utf-8"),
                 report_card_html_path=str(dashboard_path),
-                universe=universe if universe else ",".join(symbol_list),
+                # S2: a strategy-declared universe is recorded as such so the
+                # pipeline shows the author chose the tickers, not the operator.
+                universe=(universe if universe
+                          else ("declared:" if symbols_declared else "") + ",".join(symbol_list)),
             )
             typer.echo(f"Audit:     run_id={run_id[:8]}")
         except Exception as e:

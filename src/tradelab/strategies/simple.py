@@ -33,6 +33,8 @@ from your default_params). Override exit_signal() to add custom exits.
 """
 from __future__ import annotations
 
+import inspect
+import warnings
 from typing import Any, Optional
 
 import numpy as np
@@ -54,6 +56,8 @@ class SimpleStrategy(Strategy):
 
     timeframe: str = "1D"
     requires_benchmark: bool = True
+    # Base class by convention: never offer it in discovery (S0 finding F7).
+    _tradelab_abstract: bool = True
 
     # Subclasses MUST set these
     default_params: dict[str, Any] = {
@@ -87,6 +91,24 @@ class SimpleStrategy(Strategy):
 
     # ---------- Engine contract — usually no need to override ----------
 
+    @staticmethod
+    def _call_hook(fn):
+        """Adapt a subclass hook to the (row, prev, params, prev2) call shape.
+        Hooks declared with three positional parameters are called without
+        prev2; hooks that take four (or *args) receive it."""
+        try:
+            params = list(inspect.signature(fn).parameters.values())
+        except (TypeError, ValueError):
+            return fn
+        positional = [q for q in params if q.kind in (
+            inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+        takes_prev2 = len(positional) >= 4 or any(
+            q.kind == inspect.Parameter.VAR_POSITIONAL for q in params
+        )
+        if takes_prev2:
+            return fn
+        return lambda row, prev, p, prev2: fn(row, prev, p)
+
     def generate_signals(
         self,
         data: dict[str, pd.DataFrame],
@@ -110,9 +132,18 @@ class SimpleStrategy(Strategy):
             close_arr = df["Close"].values
             atr_valid = ~np.isnan(atr_arr) & (atr_arr > 0)
 
-            # Per-bar evaluation with 2-bar lookback context.
+            # Per-bar evaluation with 2-bar lookback context. Subclasses may
+            # declare entry_signal(row, prev, params) — the documented 3-arg
+            # form the template uses — or the 4-arg form with prev2. Before
+            # S2 the 4-arg call raised TypeError on 3-arg overrides and the
+            # except below swallowed it, so every template strategy silently
+            # produced zero trades.
+            entry_fn = self._call_hook(self.entry_signal)
+            score_fn = self._call_hook(self.entry_score)
             prev: Optional[pd.Series] = None
             prev2: Optional[pd.Series] = None
+            first_error: Optional[BaseException] = None
+            error_count = 0
             for i in range(n):
                 if not atr_valid[i]:
                     prev2 = prev
@@ -120,15 +151,24 @@ class SimpleStrategy(Strategy):
                     continue
                 row = df.iloc[i]
                 try:
-                    if self.entry_signal(row, prev, p, prev2):
+                    if entry_fn(row, prev, p, prev2):
                         buy[i] = True
-                        score[i] = float(self.entry_score(row, prev, p, prev2))
-                except Exception:
-                    # A subclass bug should never crash the whole backtest;
-                    # treat as no-signal and continue.
-                    pass
+                        score[i] = float(score_fn(row, prev, p, prev2))
+                except Exception as e:  # noqa: BLE001 — a subclass bug must not crash the run
+                    error_count += 1
+                    if first_error is None:
+                        first_error = e
                 prev2 = prev
                 prev = row
+            if first_error is not None:
+                # Say so once per symbol instead of hiding it: a strategy whose
+                # entry rule raises on every bar is a bug, not a quiet strategy.
+                warnings.warn(
+                    f"{type(self).__name__}.entry_signal/entry_score raised on "
+                    f"{error_count} of {n} bars for {sym}; first error: "
+                    f"{type(first_error).__name__}: {first_error}",
+                    RuntimeWarning, stacklevel=2,
+                )
 
             df["buy_signal"] = buy
             df["entry_stop"] = close_arr - stop_mult * np.where(atr_valid, atr_arr, 0.0)

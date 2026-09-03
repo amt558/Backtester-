@@ -92,6 +92,9 @@ REQUIRED_JS_FUNCTIONS = [
     "researchTrackTest",
     "researchValidateSymbols",
     "universeCell",
+    # S2 (2026-09-02): the upload fast path
+    "nsLoadFiles",
+    "nsFillFromTemplate",
 ]
 
 
@@ -118,6 +121,11 @@ REQUIRED_DOM_IDS = [
     "researchLiveCards",
     "pipelineCompareBtn",
     "modal-3f-confirm",  # Run modal Start button — preflight block targets this
+    # S2 (2026-09-02): upload drop-zone, file picker, template button
+    "nsDropZone",
+    "nsFileInput",
+    "nsTemplateBtn",
+    "nsFileStatus",
 ]
 
 
@@ -160,6 +168,16 @@ FORBIDDEN_IDENTIFIERS = [
     # Removed because it was a display:none placeholder with no handler wired.
     # The per-row `.rowSelectCheckbox` elements remain and drive Compare.
     "pipelineSelectAll",
+    # S1 (2026-09-02): the hardcoded six-strategy roster and the Overview
+    # placeholder strip were retired. The roster is derived from /tradelab/cards
+    # at runtime (STRATEGY_ROSTER / loadStrategyRoster). Reintroducing any of
+    # these means a new strategy needs an HTML edit again — don't.
+    "const STRATEGIES",
+    "LIVE_STRATS",
+    "LIVE_TO_TRADELAB",
+    "renderStrategyCards",
+    "strategyGrid",
+    "dismissedPlaceholders",
 ]
 
 
@@ -1747,3 +1765,40 @@ def test_pipeline_has_universe_column(html: str) -> None:
     assert 'colspan="14"' not in html, (
         "pipeline colspans must be bumped to 15 to match the new Universe column"
     )
+
+# ── S1: registry-derived roster (2026-09-02) ───────────────────────
+def test_s1_roster_is_registry_derived(html: str) -> None:
+    """The Overview/Calendar/divergence roster must come from the card registry,
+    not a literal. One definition each; the calendar filter is populated from it."""
+    import re as _re
+    assert len(_re.findall(r"\blet STRATEGY_ROSTER = \[\];", html)) == 1
+    assert len(_re.findall(r"\basync function loadStrategyRoster\(", html)) == 1
+    assert len(_re.findall(r"\bfunction findStrategy\(", html)) == 1
+    assert "fetch('/tradelab/cards')" in html
+    assert len(_re.findall(r"\bfunction _populateCalendarFilter\(", html)) == 1
+
+
+def test_s1_calendar_filter_has_no_hardcoded_strategies(html: str) -> None:
+    """Only the 'All Strategies' option is authored in markup; the rest are runtime."""
+    import re as _re
+    m = _re.search(r'<select class="calendar-filter" id="calendarFilter">(.*?)</select>', html, _re.S)
+    assert m, "calendarFilter select missing"
+    options = _re.findall(r"<option", m.group(1))
+    assert len(options) == 1, f"expected 1 authored option, found {len(options)}"
+
+# ── S2: upload fast path (2026-09-02) ───────────────────────────────
+def test_s2_research_tab_accepts_file_drops(html: str) -> None:
+    """Dropping a .py anywhere on the Research tab must open the upload modal
+    and load the file — the drop listener is bound on #research, not only on
+    the drop-zone inside the modal."""
+    assert "researchTab.addEventListener('drop'" in html
+    assert "nsLoadFiles(e.dataTransfer.files, {autoTest: true})" in html
+
+
+def test_s2_upload_refuses_non_python_files_with_a_reason(html: str) -> None:
+    assert "isn't a .py file" in html
+    assert "not a tradelab strategy" in html
+
+
+def test_s2_template_button_calls_template_route(html: str) -> None:
+    assert "/tradelab/new-strategy/template?name=" in html

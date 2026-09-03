@@ -134,6 +134,26 @@ def validate_and_stage(
             "traceback": traceback.format_exc(),
         }
 
+    # S2: a smoke that never trades is not a pass. Err toward FRAGILE — the
+    # author fixes entry_signal() or the symbols before anything is registered.
+    n_trades = metrics.get("total_trades", metrics.get("trades", None))
+    try:
+        n_trades = int(n_trades) if n_trades is not None else None
+    except (TypeError, ValueError):
+        n_trades = None
+    if not n_trades:   # 0, None or unreadable — fail closed (Specialist review)
+        staging_file.unlink(missing_ok=True)
+        own = declared_symbols(StrategyClass)
+        where = f"declared symbols {own}" if own else "the smoke_5 universe"
+        detail = ("the entry rule never fired" if n_trades == 0
+                  else "the engine reported no trade count")
+        return {
+            "error": f"smoke produced 0 trades on {where} — {detail}. "
+                     f"Fix entry_signal() or the symbols, then Test again.",
+            "stage": "smoke",
+            "metrics": metrics,
+        }
+
     return {
         "error": None,
         "stage": "complete",
@@ -181,6 +201,7 @@ def register_strategy(
     if yaml_path is None:
         yaml_path = Path("tradelab.yaml")
     _append_strategy_to_yaml(yaml_path, name, class_name)
+    _reload_registry()
 
     return {"error": None, "final_path": str(dest_file)}
 
@@ -236,16 +257,35 @@ def _run_smoke_backtest(strategy) -> tuple[dict, dict]:
     from tradelab.config import get_config
 
     cfg = get_config()
-    smoke_universe = cfg.universes.get("smoke_5", ["SPY", "NVDA", "MSFT", "AAPL", "META"])
+    # S2: a strategy that declares its own tickers is smoked on exactly those;
+    # otherwise the smoke_5 universe as before.
+    own = declared_symbols(type(strategy))
+    if own:
+        smoke_universe = own
+        universe_label = "declared symbols"
+    else:
+        smoke_universe = cfg.universes.get("smoke_5", ["SPY", "NVDA", "MSFT", "AAPL", "META"])
+        universe_label = "smoke_5"
     ticker_data = {}
+    missing: list[str] = []
     for sym in smoke_universe:
         df = cache.read(sym, strategy.timeframe)
         if df is not None and not df.empty:
             ticker_data[sym] = df
+        else:
+            missing.append(sym)
     if not ticker_data:
         raise RuntimeError(
-            f"no smoke_5 data in cache for {smoke_universe} "
+            f"no {universe_label} data in cache for {smoke_universe} "
             f"at timeframe {strategy.timeframe} — refresh data first"
+        )
+    if own and missing:
+        # A declared universe is smoked whole or not at all — a strategy that
+        # names 10 tickers must not quietly pass on the 1 that happens to be
+        # cached (Specialist review).
+        raise RuntimeError(
+            f"declared symbols not in cache: {missing} — refresh data or remove "
+            f"them from `symbols` before testing"
         )
     # Enrich exactly like the full run (cli_run) does. Raw parquet has no ATR,
     # and the engine skips every entry/exit on a NaN-ATR bar, so an un-enriched
@@ -313,15 +353,46 @@ def discover_unregistered_strategies(src_root: Optional[Path] = None) -> list[di
             continue
         for v in vars(mod).values():
             if (isinstance(v, type) and issubclass(v, Strategy)
-                    and v is not Strategy and v.__module__ == module_path):
+                    and v is not Strategy and v.__module__ == module_path
+                    and not _is_abstract_base(v)):
                 out.append({
                     "module": module_path,
                     "class_name": v.__name__,
                     "suggested_name": py.stem,
                     "timeframe": getattr(v, "timeframe", "1D"),
                     "requires_benchmark": bool(getattr(v, "requires_benchmark", False)),
+                    "symbols": declared_symbols(v),
                 })
     return out
+
+
+def _is_abstract_base(cls: type) -> bool:
+    """A class that carries `_tradelab_abstract = True` in its OWN __dict__ is a
+    base meant for subclassing (SimpleStrategy) and must never be offered as an
+    importable strategy (S0 finding F7). Subclasses don't inherit the marker."""
+    return bool(vars(cls).get("_tradelab_abstract", False))
+
+
+def declared_symbols(cls: type) -> list[str]:
+    """Tickers a strategy declares on itself (S2). Normalised to upper-case,
+    de-duplicated, order preserved; anything that isn't a plausible ticker is
+    dropped rather than allowed to reach the data layer."""
+    raw = getattr(cls, "symbols", None) or []
+    if isinstance(raw, str):
+        # `symbols = "TSLA"` is a common slip; iterating the string would
+        # fabricate a universe of single letters (T, S, L, A are real tickers).
+        raw = [raw]
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        sym = item.strip().upper()
+        if sym and _TICKER_RE.match(sym) and sym not in out:
+            out.append(sym)
+    return out
+
+
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 
 
 def import_discovered(
@@ -338,7 +409,21 @@ def import_discovered(
     if yaml_path is None:
         yaml_path = Path("tradelab.yaml")
     _append_strategy_to_yaml(yaml_path, name, class_name)
+    _reload_registry()
     return {"error": None, "registered": True, "name": name}
+
+
+def _reload_registry() -> None:
+    """Drop the process-level config cache after tradelab.yaml changes, so the
+    running dashboard sees a just-imported strategy without a restart (S0
+    finding F8). Best-effort: a reload failure must never undo the write."""
+    try:
+        from tradelab.config import get_config
+        get_config(reload=True)
+    except Exception as e:  # noqa: BLE001
+        import sys
+        print(f"[registry] reload after tradelab.yaml write failed: {type(e).__name__}: {e} "
+              f"— the previous registry stays in effect until restart", file=sys.stderr)
 
 
 def _append_strategy_to_yaml(yaml_path: Path, name: str, class_name: str) -> None:

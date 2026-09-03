@@ -37,6 +37,17 @@ _ALLOWED_COMMANDS = {
 }
 
 
+def _strategy_declares_symbols(strategy: str) -> bool:
+    """True when the registered strategy class carries a non-empty `symbols`
+    list (S2). Any failure to load the class means False — the run then gets
+    the active universe exactly as before."""
+    try:
+        from tradelab.registry import load_strategy_class
+        return bool(new_strategy.declared_symbols(load_strategy_class(strategy)))
+    except Exception:
+        return False
+
+
 def _resolve_active_universe() -> str:
     """Return the universe name the web dashboard should pass to tradelab CLI.
 
@@ -128,7 +139,9 @@ def _build_tradelab_argv(
         symbol_args = ["--symbols", ",".join(symbols)]
     else:
         if not (universe and re.match(r"^[a-z0-9_]+$", universe)):
-            universe = _resolve_active_universe()
+            # S2: a strategy that declares its own tickers runs on them — no
+            # active-universe injection, the CLI falls back to the class.
+            universe = "" if _strategy_declares_symbols(strategy) else _resolve_active_universe()
         if universe:
             universe_args = ["--universe", universe]
     offline_args = ["--offline"] if offline else []
@@ -627,6 +640,18 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
     m = re.match(r"^/tradelab/new-strategy/job/([^/]+)$", path)
     if m:
         return _new_strategy_job_status(m.group(1))
+
+    if path == "/tradelab/new-strategy/template":
+        # S2: render the SimpleStrategy skeleton for the dashboard's
+        # "New from template" button. Nothing is written to disk.
+        from tradelab.cli_init import render_strategy_template
+        name = (q.get("name") or "my_strategy").strip()
+        kind = (q.get("type") or "simple").strip()
+        try:
+            rendered = render_strategy_template(name, type=kind)
+        except ValueError as e:
+            return _err(str(e)), 400
+        return _ok(rendered), 200
 
     if path == "/tradelab/strategies":
         from tradelab.registry import list_registered_strategies
