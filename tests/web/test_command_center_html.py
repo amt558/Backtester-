@@ -71,9 +71,7 @@ REQUIRED_JS_FUNCTIONS = [
     "renderSparkline",
     "getSparklineRuns",
     "updateCompareButton",
-    "renderLiveCard",
     "escapeHtml",
-    "researchLoadLiveCards",
     "researchLoadPipeline",
     "patchCard",
     "bindRowActions",
@@ -118,7 +116,6 @@ REQUIRED_DOM_IDS = [
     "preflight-chips",
     "researchPipelineTable",
     "researchPipelineBody",
-    "researchLiveCards",
     "pipelineCompareBtn",
     "modal-3f-confirm",  # Run modal Start button — preflight block targets this
     # S2 (2026-09-02): upload drop-zone, file picker, template button
@@ -513,72 +510,6 @@ def test_accepts_blocked_selector_targets_live_accept_button(html: str) -> None:
 # ─── Research v3 scope (Task 7) ────────────────────────────────────────
 
 
-@pytest.mark.skip(reason="discarded v3: v3 editorial Google Fonts link")
-def test_v3_google_fonts_link_present(html: str) -> None:
-    """Editorial typography requires Fraunces (display), Geist (sans),
-    JetBrains Mono. The Google Fonts <link> must be in <head>."""
-    head_close = html.find("</head>")
-    assert head_close > 0
-    head = html[:head_close]
-    assert "fonts.googleapis.com" in head, "Google Fonts <link> missing from <head>"
-    for family in ("Fraunces", "Geist", "JetBrains+Mono"):
-        assert family in head, f"font family {family!r} missing from Google Fonts URL"
-
-
-@pytest.mark.skip(reason="discarded v3: research-v3-scope style block")
-def test_v3_scope_style_block_present(html: str) -> None:
-    """The research-v3 CSS lives in its own <style id='research-v3-scope'>
-    block so future edits don't tangle with the existing dashboard styles."""
-    assert 'id="research-v3-scope"' in html, "research-v3-scope <style> block missing"
-
-
-@pytest.mark.skip(reason="discarded v3: body.research-v3 --r3-* palette tokens")
-def test_v3_palette_variables_defined_under_body_scope(html: str) -> None:
-    """Variables MUST be scoped to body.research-v3, not :root, so the rest
-    of the dashboard's palette is unchanged. Checks a sample of the palette
-    + each font-family token."""
-    idx = html.find("body.research-v3 {")
-    assert idx > 0, "body.research-v3 variable block missing"
-    block = html[idx:idx + 3000]
-    for token in (
-        "--r3-bg:", "--r3-accent:", "--r3-green:", "--r3-red:", "--r3-amber:",
-        "--r3-font-display:", "--r3-font-sans:", "--r3-font-mono:",
-    ):
-        assert token in block, f"palette/font token {token!r} missing from v3 scope"
-
-
-@pytest.mark.skip(reason="discarded v3: research-v3-scope style block")
-def test_v3_scope_does_not_leak_root_variable_names(html: str) -> None:
-    """Existing dashboard's :root vars (--bg, --green, etc.) MUST NOT be
-    redefined by the v3 scope — that would change every other tab's colors.
-    All v3 vars are prefixed with --r3-*."""
-    idx = html.find('id="research-v3-scope"')
-    assert idx > 0
-    end = html.find("</style>", idx)
-    block = html[idx:end]
-    # Anything inside the v3 scope that defines --bg / --green / --red without
-    # the r3- prefix would clobber the dashboard. (Comments and selectors
-    # mentioning these names elsewhere are fine; we look for declarations.)
-    for forbidden in ("--bg:", "--green:", "--red:", "--amber:", "--text:"):
-        assert forbidden not in block, (
-            f"v3 scope must not redefine global {forbidden!r}; use --r3-* prefix"
-        )
-
-
-@pytest.mark.skip(reason="discarded v3: switchTab research-v3 body toggle")
-def test_v3_body_class_toggle_in_switch_tab(html: str) -> None:
-    """switchTab must add 'research-v3' to the body class only when the
-    Research tab is active, and remove it on every other tab."""
-    idx = html.find("function switchTab")
-    assert idx > 0, "switchTab function not found"
-    chunk = html[idx:idx + 4000]
-    # The toggle pattern: classList.toggle('research-v3', tabName === 'research')
-    assert "research-v3" in chunk, "switchTab does not reference research-v3 class"
-    assert "tabName === 'research'" in chunk or "tabName==='research'" in chunk, (
-        "switchTab must gate the research-v3 body class on tabName === 'research'"
-    )
-
-
 # ─── Action bar (Task 8) ───────────────────────────────────────────────
 
 
@@ -602,690 +533,15 @@ def test_action_bar_preserves_preflight_chip_ids(html: str) -> None:
         assert f'id="{chip_id}"' in html, f"protected preflight chip ID {chip_id!r} missing"
 
 
-@pytest.mark.skip(reason="discarded v3: v3 .ab-btn action-bar classes")
-def test_action_bar_uses_v3_classes_on_protected_buttons(html: str) -> None:
-    """Protected buttons MUST use v3 .ab-btn class so the editorial styling
-    applies. Refresh Data is the primary action so it gets .ab-btn.primary."""
-    refresh_idx = html.find('id="preflightRefreshBtn"')
-    assert refresh_idx > 0
-    refresh_tag = html[refresh_idx - 200:refresh_idx + 200]
-    assert "ab-btn primary" in refresh_tag, (
-        "preflightRefreshBtn must carry the v3 .ab-btn.primary class"
-    )
-    for btn_id in ("preflightNewStrategyBtn", "scoreNewStrategyBtn"):
-        idx = html.find(f'id="{btn_id}"')
-        tag = html[idx - 200:idx + 200]
-        assert "ab-btn" in tag, f"{btn_id} missing .ab-btn class"
-
-
-@pytest.mark.skip(reason="discarded v3: calibration-trust chip + updateCalibrationTrustChip")
-def test_action_bar_has_calibration_trust_chip(html: str) -> None:
-    """New chip carrying the 0..1 trust score derived from
-    /tradelab/calibration-summary."""
-    assert 'id="calibration-trust"' in html
-    # Helper that fills the chip must exist.
-    assert "function updateCalibrationTrustChip" in html, (
-        "updateCalibrationTrustChip function missing — chip never populates"
-    )
-    # And it must be invoked from loadCalibrationSummary so it actually fires.
-    cs_idx = html.find("async function loadCalibrationSummary")
-    assert cs_idx > 0
-    chunk = html[cs_idx:cs_idx + 2500]
-    assert "updateCalibrationTrustChip(" in chunk, (
-        "loadCalibrationSummary must invoke updateCalibrationTrustChip"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: canary-status-icon")
-def test_action_bar_has_canary_status_icon(html: str) -> None:
-    """⚠ icon hidden by default; renderCanaryGrid toggles it visible when
-    any canary status === 'MISMATCH'. Hidden attribute must be present at
-    page load (no flash of warning before data resolves)."""
-    icon_idx = html.find('id="canary-status-icon"')
-    assert icon_idx > 0
-    icon_tag = html[icon_idx - 200:icon_idx + 200]
-    assert "hidden" in icon_tag, "canary-status-icon must start hidden"
-    assert "canary-icon" in icon_tag, "canary-status-icon must carry .canary-icon class"
-    # And renderCanaryGrid must toggle it. Read until the next function so
-    # we don't accidentally exclude code at the end of the function.
-    rg_idx = html.find("function renderCanaryGrid")
-    assert rg_idx > 0
-    end = html.find("\n    function ", rg_idx + 30)
-    if end < 0:
-        end = rg_idx + 6000
-    chunk = html[rg_idx:end]
-    assert "canary-status-icon" in chunk, (
-        "renderCanaryGrid must reference the new icon to toggle visibility"
-    )
-
-
-# ─── Live Cards tile (Task 9) ──────────────────────────────────────────
-
-
-def _live_card_body(html: str) -> str:
-    """Slice from `function renderLiveCard` up to the next sibling function
-    so v3 contract assertions don't bleed into surrounding helpers."""
-    idx = html.find("function renderLiveCard")
-    assert idx > 0, "renderLiveCard function not found"
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 8000)
-    return html[idx:end]
-
-
-def _drift_renderer_body(html: str) -> str:
-    """Return the source of the per-tile drift renderer.
-
-    Task 11 extracted the actual logic into renderDriftFor (the bulk
-    renderAllDriftSparklines is now just a fan-out wrapper). Look up
-    renderDriftFor first, falling back to renderAllDriftSparklines for
-    pre-Task-11 source compatibility.
-    """
-    for fn_name in ("function renderDriftFor", "function renderAllDriftSparklines"):
-        idx = html.find(fn_name)
-        if idx > 0:
-            next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-            end = idx + 30 + (next_fn.start() if next_fn else 4000)
-            body = html[idx:end]
-            # Make sure the body actually contains the drift loop, not the
-            # wrapper. The wrapper is short (<300 chars) and delegates.
-            if "/verdict-history" in body or "verdicts.slice" in body:
-                return body
-    # Fall back to the bulk renderer body even if it's the wrapper —
-    # callers will produce the right assertion error.
-    idx = html.find("function renderAllDriftSparklines")
-    assert idx > 0, "renderAllDriftSparklines function not found"
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 4000)
-    return html[idx:end]
-
-
-@pytest.mark.skip(reason="discarded v3: tile-grid class on researchLiveCards")
-def test_v3_live_cards_grid_uses_tile_grid_class(html: str) -> None:
-    """The #researchLiveCards container must carry the .tile-grid class so
-    the v3 grid CSS rule (4-col, 14px gap) applies. Note: the plan body
-    proposed renaming to #live-cards-grid; the existing ID is preserved
-    per the handover doc (reuses the v2 skeleton container)."""
-    idx = html.find('id="researchLiveCards"')
-    assert idx > 0, "researchLiveCards container missing"
-    tag = html[max(0, idx - 200):idx + 200]
-    assert "tile-grid" in tag, (
-        "#researchLiveCards must carry the .tile-grid v3 class so the "
-        "research-v3-scope grid CSS applies"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: v3 tile DOM in renderLiveCard")
-def test_v3_render_live_card_emits_tile_structure(html: str) -> None:
-    """The renderLiveCard function must emit the v3 tile DOM: tile-head,
-    tile-name, tile-meta, verdict pill, drift container, kpis, health-row,
-    actions/activate."""
-    body = _live_card_body(html)
-    for token in (
-        '"tile-head"',
-        '"tile-name"',
-        '"tile-meta"',
-        'class="verdict ',
-        '"drift"',
-        '"kpis"',
-        '"kpi"',
-        '"health-row"',
-        '"actions"',
-        'class="activate ',
-    ):
-        assert token in body, (
-            f"renderLiveCard missing v3 tile token {token!r} — confirm the "
-            "rewrite emits the v3 markup, not the v2 .research-card-* DOM"
-        )
-
-
-@pytest.mark.skip(reason="discarded v3: v3 four-KPI cells in renderLiveCard")
-def test_v3_render_live_card_emits_four_kpi_cells(html: str) -> None:
-    """Tile shows exactly 4 KPIs: PF / WR / DD / DSR. Each rendered as
-    .kpi > .l (label) + .v (value, with optional ok/warn/fail color class)."""
-    body = _live_card_body(html)
-    for label in (">PF<", ">WR<", ">DD<", ">DSR<"):
-        assert label in body, f"renderLiveCard missing KPI label {label!r}"
-    # And the .l / .v sub-spans (per v3 CSS scope)
-    assert 'class="l"' in body, "KPI label sub-span class=\"l\" missing"
-    assert 'class="v"' in body or 'class="v ' in body, (
-        "KPI value sub-span class=\"v\" missing"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: v3 te-bar classes in patchTrackingError")
-def test_v3_render_live_card_uses_v3_te_bar_classes(html: str) -> None:
-    """v3 te-bar uses .full/.high/.mid/.low (NOT v2 .empty/.green/.amber/.red).
-    patchTrackingError must apply the v3 set."""
-    pt_idx = html.find("function patchTrackingError")
-    assert pt_idx > 0, "patchTrackingError function not found"
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[pt_idx + 30:])
-    end = pt_idx + 30 + (next_fn.start() if next_fn else 5000)
-    body = html[pt_idx:end]
-    for cls in ("full", "high", "mid", "low"):
-        assert (f'"{cls}"' in body) or (f"'{cls}'" in body), (
-            f"patchTrackingError must apply v3 .te-bar class {cls!r} "
-            "(v2 .green/.green-full/.amber/.red is wrong scope)"
-        )
-
-
-@pytest.mark.skip(reason="discarded v3: v3 ks-dot in renderLiveCard")
-def test_v3_render_live_card_uses_ks_dot_not_ks_tag(html: str) -> None:
-    """v3 health-row uses a .ks-dot visual (no text) — the v2 .ks-tag was a
-    text label inside its own row. New tile compresses to a single dot."""
-    body = _live_card_body(html)
-    assert "ks-dot" in body, (
-        "renderLiveCard must emit a .ks-dot element (v3 contract); "
-        ".ks-tag is the v2-only text variant"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: renderAllDriftSparklines")
-def test_v3_render_all_drift_sparklines_function_defined(html: str) -> None:
-    """A function that fetches the verdict-history endpoint per tile and
-    paints up to 12 .dot spans into each tile's .drift container."""
-    pat = re.compile(r"(?:async\s+)?function\s+renderAllDriftSparklines\s*\(", re.MULTILINE)
-    matches = pat.findall(html)
-    assert len(matches) == 1, (
-        f"renderAllDriftSparklines: found {len(matches)} definitions (expected 1)"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: drift sparkline /verdict-history fetch")
-def test_v3_drift_sparkline_fetches_verdict_history_endpoint(html: str) -> None:
-    """The drift renderer must call /tradelab/strategies/<id>/verdict-history
-    (Task 2 endpoint). Different URL = different data source = silent break."""
-    body = _drift_renderer_body(html)
-    assert "/verdict-history" in body, (
-        "renderAllDriftSparklines must fetch /tradelab/strategies/<id>/verdict-history"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: drift sparkline 12-dot cap")
-def test_v3_drift_sparkline_caps_at_12_dots(html: str) -> None:
-    """Sparkline always renders exactly 12 dots: pad with classless .dot on
-    the left when fewer than 12 verdicts are available."""
-    body = _drift_renderer_body(html)
-    assert "12" in body, "renderAllDriftSparklines must hard-cap at 12 dots"
-
-
-def test_v3_render_live_card_escapes_user_strings(html: str) -> None:
-    """All server-supplied strings (liveId, tradelabName, verdict raw) must
-    flow through escapeHtml() — guard against XSS regression in the rewrite.
-    A direct ${liveId} or ${verdictRaw} interpolation in an innerHTML
-    template fails this test."""
-    body = _live_card_body(html)
-    bad = re.search(
-        r"innerHTML\s*=\s*`[^`]*\$\{(liveId|tradelabName|verdictRaw)\}",
-        body,
-    )
-    assert bad is None, (
-        f"renderLiveCard interpolates raw server string into innerHTML: "
-        f"{bad.group(0) if bad else ''}. Wrap in escapeHtml()."
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: activateState/activateLabel helpers")
-def test_v3_activate_button_state_helpers_defined(html: str) -> None:
-    """activateState and activateLabel helpers map (verdict, has_card) to
-    (.enabled|.disabled|.live, label text). Pin both names so Task 10's
-    click handler has stable hooks to bind to."""
-    pat_state = re.compile(r"function\s+activateState\s*\(", re.MULTILINE)
-    pat_label = re.compile(r"function\s+activateLabel\s*\(", re.MULTILINE)
-    assert pat_state.search(html), "activateState helper missing"
-    assert pat_label.search(html), "activateLabel helper missing"
-
-
-@pytest.mark.skip(reason="discarded v3: activateState enabled/disabled/live")
-def test_v3_activate_button_state_emits_three_states(html: str) -> None:
-    """activateState must return exactly the three v3 states the CSS defines:
-    'enabled', 'disabled', 'live' (not 'activating' — that's Task 10's flight
-    state). Returning anything else paints an unstyled grey button."""
-    idx = html.find("function activateState")
-    assert idx > 0
-    next_fn = re.search(r"\n    function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 1500)
-    body = html[idx:end]
-    for state in ("enabled", "disabled", "live"):
-        assert (f'"{state}"' in body) or (f"'{state}'" in body), (
-            f"activateState must be able to return {state!r}"
-        )
-
-
-@pytest.mark.skip(reason="discarded v3: researchLoadLiveCards -> renderAllDriftSparklines")
-def test_v3_research_load_live_cards_invokes_drift_renderer(html: str) -> None:
-    """researchLoadLiveCards must call renderAllDriftSparklines AFTER tiles
-    are appended to the DOM (otherwise querySelectorAll('.drift') hits empty)."""
-    idx = html.find("async function researchLoadLiveCards")
-    assert idx > 0
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 3000)
-    body = html[idx:end]
-    assert "renderAllDriftSparklines" in body, (
-        "researchLoadLiveCards must invoke renderAllDriftSparklines after rendering tiles"
-    )
+# ─── Live Cards tile (Task 9) — removed in S4: the board replaced the tiles.
+# The XSS guard now lives in test_s4_board_escapes_server_strings below.
 
 
 # ─── Task 10: Activate state machine + cross-tab linkage ───────────────
 
-@pytest.mark.skip(reason="discarded v3: wireResearchLiveCardsClick delegate")
-def test_v3_task10_activate_click_handler_wired_to_grid(html: str) -> None:
-    """Task 10 wires a delegated click on #researchLiveCards. Without this
-    the .activate buttons are inert — silent failure pytest can't catch."""
-    # Function that installs the delegated listener.
-    assert "function wireResearchLiveCardsClick" in html, (
-        "Task 10 click handler installer is missing"
-    )
-    # The handler must be delegated on the grid container, not on each tile.
-    assert "getElementById('researchLiveCards')" in html
-    # And researchLoadLiveCards must invoke it after rendering.
-    idx = html.find("async function researchLoadLiveCards")
-    assert idx > 0
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 3000)
-    assert "wireResearchLiveCardsClick" in html[idx:end], (
-        "researchLoadLiveCards must call wireResearchLiveCardsClick"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: POST /strategies/<id>/activate")
-def test_v3_task10_activate_posts_to_strategies_activate_endpoint(html: str) -> None:
-    """The Activate flow MUST POST to /tradelab/strategies/<id>/activate.
-    Pasting the wrong URL (e.g. /tradelab/accept) silently breaks activation
-    because the BE expects different payloads on each route."""
-    # Look for the literal URL fragment with template interpolation.
-    pattern = re.compile(
-        r"/tradelab/strategies/\$\{encodeURIComponent\([^)]+\)\}/activate"
-    )
-    assert pattern.search(html), (
-        "Activate must POST to /tradelab/strategies/${id}/activate"
-    )
-    # Confirm POST method is used (not GET).
-    idx = html.find("wireResearchLiveCardsClick")
-    if idx > 0:
-        block = html[idx:idx + 4000]
-        assert "method: 'POST'" in block or 'method:"POST"' in block, (
-            "Activate must use POST"
-        )
-
-
-@pytest.mark.skip(reason="discarded v3: activate enabled->activating->live transitions")
-def test_v3_task10_activate_state_transitions_present(html: str) -> None:
-    """Buttons go enabled → activating → live (or back to enabled on error).
-    Each class must appear in the click handler so the visual state matches."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    end = idx + 5000
-    body = html[idx:end]
-    # In-flight transition.
-    assert "'activating'" in body, "must add 'activating' class during POST"
-    # Success state.
-    assert "'live'" in body, "must transition to 'live' on success"
-    # Error rollback.
-    assert "'enabled'" in body, "must restore 'enabled' on POST failure"
-    # Toast surfaces both success and error.
-    assert "toast(" in body, "must surface success/error to user via toast()"
-
-
-@pytest.mark.skip(reason="discarded v3: .activate.activating CSS")
-def test_v3_task10_activating_class_has_css(html: str) -> None:
-    """The .activate.activating selector needs a real CSS rule, otherwise
-    the in-flight state is invisible to the user."""
-    assert ".activate.activating" in html, (
-        "Missing CSS rule for .activate.activating in-flight state"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: switchToOverviewTabAndScrollTo helper")
-def test_v3_task10_switch_to_overview_helper_present(html: str) -> None:
-    """The cross-tab cross-jump helper must exist and call switchTab('overview').
-    The button on Live state ('● Already live ↗') uses this to navigate."""
-    idx = html.find("function switchToOverviewTabAndScrollTo")
-    assert idx > 0, "switchToOverviewTabAndScrollTo helper is missing"
-    end = idx + 1500
-    body = html[idx:end]
-    assert "switchTab('overview')" in body, (
-        "helper must invoke switchTab('overview')"
-    )
-    # Pulses target by adding/removing a class on a timer.
-    assert "r3-highlight-pulse" in body, (
-        "helper must add/remove the highlight-pulse class"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: r3-highlight-pulse keyframes")
-def test_v3_task10_highlight_pulse_keyframes_defined(html: str) -> None:
-    """The pulse animation must be defined in CSS so the cross-tab jump
-    actually animates rather than silently no-op'ing."""
-    assert "@keyframes r3-highlight-pulse" in html, (
-        "Missing @keyframes r3-highlight-pulse"
-    )
-    assert ".r3-highlight-pulse {" in html or ".r3-highlight-pulse{" in html, (
-        "Missing .r3-highlight-pulse class rule binding the animation"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: open-research-btn in overview card")
-def test_v3_task10_open_research_button_in_live_card_template(html: str) -> None:
-    """Overview live cards must have an ↗ Research button so users can
-    cross-jump back from Overview to Research."""
-    # The Overview live card template lives in command_center.html. Find the
-    # render block (it sits right above the live-card-hero markup) and
-    # confirm the button is rendered inside.
-    idx = html.find('class="strategy-card live-card')
-    assert idx > 0
-    block = html[max(0, idx - 800):idx + 200]
-    assert "open-research-btn" in block, (
-        "Overview live-card markup is missing the ↗ Research button"
-    )
-    assert "data-base-name=" in block, (
-        "↗ Research button must carry data-base-name for cross-jump"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: open-research-btn click delegate")
-def test_v3_task10_open_research_button_click_handler(html: str) -> None:
-    """A document-level click delegate must wire .open-research-btn → switchTab.
-    Otherwise the button renders but does nothing."""
-    # The click handler must reference the class selector.
-    pattern = re.compile(r"closest\(['\"]\.open-research-btn['\"]\)")
-    assert pattern.search(html), (
-        "Missing document-level handler for .open-research-btn"
-    )
-    # And it must call switchTab('research').
-    # Search within ~1500 chars after the matched closest() to confirm the
-    # handler body actually switches tabs and pulses the tile.
-    m = pattern.search(html)
-    body = html[m.end():m.end() + 1500]
-    assert "switchTab('research')" in body, (
-        "open-research-btn handler must invoke switchTab('research')"
-    )
-    assert "r3-highlight-pulse" in body, (
-        "open-research-btn handler must pulse the destination tile"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: open-research-btn CSS")
-def test_v3_task10_open_research_button_styles_defined(html: str) -> None:
-    """The ↗ Research button needs its own CSS rule (positioned, hover state)."""
-    assert ".open-research-btn" in html, "Missing .open-research-btn CSS"
-    # Positioned absolutely so it sits in the top-right corner of the card.
-    pattern = re.compile(r"\.open-research-btn\s*\{[^}]*position:\s*absolute", re.DOTALL)
-    assert pattern.search(html), (
-        ".open-research-btn must be positioned absolute (top-right corner)"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: tile data-card-id stash post-activate")
-def test_v3_task10_card_id_stashed_on_tile_after_activate(html: str) -> None:
-    """After a successful activate, the tile's data-card-id must be set so
-    the next click ('Already live ↗') can cross-jump without re-fetch."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 5000]
-    # Either tile.dataset.cardId = ... or tile.setAttribute('data-card-id', ...)
-    assert (
-        "tile.dataset.cardId" in body
-        or "data-card-id" in body
-    ), "tile must persist the new card_id after activate so cross-jump works"
-
-
-@pytest.mark.skip(reason="discarded v3: wireResearchLiveCardsClick activate flow")
-def test_v3_task10_no_old_accept_endpoint_for_live_cards(html: str) -> None:
-    """Defense against regression: the Live Cards Activate flow must NOT POST
-    to /tradelab/accept (that endpoint requires base_name/symbol/timeframe
-    payload that the FE doesn't have). Use /tradelab/strategies/<id>/activate."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 5000]
-    assert "'/tradelab/accept'" not in body, (
-        "wireResearchLiveCardsClick must not POST to /tradelab/accept "
-        "(missing payload fields); use /tradelab/strategies/<id>/activate"
-    )
-
-
 # ─── Task 11: Click-to-expand inline (header + 7-cell summary + tab strip)
 
-@pytest.mark.skip(reason="discarded v3: expandedTileHtml helper")
-def test_v3_task11_expanded_tile_html_helper_exists(html: str) -> None:
-    """The expand template must be a discrete function so collapse can
-    re-render the compact tile by calling its complement."""
-    assert "function expandedTileHtml" in html, (
-        "Task 11 expand template helper expandedTileHtml() is missing"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: expanded tile 7 ex-cell summary")
-def test_v3_task11_expanded_markup_has_seven_summary_cells(html: str) -> None:
-    """Plan body specifies exactly 7 cells: Verdict, PF, WR, DD, DSR, TE
-    health, K-S. The visual rhythm is fragile to cell count drift, so pin it."""
-    idx = html.find("function expandedTileHtml")
-    assert idx > 0
-    end = idx + 4000
-    body = html[idx:end]
-    # Each cell uses the .ex-cell class — count them.
-    cells = body.count('class="ex-cell"')
-    assert cells == 7, (
-        f"expandedTileHtml must render exactly 7 ex-cell summary cells; got {cells}"
-    )
-    # The seven labels must all be present.
-    for label in ("Verdict", "Profit factor", "Win rate", "Max DD", "DSR", "TE health", "K-S"):
-        assert label in body, f"7-cell summary missing label {label!r}"
-
-
-@pytest.mark.skip(reason="discarded v3: expanded tile tab-strip + deep-dive")
-def test_v3_task11_expanded_markup_has_tab_strip_and_deep_dive(html: str) -> None:
-    """The expand row's tab strip + deep-dive button must both be present.
-    Tearsheet button drives traffic to the existing /tradelab/runs/<id>/tearsheet
-    route — drift breaks the link silently."""
-    idx = html.find("function expandedTileHtml")
-    assert idx > 0
-    body = html[idx:idx + 4000]
-    assert "tab-strip" in body, "Missing tab-strip container in expand template"
-    assert "tab-strip-tabs" in body, "Missing tab-strip-tabs button row"
-    assert "deep-dive-btn" in body, "Missing deep-dive-btn (View full tearsheet)"
-    assert "/tradelab/runs/" in body and "/tearsheet" in body, (
-        "deep-dive-btn must link to /tradelab/runs/<id>/tearsheet"
-    )
-    assert 'class="close-btn"' in body, "Missing collapse close-btn"
-
-
-@pytest.mark.skip(reason="discarded v3: expandTile/collapseTile helpers")
-def test_v3_task11_expand_collapse_helpers_present(html: str) -> None:
-    """expandTile / collapseTile must exist so the click delegate can call
-    them. Without them the tile-click event handler can't toggle state."""
-    assert "function expandTile" in html, "Missing expandTile helper"
-    assert "function collapseTile" in html, "Missing collapseTile helper"
-
-
-@pytest.mark.skip(reason="discarded v3: strategyDataCache")
-def test_v3_task11_strategy_data_cache_populated_at_render_time(html: str) -> None:
-    """expandTile reads from a cache populated by renderLiveCard. Without the
-    cache the expand template can't access symbol/verdict/etc. populated by
-    the runs+metrics fetches that happened during render."""
-    # Cache constant must exist (Map or plain object).
-    assert "strategyDataCache" in html, (
-        "Missing strategyDataCache used by expandTile to read summary fields"
-    )
-    # It must be written-to during the render path. Check for either .set()
-    # (Map) or [key]= (plain object) inside renderLiveCard.
-    idx = html.find("function renderLiveCard")
-    assert idx > 0
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 8000)
-    body = html[idx:end]
-    assert "strategyDataCache" in body, (
-        "renderLiveCard must populate strategyDataCache so expandTile can read it"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: tile-expand grid delegate")
-def test_v3_task11_tile_click_handler_in_grid_delegate(html: str) -> None:
-    """The same delegated listener that handles .activate clicks should also
-    handle tile-click for expand. Adding a second listener on the same grid
-    risks event ordering surprises; one delegate is the contract."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 6000]
-    # Tile-click handler must call expandTile/collapseTile.
-    assert ("expandTile(" in body) or ("collapseTile(" in body), (
-        "wireResearchLiveCardsClick must invoke expandTile/collapseTile"
-    )
-    # Must guard: clicking .activate or .close-btn or .deep-dive-btn should
-    # not toggle expand.
-    assert ".close-btn" in body or "close-btn" in body, (
-        "Tile-click handler must guard against close-btn re-entry"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: .tile.expanded/.ex-* CSS")
-def test_v3_task11_expanded_state_has_css(html: str) -> None:
-    """The visual "expanded" state needs CSS — without it the inserted markup
-    has no layout and the user sees a broken card."""
-    assert ".tile.expanded" in html, (
-        "Missing .tile.expanded CSS rule"
-    )
-    assert ".ex-cell" in html, "Missing .ex-cell CSS rule (7-cell layout)"
-    assert ".ex-summary" in html, "Missing .ex-summary CSS rule (cell grid)"
-    assert ".ex-header" in html, "Missing .ex-header CSS rule"
-
-
-@pytest.mark.skip(reason="discarded v3: single-expanded-tile logic")
-def test_v3_task11_only_one_tile_expanded_at_a_time(html: str) -> None:
-    """Plan spec: 'only one expanded at a time'. The tile-click handler must
-    collapse any other expanded tile before expanding the clicked one."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 6000]
-    # Look for the all-expanded-tiles iteration before expand.
-    assert (
-        ".tile.expanded" in body or "tile.expanded" in body
-    ), "Missing 'collapse all other expanded tiles' iteration"
-
-
-@pytest.mark.skip(reason="discarded v3: tile-action propagation guard")
-def test_v3_task11_clicking_actions_does_not_toggle_expand(html: str) -> None:
-    """The action buttons (Activate, close-btn, deep-dive-btn, tab buttons)
-    inside a tile must not propagate to the tile-click handler. Either via
-    explicit .closest() guard or via stopPropagation on each button."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 6000]
-    # The plan body uses a closest() guard. The click handler must mention at
-    # least .activate (existing) and .close-btn (Task 11 new).
-    assert ".activate" in body
-    assert "close-btn" in body
-
-
 # ─── Task 12: QuantStats sub-grid + 3 inline SVG charts ────────────────
-
-
-@pytest.mark.skip(reason="discarded v3: loadQsForExpandedTile")
-def test_v3_task12_load_qs_helper_exists(html: str) -> None:
-    """The expanded tile populates its QuantStats tab via this loader.
-    Without it, every tile shows the empty placeholder forever."""
-    assert "function loadQsForExpandedTile" in html, (
-        "Missing function loadQsForExpandedTile (Task 12 entry point)"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: loadQs /qs-metrics fetch")
-def test_v3_task12_load_qs_calls_qs_metrics_endpoint(html: str) -> None:
-    """The loader must hit /tradelab/runs/<id>/qs-metrics — the BE route is
-    already wired (Task 5). Don't accidentally point at /metrics or /tearsheet."""
-    idx = html.find("function loadQsForExpandedTile")
-    assert idx > 0
-    body = html[idx:idx + 2000]
-    assert "/qs-metrics" in body, (
-        "loadQsForExpandedTile must fetch from /tradelab/runs/<id>/qs-metrics"
-    )
-    # Must encode the runId — defensive against a run id with a slash or %.
-    assert "encodeURIComponent" in body
-
-
-@pytest.mark.skip(reason="discarded v3: loadQs null-runId empty-state")
-def test_v3_task12_load_qs_handles_null_run_id(html: str) -> None:
-    """A strategy with no scored run yet should show an empty-state, not a
-    fetch error. The plan spec calls for `<div class="empty">No run data...`."""
-    idx = html.find("function loadQsForExpandedTile")
-    assert idx > 0
-    body = html[idx:idx + 2000]
-    # Some explicit null/empty branch before the fetch.
-    assert ("if (!runId)" in body) or ("if (runId == null)" in body) or ("runId == null" in body), (
-        "loadQsForExpandedTile must check for missing runId before fetching"
-    )
-    assert 'class="empty"' in body or "class='empty'" in body, (
-        "Missing empty-state markup for runId=null path"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: qsGridHtml 8 cells")
-def test_v3_task12_qs_grid_helper_renders_eight_cells(html: str) -> None:
-    """The QS sub-grid has 8 stat cells per the plan: Total return, Sharpe,
-    Sortino, CAGR, Avg win, Avg loss, Trades, Avg hold."""
-    idx = html.find("function qsGridHtml")
-    assert idx > 0, "Missing function qsGridHtml"
-    next_fn = re.search(r"\n    (?:async\s+)?function\s+\w+\s*\(", html[idx + 30:])
-    end = idx + 30 + (next_fn.start() if next_fn else 3000)
-    body = html[idx:end]
-    for label in (
-        "Total return", "Sharpe", "Sortino", "CAGR",
-        "Avg win", "Avg loss", "Trades", "Avg hold",
-    ):
-        assert label in body, f"qsGridHtml missing the {label!r} stat cell"
-
-
-@pytest.mark.skip(reason="discarded v3: qs-stat/qs-grid classes")
-def test_v3_task12_qs_grid_uses_qs_stat_class(html: str) -> None:
-    """Each stat cell carries .qs-stat for styling. The grid wrapper carries
-    .qs-grid. Without these classes the CSS layout breaks."""
-    idx = html.find("function qsGridHtml")
-    assert idx > 0
-    body = html[idx:idx + 3000]
-    assert "qs-stat" in body, "qs-stat class missing from cell template"
-    assert "qs-grid" in body, "qs-grid class missing from grid wrapper"
-
-
-@pytest.mark.skip(reason="discarded v3: drawdownSvg/monthlyHeatmap/rollingSharpeSvg")
-def test_v3_task12_three_chart_helpers_exist(html: str) -> None:
-    """Three inline SVG chart helpers per plan: drawdown, monthly heatmap,
-    rolling sharpe. Pure SVG (no Chart.js — see reference_command_center_arch_lock.md)."""
-    for fn_name in ("function drawdownSvg", "function monthlyHeatmap", "function rollingSharpeSvg"):
-        assert fn_name in html, f"Missing {fn_name}"
-
-
-@pytest.mark.skip(reason="discarded v3: inline SVG chart helpers")
-def test_v3_task12_chart_helpers_emit_inline_svg(html: str) -> None:
-    """Charts must be inline SVG, not Canvas / Chart.js / d3. The architectural
-    lock on command_center.html forbids new build-step deps."""
-    for fn_name in ("function drawdownSvg", "function rollingSharpeSvg"):
-        idx = html.find(fn_name)
-        assert idx > 0
-        body = html[idx:idx + 2000]
-        assert "<svg" in body, f"{fn_name} must emit inline <svg> markup"
-        assert "viewBox" in body, f"{fn_name} svg must declare a viewBox for responsive scaling"
-
-
-@pytest.mark.skip(reason="discarded v3: heatmap-grid/heatmap-cell")
-def test_v3_task12_monthly_heatmap_uses_grid_class(html: str) -> None:
-    """The heatmap is a CSS grid of colored cells (red/green by sign)."""
-    idx = html.find("function monthlyHeatmap")
-    assert idx > 0
-    body = html[idx:idx + 2000]
-    assert "heatmap-grid" in body, "monthlyHeatmap must wrap cells in .heatmap-grid"
-    assert "heatmap-cell" in body, "monthlyHeatmap must use .heatmap-cell per cell"
-
-
-@pytest.mark.skip(reason="discarded v3: expandTile -> loadQsForExpandedTile")
-def test_v3_task12_expand_calls_loader(html: str) -> None:
-    """expandTile must invoke loadQsForExpandedTile after writing innerHTML so
-    the QuantStats tab populates. Without this, the user sees the empty
-    placeholder until clicking Factors and back."""
-    idx = html.find("function expandTile")
-    assert idx > 0
-    body = html[idx:idx + 1500]
-    assert "loadQsForExpandedTile" in body, (
-        "expandTile must call loadQsForExpandedTile(tile, runId) after render"
-    )
 
 
 def test_v3_task12_placeholder_text_replaced(html: str) -> None:
@@ -1296,142 +552,7 @@ def test_v3_task12_placeholder_text_replaced(html: str) -> None:
     )
 
 
-@pytest.mark.skip(reason="discarded v3: tab-qs/tab-factors swap")
-def test_v3_task12_tab_strip_click_swaps_tabs(html: str) -> None:
-    """Clicking the Factors tab should hide .tab-qs and show .tab-factors,
-    and vice versa. The wireResearchLiveCardsClick handler owns this logic."""
-    idx = html.find("function wireResearchLiveCardsClick")
-    assert idx > 0
-    body = html[idx:idx + 6000]
-    # Either explicit class swap on tab-content elements, or hidden attribute toggle.
-    has_qs_swap = ("tab-qs" in body) and ("tab-factors" in body)
-    assert has_qs_swap, (
-        "Tab strip handler must reference both .tab-qs and .tab-factors "
-        "to swap visibility"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: qs-grid/qs-stat/qs-charts CSS")
-def test_v3_task12_qs_grid_css_present(html: str) -> None:
-    """CSS rules must exist for the new grid + chart layout — without them
-    the markup renders as a plain stack of unstyled divs."""
-    for selector in (".qs-grid", ".qs-stat", ".qs-charts", ".qs-chart"):
-        assert selector in html, f"Missing CSS rule for {selector}"
-
-
-@pytest.mark.skip(reason="discarded v3: heatmap-grid/heatmap-cell CSS")
-def test_v3_task12_heatmap_css_present(html: str) -> None:
-    """The heatmap is a fixed-shape CSS grid; the .heatmap-grid rule defines it."""
-    for selector in (".heatmap-grid", ".heatmap-cell"):
-        assert selector in html, f"Missing CSS rule for {selector}"
-
-
 # ─── Task 13: Cross-strategy factor matrix ─────────────────────────────
-
-
-@pytest.mark.skip(reason="discarded v3: matrix-card/grid/meta DOM")
-def test_v3_task13_matrix_markup_present(html: str) -> None:
-    """The matrix needs three id'd containers in the DOM: the card wrapper,
-    the grid (renderFactorMatrix mounts to this), and the meta caption."""
-    for needle in ('id="matrix-card"', 'id="matrix-grid"', 'id="matrix-meta"'):
-        assert needle in html, f"Missing matrix DOM hook: {needle}"
-
-
-@pytest.mark.skip(reason="discarded v3: matrix-alpha-callout")
-def test_v3_task13_alpha_callout_present(html: str) -> None:
-    """The callout starts hidden and is revealed when ≥1 column-warn fires.
-    Without the element renderFactorMatrix's getElementById('matrix-alpha-callout')
-    would silently no-op; tests guard against that drift."""
-    assert 'id="matrix-alpha-callout"' in html, "Missing matrix-alpha-callout div"
-
-
-@pytest.mark.skip(reason="discarded v3: FACTOR_COLUMNS const")
-def test_v3_task13_factor_columns_const_defined(html: str) -> None:
-    """FACTOR_COLUMNS drives the column count + labels. Renaming or removing
-    it would silently break every cell in the matrix."""
-    assert "FACTOR_COLUMNS" in html, "Missing FACTOR_COLUMNS const"
-
-
-@pytest.mark.skip(reason="discarded v3: FACTOR_COLUMNS real signal names")
-def test_v3_task13_factor_columns_use_real_signal_names(html: str) -> None:
-    """The plan body's columns (dsr, monte_carlo, oos_pf, regime, sample,
-    stability, walk_forward) don't match real verdict.py signal names. The
-    matrix must use the actual names so cells light up against real data."""
-    idx = html.find("FACTOR_COLUMNS")
-    assert idx > 0
-    body = html[idx:idx + 2000]
-    # The 8 real signals from src/tradelab/robustness/verdict.py
-    for sig_name in (
-        "baseline_pf", "dsr", "mc_max_dd", "param_landscape",
-        "entry_delay", "loso", "noise_injection", "regime_spread",
-    ):
-        assert f"'{sig_name}'" in body or f'"{sig_name}"' in body, (
-            f"FACTOR_COLUMNS missing real signal name {sig_name!r}"
-        )
-    # And NOT the plan's invented ids that would never match real data
-    assert "'monte_carlo'" not in body and '"monte_carlo"' not in body, (
-        "FACTOR_COLUMNS still uses plan's invented 'monte_carlo' id; "
-        "real signal name is 'mc_max_dd'"
-    )
-    assert "'walk_forward'" not in body and '"walk_forward"' not in body, (
-        "FACTOR_COLUMNS still uses plan's invented 'walk_forward' id"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: classifyOutcome helper")
-def test_v3_task13_classify_outcome_function_defined(html: str) -> None:
-    """classifyOutcome maps signal.outcome → cell color class. Needs to handle
-    robust/marginal/fragile/inconclusive (lowercase) per the BE contract."""
-    assert "function classifyOutcome" in html, "Missing classifyOutcome helper"
-    idx = html.find("function classifyOutcome")
-    body = html[idx:idx + 800]
-    # Returns 'pass'/'fail'/'marginal'/'dim' for the 4 outcome states.
-    assert "'pass'" in body or '"pass"' in body
-    assert "'fail'" in body or '"fail"' in body
-    assert "'dim'" in body or '"dim"' in body
-    # Lowercases the outcome string (so 'ROBUST'/'robust' both work).
-    assert "toLowerCase" in body
-
-
-@pytest.mark.skip(reason="discarded v3: renderFactorMatrix + /strategies-summary")
-def test_v3_task13_render_factor_matrix_function_defined(html: str) -> None:
-    """The matrix is built by renderFactorMatrix(); it must exist + fetch
-    /tradelab/strategies-summary."""
-    assert "function renderFactorMatrix" in html, "Missing renderFactorMatrix"
-    idx = html.find("function renderFactorMatrix")
-    body = html[idx:idx + 4000]
-    assert "/tradelab/strategies-summary" in body, (
-        "renderFactorMatrix must fetch from /tradelab/strategies-summary"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: renderFactorMatrix call site")
-def test_v3_task13_render_factor_matrix_invoked_on_load(html: str) -> None:
-    """The matrix needs to render when the Research tab loads. Either via
-    researchLoadAll() or alongside researchLoadLiveCards()."""
-    # Search for the call site (not the definition) — it should be invoked
-    # from the Research-tab loader.
-    occurrences = html.count("renderFactorMatrix(")
-    # Definition call has parens too, so we expect ≥ 2 occurrences (def + call).
-    assert occurrences >= 2, (
-        f"renderFactorMatrix() never called — only {occurrences} occurrence(s) "
-        f"(definition with no call site)"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: matrix-grid 8-col CSS")
-def test_v3_task13_matrix_grid_css_handles_eight_columns(html: str) -> None:
-    """The CSS grid template was hardcoded to 7 columns in the original v3
-    sketch — must be updated to 8 to match real signal count."""
-    idx = html.find(".matrix-grid")
-    assert idx > 0
-    # Find the actual grid-template-columns value
-    rule_end = html.find("}", idx)
-    rule_body = html[idx:rule_end]
-    assert "repeat(8" in rule_body, (
-        f".matrix-grid grid-template-columns must use repeat(8, ...) "
-        f"to match the 8 real signals; current rule:\n{rule_body[:200]}"
-    )
 
 
 def test_v3_task13_classify_outcome_treats_inconclusive_as_marginal_or_dim(html: str) -> None:
@@ -1454,60 +575,6 @@ def test_v3_task13_classify_outcome_treats_inconclusive_as_marginal_or_dim(html:
 
 
 # ─── Task 14: Pipeline restyle ─────────────────────────────────────────
-
-
-@pytest.mark.skip(reason="discarded v3: pipeline-card wrapper")
-def test_v3_task14_pipeline_card_wrapper_present(html: str) -> None:
-    """The Research Pipeline section gets the v3 .pipeline-card chrome so
-    the existing CSS rules at body.research-v3 #research .pipeline-card
-    actually apply."""
-    assert 'class="pipeline-card"' in html, (
-        "Research Pipeline section missing the .pipeline-card v3 wrapper"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: pipeline-toolbar wrapper")
-def test_v3_task14_pipeline_toolbar_wrapper_present(html: str) -> None:
-    """Filter row should sit inside .pipeline-toolbar so the v3 toolbar CSS
-    (border-bottom, gap, font) applies. The v2 .research-filters div can
-    stay as inner content; we just need the v3 wrapper outside it."""
-    assert 'class="pipeline-toolbar"' in html, (
-        "Filter row missing the .pipeline-toolbar v3 wrapper"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: pipeline class on researchPipelineTable")
-def test_v3_task14_pipeline_table_has_pipeline_class(html: str) -> None:
-    """The CSS rule body.research-v3 #research table.pipeline targets
-    .pipeline (not .table). Without the class, the v3 table styling
-    (column-uppercase headers, hover stripe, monospaced numerics) doesn't
-    apply."""
-    # Find the existing #researchPipelineTable opening tag and confirm it
-    # carries class="pipeline" alongside whatever else.
-    idx = html.find('id="researchPipelineTable"')
-    assert idx > 0, "researchPipelineTable id missing"
-    tag_start = html.rfind('<table', 0, idx)
-    tag_end = html.find('>', idx)
-    assert tag_start > 0 and tag_end > 0
-    tag = html[tag_start:tag_end + 1]
-    assert "pipeline" in tag, (
-        f"researchPipelineTable must include class \"pipeline\" for v3 styling. "
-        f"Current tag: {tag}"
-    )
-
-
-@pytest.mark.skip(reason="discarded v3: pipeline-section-header/meta")
-def test_v3_task14_section_header_for_pipeline(html: str) -> None:
-    """A v3 section header sits between the matrix and the pipeline card so
-    the user can see 'Research Pipeline' as a labeled landmark, with the
-    meta caption describing what's inside."""
-    assert 'id="pipeline-section-header"' in html, (
-        "Missing #pipeline-section-header — needed so the v3 typography "
-        "rule applies and to anchor the meta caption"
-    )
-    assert 'id="pipeline-meta"' in html, (
-        "Missing #pipeline-meta — runs count goes here"
-    )
 
 
 def test_v3_task14_trash_button_tooltip_says_delete_not_archive(html: str) -> None:
@@ -1868,3 +935,74 @@ def test_s3r_activity_warnings_surface_in_tab(html: str) -> None:
     assert "act.truncated" in html
     assert "act.orphaned_lots" in html
     assert "Unrealized (acct, by symbol)" in html
+
+
+# ── S4: the strategy board (2026-09-03) ─────────────────────────────
+def test_s4_board_is_the_research_tabs_spine(html: str) -> None:
+    assert 'id="strategyBoard"' in html
+    assert 'id="boardGroups"' in html and 'id="boardCounts"' in html
+    assert html.count("const BOARD = (() => {") == 1
+    assert "fetch('/tradelab/board'" in html
+
+
+def test_s4_context_drawer_holds_the_three_old_sections(html: str) -> None:
+    """Market Regime, Verdict Calibration and Portfolio Health survive, but
+    collapsed under the board — inside <details id="researchContext">."""
+    start = html.index('<details id="researchContext"')
+    end = html.index("</details>", start)
+    drawer = html[start:end]
+    for sec in ('id="researchRegime"', 'id="researchCalibration"', 'id="researchPortfolioHealth"'):
+        assert sec in drawer, sec
+
+
+def test_s4_the_old_surface_names_are_gone(html: str) -> None:
+    """One object, one surface: no Strategy Verdicts grid, no Live Cards
+    renderer, no 'cards enabled' wording on Live Trading."""
+    for dead in ("researchLiveCards", "researchLoadLiveCards", "renderLiveCard(", "renderDriftStrip(",
+                 "patchTrackingError(", "research-cards-grid", ">Strategy Verdicts<", "cards enabled /"):
+        assert dead not in html, dead
+
+
+def test_s4_board_dispatches_one_action_per_card(html: str) -> None:
+    for kind in ("'trial'", "'retrial'", "'accept'", "'open_tab'"):
+        assert kind in html, kind
+    assert "submitJob(row.strategy, 'run --robustness')" in html
+    assert "acceptRunAsCard(row.run_id, row.strategy, row.verdict" in html
+    assert "ST.open(row.card_id)" in html
+
+
+def test_s4_board_refreshes_on_job_end_accept_and_retire(html: str) -> None:
+    # The reload must come BEFORE the Runs-table row lookup: a job whose row
+    # is filtered out of the table still has to update the board.
+    i = html.index("function handleJobUpdate(")
+    body = html[i:i + 2500]
+    assert body.index("BOARD.load()") < body.index("researchPipelineBody")
+    # the settled state event (from the JobManager reaper) needs no delayed retry
+    assert "if (!payload.settled) setTimeout(BOARD.load, 2500)" in body
+    assert html.count("BOARD.load()") >= 4
+
+
+def test_s4_board_escapes_server_strings(html: str) -> None:
+    """Every server-supplied string the board interpolates into innerHTML
+    goes through _esc(): strategy names, symbols, reasons, labels."""
+    idx = html.index("const BOARD = (() => {")
+    body = html[idx: html.index("async function researchLoadAll()", idx)]
+    for raw in ("${r.strategy}", "${a.reason}", "${a.label}", "${data.error}", "${r.state}", "${r.route", "${r.card_id}"):
+        assert raw not in body, f"raw interpolation {raw} in board renderer — wrap in _esc()"
+    assert "_esc(r.strategy)" in body and "_esc(a.reason" in body
+
+
+def test_s4_job_stream_envelope_is_normalised(html: str) -> None:
+    """The SSE payload is {job_id, event:{type,…}}; the handler must map it to
+    {id, status} (exit≠0 on a 'done' event = failed) before any early return."""
+    i = html.index("function handleJobUpdate(")
+    body = html[i:i + 2500]
+    assert "payload.job_id && payload.event" in body
+    assert "Number(ev.exit || 0) === 0 ? 'done' : 'failed'" in body
+    assert body.index("payload.job_id && payload.event") < body.index("if (!payload || !payload.id) return;")
+
+
+def test_s4_accepted_cards_surface_newer_worse_trials_and_orphans(html: str) -> None:
+    assert "r.newer_trial && r.newer_trial.worse" in html
+    assert "r.unregistered" in html
+    assert "data to <b>" in html

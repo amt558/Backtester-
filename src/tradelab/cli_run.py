@@ -278,6 +278,11 @@ def run(
         _t0 = _t.time()
         _emit.start("backtest")
         bt = run_backtest(strat, data, start=start, end=end, spy_close=spy_close)
+        try:
+            _last = max(df["Date"].max() for df in data.values() if df is not None and not df.empty)
+            bt.data_last_bar = str(_last)[:10]
+        except (ValueError, KeyError, TypeError):
+            bt.data_last_bar = None
         _emit.complete("backtest", duration_s=_t.time() - _t0)
         typer.echo(f"  Trades: {bt.metrics.total_trades}  PF: {bt.metrics.profit_factor}  "
                    f"Sharpe: {bt.metrics.sharpe_ratio}")

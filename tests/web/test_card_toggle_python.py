@@ -13,7 +13,12 @@ from tradelab.web.approve_strategy import accept_python_run
 def _make_python_card(tmp_path: Path) -> CardRegistry:
     rf = tmp_path / "reports" / "frog_2026-05-31_120000"
     rf.mkdir(parents=True)
-    (rf / "backtest_result.json").write_text("{}")
+    # S4: accept routes every run (not only on activate), so the folder needs a
+    # real backtest_result.json — an empty one fails closed.
+    from tradelab.results import BacktestMetrics, BacktestResult
+    bt = BacktestResult(strategy="frog", symbol="AAPL", timeframe="1D", start_date="2024-01-01",
+                        end_date="2026-04-20", metrics=BacktestMetrics(net_pnl=240.0))
+    (rf / "backtest_result.json").write_text(bt.model_dump_json())
     cj = tmp_path / "cards.json"
     cj.write_text("{}")
     reg = CardRegistry(cj)

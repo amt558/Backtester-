@@ -202,3 +202,44 @@ class CardRegistry:
             pass
         assert last_exc is not None
         raise last_exc
+
+
+class RetiredLog:
+    """Append-only record of retired cards (S4), kept beside cards.json as
+    ``cards_retired.json``: a JSON list of ``{"card": {...}, "retired_at": iso}``.
+
+    Retiring is still a hard delete from the registry — the daemon and the
+    tab must never see a retired card — but the board needs to know a
+    strategy *was* accepted once so it can sit in the Retired state instead
+    of pretending to be a fresh Candidate. The card's ``secret`` is dropped
+    before logging; nothing here is ever used to trade.
+    """
+
+    def __init__(self, cards_path: Path):
+        self.path = Path(cards_path).with_name("cards_retired.json")
+        self._lock = RLock()
+
+    def all(self) -> list[dict]:
+        with self._lock:
+            if not self.path.exists():
+                return []
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8-sig"))
+            except (json.JSONDecodeError, OSError):
+                return []
+            return data if isinstance(data, list) else []
+
+    def append(self, card: dict, *, retired_at: Optional[str] = None) -> dict:
+        from datetime import datetime, timezone
+        entry = {
+            "card": {k: v for k, v in card.items() if k != "secret"},
+            "retired_at": retired_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        with self._lock:
+            data = self.all()
+            data.append(entry)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, self.path)
+        return entry

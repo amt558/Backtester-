@@ -458,33 +458,39 @@ def accept_python_run(
         raise FileNotFoundError(f"report folder not found: {rf}")
 
     normalized_verdict = (verdict or "").strip().upper()
-    route = None
-    if activate:
-        route, fatal = route_promotion(
-            normalized_verdict, _load_bt_metrics(rf), dsr_probability
+    # S4: the route is computed on EVERY accept, not only when activating.
+    # An accept with activate=False (the S3 tab flow: card created Off) used
+    # to skip the gate entirely, so a BLOCKED run could become a card with no
+    # promotion_route — and the enable gate then had nothing to refuse. Now a
+    # BLOCKED run never becomes a card; ADVISORY is refused too (Amit's
+    # 2026-06-11 rule: only CLEAR runs become cards) until the S6 override
+    # policy supplies a typed confirmation + reason + expiry; and every card
+    # carries its route.
+    route, fatal = route_promotion(
+        normalized_verdict, _load_bt_metrics(rf), dsr_probability
+    )
+    if route == ROUTE_BLOCKED:
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="python", verdict=normalized_verdict, promotion_route=route,
+            blockers=fatal, override_used=bool(confirm_non_robust),
+            activated=False,
         )
-        if route == ROUTE_BLOCKED:
-            _log_ledger(
-                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
-                path="python", verdict=normalized_verdict, promotion_route=route,
-                blockers=fatal, override_used=bool(confirm_non_robust),
-                activated=False,
-            )
-            raise PromotionBlocked(
-                "Activation blocked by hard disqualifiers: "
-                f"{', '.join(fatal)}. confirm_non_robust does not apply.",
-                fatal,
-            )
-        if route == ROUTE_ADVISORY and not confirm_non_robust:
-            _log_ledger(
-                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
-                path="python", verdict=normalized_verdict, promotion_route=route,
-                blockers=[], override_used=False, activated=False,
-            )
-            raise AdvisoryRefused(
-                f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
-                f"Re-submit with confirm_non_robust=true to accept anyway."
-            )
+        raise PromotionBlocked(
+            "Activation blocked by hard disqualifiers: "
+            f"{', '.join(fatal)}. confirm_non_robust does not apply.",
+            fatal,
+        )
+    if route == ROUTE_ADVISORY and not confirm_non_robust:
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="python", verdict=normalized_verdict, promotion_route=route,
+            blockers=[], override_used=False, activated=False,
+        )
+        raise AdvisoryRefused(
+            f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
+            f"Re-submit with confirm_non_robust=true to accept anyway."
+        )
 
     version = registry.next_version_for(base_name)
     card_id = f"{base_name}-v{version}"
@@ -508,10 +514,10 @@ def accept_python_run(
         "source": "python",
         "allocation_usd": allocation_usd,
     }
+    card["promotion_route"] = route
     if activate:
         card["activated_at"] = created_at
         card["activated_verdict"] = normalized_verdict
-        card["promotion_route"] = route
     registry.create(card_id, card)
     if activate:
         # CLEAR, or ADVISORY passed via confirm_non_robust (BLOCKED and

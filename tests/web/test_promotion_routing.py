@@ -408,9 +408,9 @@ def test_accept_missing_stored_dsr_preserves_none_semantics(
 
 def _py_accept_body(scored, *, include_dsr=None, scoring_run_id=None, **overrides):
     body = {
-        "base_name": "frog", "symbol": "AMZN", "timeframe": "1H",
+        "base_name": "smoke-amzn", "symbol": "AMZN", "timeframe": "1H",
         "report_folder": scored["report_folder"],
-        "strategy": "frog",
+        "strategy": "smoke-amzn",
         "verdict": "ROBUST",
         "scoring_run_id": scored["scoring_run_id"] if scoring_run_id is None else scoring_run_id,
         "activate": True,
@@ -451,14 +451,16 @@ def test_accept_python_unknown_run_id_drops_client_value(
     write_backtest_result(Path(scored["report_folder"]), net_pnl=500.0,
                           symbol="AMZN", timeframe="1H")
 
-    with caplog.at_level("WARNING"):
-        raw, status = handlers.handle_post_with_status(
-            "/tradelab/strategies/accept",
-            _py_accept_body(scored, include_dsr=0.5, scoring_run_id="no-such-run-id"))
-    assert status == 200, raw
-    data = json.loads(raw)["data"]
-    assert data["card_id"] == "frog-v1"
-    assert "dsr" in caplog.text.lower()
+    # S4 (2026-09-03) supersedes decision (b) here: a run id NOT in the runs
+    # table is refused outright (404) — accept is routed on the audit row, so
+    # with no row the client's dsr/verdict/folder are never consulted.
+    raw, status = handlers.handle_post_with_status(
+        "/tradelab/strategies/accept",
+        _py_accept_body(scored, include_dsr=0.5, scoring_run_id="no-such-run-id"))
+    assert status == 404, raw
+    assert "unknown scoring_run_id" in json.loads(raw)["error"]
+    from tradelab.live.cards import CardRegistry
+    assert CardRegistry(handlers._cards_path()).count() == 0
 
 
 def test_accept_omitted_run_id_blocks_activation(tmp_path, monkeypatch, write_backtest_result):
@@ -494,15 +496,15 @@ def test_accept_python_omitted_run_id_blocks_activation(tmp_path, monkeypatch, w
                           symbol="AMZN", timeframe="1H")
 
     body = json.dumps({
-        "base_name": "frog", "symbol": "AMZN", "timeframe": "1H",
-        "report_folder": scored["report_folder"], "strategy": "frog",
+        "base_name": "smoke-amzn", "symbol": "AMZN", "timeframe": "1H",
+        "report_folder": scored["report_folder"], "strategy": "smoke-amzn",
         "verdict": "ROBUST", "activate": True,
         # scoring_run_id omitted
     }).encode()
     raw, status = handlers.handle_post_with_status("/tradelab/strategies/accept", body)
     parsed = json.loads(raw)
     assert status == 422, raw
-    assert "scoring_run_id required for activation" in (parsed.get("error") or "")
+    assert "scoring_run_id required" in (parsed.get("error") or "")   # S4: on every accept
 
 
 # ─── WP5: ADVISORY gets its own 422 envelope (AdvisoryRefused) ───────────

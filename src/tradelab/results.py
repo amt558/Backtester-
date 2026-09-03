@@ -58,6 +58,10 @@ class BacktestResult(BaseModel):
     timeframe: str = "1D"
     start_date: str
     end_date: str
+    # S4: the last bar the data ACTUALLY contained (max Date across symbols).
+    # end_date is the requested window end; when the download fell back to a
+    # stale cache the two differ by months, and the board must say so.
+    data_last_bar: Optional[str] = None
     params: dict = Field(default_factory=dict)
     metrics: BacktestMetrics = Field(default_factory=BacktestMetrics)
     trades: list[Trade] = Field(default_factory=list)

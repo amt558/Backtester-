@@ -184,10 +184,24 @@ def test_patch_refuses_enable_for_blocked_route(tmp_path, monkeypatch):
 
 
 def test_patch_allows_enable_for_clear_route_with_allocation(tmp_path, monkeypatch):
-    cards = _seed(tmp_path, monkeypatch, promotion_route="ADVISORY", allocation_usd=500)
+    cards = _seed(tmp_path, monkeypatch, promotion_route="CLEAR", allocation_usd=500)
     body, status = _patch(handlers, "alpha-v1", {"status": "enabled"})
     assert status == 200
     assert json.loads(cards.read_text())["alpha-v1"]["status"] == "enabled"
+
+
+def test_patch_refuses_enable_for_advisory_without_override_and_for_no_route(tmp_path, monkeypatch):
+    """S4: ADVISORY needs an override record (S6 writes it); a card with no
+    route on record (accepted before routes were stored) is refused too."""
+    _seed(tmp_path, monkeypatch, promotion_route="ADVISORY", allocation_usd=500)
+    body, status = _patch(handlers, "alpha-v1", {"status": "enabled"})
+    assert status == 422 and "ADVISORY" in body
+    _seed(tmp_path, monkeypatch, promotion_route="ADVISORY", allocation_usd=500,
+          override={"reason": "test", "expires_at": "2099-01-01"})
+    assert _patch(handlers, "alpha-v1", {"status": "enabled"})[1] == 200
+    _seed(tmp_path, monkeypatch, allocation_usd=500)
+    body, status = _patch(handlers, "alpha-v1", {"status": "enabled"})
+    assert status == 422 and "no promotion route" in body
 
 
 def test_patch_disable_and_allocation_never_gated(tmp_path, monkeypatch):

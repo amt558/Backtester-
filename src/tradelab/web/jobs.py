@@ -185,8 +185,12 @@ class JobManager:
             if "--progress-log" not in argv_with_log:
                 argv_with_log.extend(["--progress-log", str(progress_path)])
 
-            if log_path:
-                Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+            # S4: every job leaves a trail. A board Trial that died with
+            # "Python exception (see log)" had no log to see — the generic
+            # /tradelab/jobs path never set one. Default to the job folder.
+            if not log_path:
+                log_path = str(progress_path.parent / "run.log")
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
             job = Job(
                 id=job_id,
@@ -295,6 +299,18 @@ class JobManager:
                 next_id = self._queue.pop(0)
                 self._start(next_id)
             self._persist()
+            final_status = job.status.value
+        # S4 (specialist review): the SSE hook used to fire only from progress
+        # events, i.e. BEFORE the status flipped here, and never at all for a
+        # process that died without writing its 'done' line (import error,
+        # kill). Broadcast the settled state once, after the flip, so the
+        # board and the Runs table reload against the truth.
+        if self._on_state_change:
+            try:
+                self._on_state_change(job_id, {"type": "state", "status": final_status,
+                                               "exit": proc.returncode, "settled": True})
+            except Exception:  # noqa: BLE001 — a listener must not break the reaper
+                pass
 
     def _on_progress_event(self, job_id: str, event: dict) -> None:
         """Callback fired by ProgressTailer for each parsed event."""

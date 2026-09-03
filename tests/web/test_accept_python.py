@@ -22,11 +22,13 @@ def _registry(tmp_path: Path) -> CardRegistry:
 
 def test_accept_python_creates_disabled_card(tmp_path, write_backtest_result):
     rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
+    # S4: only a CLEAR route (ROBUST verdict, clean floor) becomes a card —
+    # even Off. INCONCLUSIVE is ADVISORY and refused until the S6 override.
     card = accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
-        verdict="INCONCLUSIVE", dsr_probability=0.4, scoring_run_id="run-1",
+        verdict="ROBUST", dsr_probability=0.9, scoring_run_id="run-1",
         strategy="frog", registry=reg, reports_root=tmp_path / "reports", activate=False)
-    assert card["card_id"] == "frog-v1"
+    assert card["card_id"] == "frog-v1" and card["promotion_route"] == "CLEAR"
     assert card["status"] == "disabled"
     assert card["mode"] == "paper"
     assert card["source"] == "python"
@@ -64,10 +66,12 @@ def test_accept_route_requires_fields():
     assert status == 400
 
 
-def test_accept_python_records_allocation(tmp_path):
+def test_accept_python_records_allocation(tmp_path, write_backtest_result):
     from tradelab.web.approve_strategy import accept_python_run
     from tradelab.live.cards import CardRegistry
-    rf = tmp_path / "reports" / "frog_x"; rf.mkdir(parents=True); (rf/"backtest_result.json").write_text("{}")
+    # S4: the route gate runs on every accept, so the folder needs a real
+    # backtest_result.json even when activate=False.
+    rf = _run_folder(tmp_path, write_backtest_result)
     cj = tmp_path/"cards.json"; cj.write_text("{}"); reg = CardRegistry(cj)
     card = accept_python_run(base_name="frog", symbol="AAPL", timeframe="1D",
         report_folder=str(rf), verdict="ROBUST", dsr_probability=0.9, scoring_run_id="r",
@@ -132,3 +136,16 @@ def test_patch_allocation_usd_accepts_null(tmp_path, monkeypatch):
     assert status == 200
     # Confirm persisted — read a fresh registry from the file
     assert CardRegistry(cj).get("frog-v1")["allocation_usd"] is None
+
+
+def test_accept_python_off_still_refuses_advisory(tmp_path, write_backtest_result):
+    """S4 (specialist review): activate=False used to skip the ADVISORY refusal,
+    creating Off cards for non-ROBUST runs against the 2026-06-11 rule."""
+    from tradelab.web.approve_strategy import AdvisoryRefused
+    rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
+    with pytest.raises(AdvisoryRefused):
+        accept_python_run(
+            base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
+            verdict="INCONCLUSIVE", dsr_probability=0.4, scoring_run_id="run-1",
+            strategy="frog", registry=reg, reports_root=tmp_path / "reports", activate=False)
+    assert reg.get("frog-v1") is None

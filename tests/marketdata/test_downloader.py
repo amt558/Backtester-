@@ -136,3 +136,29 @@ def test_downloader_continues_on_per_symbol_failure(monkeypatch):
         out = download_symbols(["AAPL", "BADSYM"], start="2024-01-01", end="2024-03-01")
     assert "AAPL" in out
     assert "BADSYM" not in out
+
+
+def test_downloader_falls_back_to_stale_cache_when_download_fails(monkeypatch, recwarn):
+    """S4: a lapsed data subscription must not turn every trial into
+    'No data retrieved' while a usable (stale) cache exists. The stale copy
+    is used, sliced to the window, and loudly labelled."""
+    monkeypatch.setenv("TWELVEDATA_API_KEY", "fake_key")
+    from tradelab.marketdata import cache
+    cache.write("AAPL", _mock_ohlcv(60), source="test")   # ends 2024-03-22 → stale today
+    with patch("tradelab.marketdata.downloader.td.download", return_value=None) as td_mock, \
+         patch("tradelab.marketdata.downloader.yf_src.download") as yf_mock:
+        out = download_symbols(["AAPL"], start="2024-02-01", end="2026-01-01")
+    assert td_mock.called and not yf_mock.called
+    assert "AAPL" in out and not out["AAPL"].empty
+    assert out["AAPL"]["Date"].min() >= pd.Timestamp("2024-02-01")
+    msgs = [str(w.message) for w in recwarn]
+    assert any("STALE cache" in m and "AAPL" in m for m in msgs)
+
+
+def test_downloader_still_fails_without_any_cache(monkeypatch, recwarn):
+    monkeypatch.setenv("TWELVEDATA_API_KEY", "fake_key")
+    with patch("tradelab.marketdata.downloader.td.download", return_value=None), \
+         patch("tradelab.marketdata.downloader.yf_src.download"):
+        out = download_symbols(["ZZZZ"], start="2024-01-01", end="2024-03-01")
+    assert "ZZZZ" not in out
+    assert any("Failed to download ZZZZ" in str(w.message) for w in recwarn)

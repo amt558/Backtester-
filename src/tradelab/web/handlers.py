@@ -719,6 +719,30 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         )
         return _ok(view), 200
 
+    m = re.match(r"^/tradelab/jobs/([^/]+)/log$", path)
+    if m:
+        # S4: tail of a job's combined stdout+stderr (run.log beside its
+        # progress.jsonl). Plain text; the board links here for a failed trial.
+        job_id = m.group(1)
+        if not re.match(r"^[0-9a-f]{32}$", job_id):
+            return _err("bad job id"), 400
+        jm = _get_job_manager()
+        log = Path(jm.cache_root) / "jobs" / job_id / "run.log"
+        if not log.exists():
+            return _err("no log for this job (it predates per-job logs, or is still running)"), 404
+        try:
+            data = log.read_bytes()[-16000:].decode("utf-8", errors="replace")
+        except OSError as e:
+            return _err(f"log unreadable: {e}"), 500
+        return _ok({"job_id": job_id, "tail": data, "truncated": log.stat().st_size > 16000}), 200
+
+    if path == "/tradelab/cards/retired":
+        from tradelab.live.cards import RetiredLog
+        return _ok({"retired": RetiredLog(_cards_path()).all()}), 200
+
+    if path == "/tradelab/board":
+        return _ok(_build_board()), 200
+
     if path == "/tradelab/baselines":
         # Latest backtest metrics per strategy, fed to Command Center's
         # Strategy Divergence KPI so it compares against fresh OOS values
@@ -1427,18 +1451,35 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         # the audit row; never route on the client value when activating.
         activate = bool(payload.get("activate", False))
         scoring_run_id = payload.get("scoring_run_id", "")
-        if activate and not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
-            return _err("scoring_run_id required for activation"), 422
-        dsr_probability = payload.get("dsr_probability")
-        if activate:
-            dsr_probability = _resolve_server_dsr(
-                scoring_run_id, dsr_probability, _db_path()
-            )
+        # S4 (specialist review): every accept — not only activation — is
+        # routed on SERVER facts. The run id is mandatory; verdict, DSR and the
+        # report folder are read from the audit row, never from the payload,
+        # so the board and Accept can never disagree and a client cannot
+        # upgrade a BLOCKED/ADVISORY run by posting "ROBUST" or another
+        # run's folder.
+        if not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
+            return _err("scoring_run_id required — accept is routed on the audit row"), 422
+        from tradelab.audit.history import get_run
+        row = get_run(scoring_run_id, db_path=_db_path())
+        if row is None:
+            return _err(f"unknown scoring_run_id {scoring_run_id!r}"), 404
+        if (row.strategy_name or "") != (payload.get("strategy") or ""):
+            return _err(f"run {scoring_run_id!r} belongs to {row.strategy_name!r}, "
+                        f"not {payload.get('strategy')!r}"), 422
+        lookup = audit_reader.resolve_run_folder(scoring_run_id, db_path=_db_path())
+        if lookup.status != "ok" or lookup.folder is None:
+            return _err(f"run {scoring_run_id!r} has no report folder"), 422
+        server_folder = str(lookup.folder).replace("\\", "/")
+        client_folder = str(payload.get("report_folder") or "").replace("\\", "/").rstrip("/")
+        if client_folder and Path(client_folder).resolve() != Path(server_folder).resolve():
+            return _err("report_folder does not match the run's own folder"), 422
+        dsr_probability = _resolve_server_dsr(scoring_run_id, payload.get("dsr_probability"), _db_path())
+        server_verdict = row.verdict or "INCONCLUSIVE"
         try:
             card = approve_strategy.accept_python_run(
                 base_name=payload["base_name"], symbol=payload["symbol"],
-                timeframe=payload["timeframe"], report_folder=payload["report_folder"],
-                verdict=payload.get("verdict", "INCONCLUSIVE"),
+                timeframe=payload["timeframe"], report_folder=server_folder,
+                verdict=server_verdict,
                 dsr_probability=dsr_probability,
                 scoring_run_id=scoring_run_id,
                 strategy=payload["strategy"],
@@ -1589,10 +1630,23 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err("no cards.json"), 404
         from tradelab.live.cards import CardRegistry
         reg = CardRegistry(cards_path)
-        updated, failed = reg.bulk_update_status(
-            [str(cid) for cid in ids], status_val
-        )
-        return _ok({"updated": updated, "failed": failed}), 200
+        wanted = [str(cid) for cid in ids]
+        refused: list[dict] = []
+        if status_val == "enabled":
+            # S4 (specialist review): the Live Trading "Enable Selected" button
+            # reached the registry with no route check — the same gate as the
+            # per-card PATCH applies here, card by card.
+            allowed = []
+            for cid in wanted:
+                card = reg.get(cid)
+                gate = _enable_gate(card, {"status": "enabled"}) if card is not None else None
+                if gate:
+                    refused.append({"id": cid, "reason": gate})   # same shape as bulk_update_status
+                else:
+                    allowed.append(cid)
+            wanted = allowed
+        updated, failed = reg.bulk_update_status(wanted, status_val) if wanted else ([], [])
+        return _ok({"updated": updated, "failed": list(failed) + refused}), 200
 
     if path == "/tradelab/cards/bulk-delete":
         ids = payload.get("ids")
@@ -1603,9 +1657,21 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         cards_path = _cards_path()
         if not cards_path.exists():
             return _err("no cards.json"), 404
-        from tradelab.live.cards import CardRegistry
+        from tradelab.live.cards import CardRegistry, RetiredLog
         reg = CardRegistry(cards_path)
-        deleted, failed = reg.bulk_delete([str(cid) for cid in ids])
+        wanted = [str(cid) for cid in ids]
+        snapshot = {cid: reg.get(cid) for cid in wanted}
+        deleted, failed = reg.bulk_delete(wanted)
+        # S4: bulk retirement is still retirement — the board must see it.
+        log = RetiredLog(cards_path)
+        for cid in deleted:
+            card = snapshot.get(cid)
+            if card is not None:
+                try:
+                    log.append(card)
+                except Exception as e:  # noqa: BLE001
+                    import logging
+                    logging.getLogger(__name__).warning("retired log write failed: %s", e)
         return _ok({"deleted": deleted, "failed": failed}), 200
 
     if path == "/tradelab/live/config/test-notification":
@@ -1946,6 +2012,110 @@ def _flatten_card(card_id: str, payload: dict, *, deps: Optional[dict] = None) -
     return _ok(out), 200
 
 
+def _route_for_run(run: dict) -> tuple[Optional[str], list]:
+    """Promotion route for an audit row, computed exactly as Accept computes
+    it (verdict + hard disqualifiers over the run folder's backtest_result.json).
+    (None, []) when the folder cannot be scored — the board then treats the
+    run as not a trial rather than guessing."""
+    from pathlib import Path as _P
+    from tradelab.web import approve_strategy
+    rcp = run.get("report_card_html_path")
+    if not rcp:
+        return None, []
+    p = _P(rcp)
+    # report_card_html_path names dashboard.html inside the run folder (the
+    # file itself may be gone); the folder is what carries the metrics.
+    folder = p if p.is_dir() else p.parent
+    if not folder.is_dir():
+        return None, []
+    try:
+        metrics = approve_strategy._load_bt_metrics(folder)
+    except Exception:  # noqa: BLE001 — fail closed: unscorable = not tried
+        return None, []
+    route, fatal = approve_strategy.route_promotion(
+        (run.get("verdict") or "").upper(), metrics, run.get("dsr_probability"),
+    )
+    return route, list(fatal)
+
+
+def _data_end_for_run(run: dict) -> Optional[str]:
+    """Last bar the run's data ACTUALLY contained (backtest_result.json
+    ``data_last_bar``), so the board can say "data to YYYY-MM-DD" — a verdict
+    on bars that stop three months ago must not look like a fresh one. Runs
+    that predate the field return None (never the requested ``end_date``,
+    which would be a confident wrong label on exactly the stale case)."""
+    from pathlib import Path as _P
+    rcp = run.get("report_card_html_path")
+    if not rcp:
+        return None
+    p = _P(rcp)
+    folder = p if p.is_dir() else p.parent
+    bt = folder / "backtest_result.json"
+    if not bt.exists():
+        return None
+    try:
+        d = json.loads(bt.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    end = d.get("data_last_bar")
+    return str(end)[:10] if end else None
+
+
+def _build_board() -> dict:
+    """Gather the board's inputs (registry, audit DB, cards, retired log,
+    jobs, declared symbols) and hand them to the pure builder."""
+    from tradelab.web import board as board_mod
+    from tradelab.live.cards import CardRegistry, RetiredLog
+    from tradelab.registry import list_registered_strategies, load_strategy_class
+
+    try:
+        registered = list(list_registered_strategies().keys())
+    except Exception as e:  # noqa: BLE001
+        return {"rows": [], "counts": {}, "error": f"registry error: {e}"}
+
+    latest: dict[str, dict] = {}
+    for r in audit_reader.list_runs(limit=5000, db_path=_db_path()):
+        name = r.get("strategy_name")
+        if name and name not in latest:   # list_runs is newest-first
+            latest[name] = r
+
+    cards_path = _cards_path()
+    cards = CardRegistry(cards_path).all() if cards_path.exists() else {}
+    retired = RetiredLog(cards_path).all()
+    try:
+        jobs = [j.to_dict() for j in _get_job_manager().list_jobs()]
+    except Exception:  # noqa: BLE001
+        jobs = []
+
+    def _symbols(name: str) -> list[str]:
+        from tradelab.web.new_strategy import declared_symbols
+        return declared_symbols(load_strategy_class(name))
+
+    # Not strategies to promote: canaries (their own panel; never accept-able)
+    # and abstract bases registered by mistake (S0 finding F7).
+    from tradelab.cli_canary import CANARY_NAMES
+    from tradelab.web.new_strategy import _is_abstract_base
+    excluded: dict[str, str] = {}
+    for name in registered:
+        if name in CANARY_NAMES:
+            excluded[name] = "canary — engine-integrity probe, see the Canaries panel"
+            continue
+        try:
+            if _is_abstract_base(load_strategy_class(name)):
+                excluded[name] = "abstract base class registered in tradelab.yaml — remove the entry"
+        except Exception:  # noqa: BLE001 — unloadable stays on the board so its Trial can fail loudly
+            pass
+
+    out = board_mod.build_board(
+        registered=registered, latest_runs=latest, route_for_run=_route_for_run,
+        cards=cards, retired=retired, jobs=jobs, symbols_for=_symbols, excluded=excluded,
+        data_end_for=_data_end_for_run,
+    )
+    from datetime import datetime, timezone
+    out["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return out
+
+
 def _enable_gate(card: dict, payload: dict) -> Optional[str]:
     """Server-side refusal for turning a card on. The tab hides the option,
     but the registry must not trust the browser: a BLOCKED promotion route
@@ -1957,6 +2127,12 @@ def _enable_gate(card: dict, payload: dict) -> Optional[str]:
     route = (card.get("promotion_route") or "").upper()
     if route == "BLOCKED":
         return "refused: promotion route is BLOCKED (hard disqualifier) — this card cannot be enabled"
+    if route == "ADVISORY" and not card.get("override"):
+        return ("refused: promotion route is ADVISORY — enabling needs an override "
+                "(typed confirmation, reason, expiry), which arrives in S6")
+    if route not in ("CLEAR", "ADVISORY"):
+        return ("refused: this card has no promotion route on record (accepted before routes "
+                "were stored) — retire it and re-accept from a trial")
     return None
 
 
@@ -2269,12 +2445,21 @@ def handle_delete_with_status_with_body(path: str, body: bytes) -> Tuple[str, in
         cards_path = _cards_path()
         if not cards_path.exists():
             return _err("card not found"), 404
-        from tradelab.live.cards import CardRegistry
+        from tradelab.live.cards import CardRegistry, RetiredLog
         reg = CardRegistry(cards_path)
+        card = reg.get(card_id)
         try:
             reg.delete(card_id)
         except KeyError:
             return _err("card not found"), 404
+        # S4: the board shows the strategy as Retired rather than as a fresh
+        # Candidate. Logging must never undo the delete — fail open.
+        if card is not None:
+            try:
+                RetiredLog(cards_path).append(card)
+            except Exception as e:  # noqa: BLE001
+                import logging
+                logging.getLogger(__name__).warning("retired log write failed: %s", e)
         return _ok({"deleted": card_id}), 200
 
     # Phase 1 (audit slice C): single-run delete threads cascaded_card_ids

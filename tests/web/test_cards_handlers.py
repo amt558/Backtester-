@@ -241,6 +241,9 @@ def _seed_card(tmp_path: Path, monkeypatch, card_id: str, **fields) -> Path:
     base = {
         "card_id": card_id, "secret": "x" * 32, "symbol": "AAPL",
         "status": "disabled", "quantity": 1,
+        # S4: enabling is refused unless the card carries a CLEAR route (or an
+        # ADVISORY route with an override). Seed CLEAR so status tests still pass.
+        "promotion_route": "CLEAR",
     }
     base.update(fields)
     cards_path.write_text(json.dumps({card_id: base}), encoding="utf-8")
@@ -352,7 +355,9 @@ def _seed_n_cards(tmp_path, monkeypatch, ids):
     cards_path = tmp_path / "cards.json"
     cards = {
         cid: {"card_id": cid, "secret": "x" * 32, "symbol": "AAPL",
-              "status": "disabled", "quantity": 1}
+              "status": "disabled", "quantity": 1,
+              # S4: bulk-enable runs the same route gate as PATCH.
+              "promotion_route": "CLEAR"}
         for cid in ids
     }
     cards_path.write_text(json.dumps(cards), encoding="utf-8")
@@ -453,3 +458,35 @@ def test_tracking_error_endpoint_returns_insufficient_when_no_csv(
     payload = json.loads(body)["data"]
     assert payload["status"] == "insufficient"
     assert payload["n_live_trades"] == 0
+
+
+def test_bulk_toggle_enable_runs_the_route_gate(tmp_path: Path, monkeypatch):
+    """S4 (specialist review): 'Enable Selected' on Live Trading must not
+    bypass the gate that PATCH enforces — BLOCKED, ADVISORY-without-override
+    and route-less cards are refused with a reason; CLEAR goes through."""
+    cards_path = tmp_path / "cards.json"
+    cards_path.write_text(json.dumps({
+        "blk-v1": {"card_id": "blk-v1", "status": "disabled", "promotion_route": "BLOCKED"},
+        "adv-v1": {"card_id": "adv-v1", "status": "disabled", "promotion_route": "ADVISORY"},
+        "old-v1": {"card_id": "old-v1", "status": "disabled"},
+        "ok-v1":  {"card_id": "ok-v1",  "status": "disabled", "promotion_route": "CLEAR"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(handlers, "_cards_path", lambda: cards_path)
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-toggle",
+        json.dumps({"ids": ["blk-v1", "adv-v1", "old-v1", "ok-v1"], "status": "enabled"}).encode(),
+    )
+    assert status == 200
+    payload = json.loads(body)["data"]
+    assert payload["updated"] == ["ok-v1"]
+    assert {f["id"] for f in payload["failed"]} == {"blk-v1", "adv-v1", "old-v1"}
+    assert all(f["reason"].startswith("refused:") for f in payload["failed"])
+    on_disk = json.loads(cards_path.read_text())
+    assert on_disk["ok-v1"]["status"] == "enabled"
+    assert all(on_disk[c]["status"] == "disabled" for c in ("blk-v1", "adv-v1", "old-v1"))
+    # disabling is never gated
+    body, status = handlers.handle_post_with_status(
+        "/tradelab/cards/bulk-toggle",
+        json.dumps({"ids": ["blk-v1", "ok-v1"], "status": "disabled"}).encode(),
+    )
+    assert json.loads(body)["data"]["updated"] == ["blk-v1", "ok-v1"]

@@ -91,6 +91,23 @@ def download_symbols(
                 source_used = "yfinance"
 
         if df is None or df.empty:
+            # S4: a failed download must not throw away data we already hold.
+            # With the data subscription lapsed every trial was dying with
+            # "No data retrieved for any symbol" while a 3-month-old cache sat
+            # on disk. Fall back to the stale cache and SAY SO — the warning
+            # lands in the run log and the bars simply end where the cache ends.
+            stale = cache.read(sym_u, timeframe)
+            if stale is not None and not stale.empty:
+                last_bar = pd.Timestamp(stale["Date"].max())
+                age_days = max(0, (pd.Timestamp.now().normalize() - last_bar.normalize()).days)
+                warnings.warn(
+                    f"Download failed for {sym_u}; using STALE cache ending {last_bar.date()} "
+                    f"({age_days} days old). Refresh the data source before trusting recent bars.",
+                    RuntimeWarning, stacklevel=2,
+                )
+                mask = (stale["Date"] >= pd.Timestamp(start)) & (stale["Date"] <= pd.Timestamp(end))
+                out[sym_u] = stale.loc[mask].reset_index(drop=True)
+                continue
             warnings.warn(f"Failed to download {sym_u} from any source.", RuntimeWarning, stacklevel=2)
             continue
 
