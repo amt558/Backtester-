@@ -24,8 +24,10 @@ def _route(run):
 
 
 def _board(**kw):
+    # S5: the S4 matrix assumes a Full trial of current code/thresholds exists
+    # (full_trial_for → ok); test_s5_ladder.py covers the other cases.
     args = dict(registered=[], latest_runs={}, route_for_run=_route, cards={}, retired=[], jobs=[],
-                symbols_for=lambda n: ["NVDA"])
+                symbols_for=lambda n: ["NVDA"], full_trial_for=lambda name, run: {"ok": True, "code": None, "reason": None})
     args.update(kw)
     return board.build_board(**args)
 
@@ -344,8 +346,15 @@ def _seed_run(tmp_path, monkeypatch, write_backtest_result, *, verdict="ROBUST",
     folder.mkdir(parents=True)
     write_backtest_result(folder, net_pnl=net_pnl, strategy="alpha")
     db = tmp_path / "hist.db"
+    # S5: a Full trial of the current file under the current thresholds
+    from tradelab import ladder
+    from tradelab.config import get_config
+    code, thr = handlers._current_hashes_for("alpha")
     run_id = record_run("alpha", verdict=verdict, dsr_probability=dsr,
-                        report_card_html_path=str(folder / "dashboard.html"), db_path=db)
+                        report_card_html_path=str(folder / "dashboard.html"), db_path=db,
+                        tier="full", code_hash=code or "nocode", thresholds_hash=thr)
+    if code is None:   # "alpha" is not a real registered strategy: pin the hash the handler will compute
+        monkeypatch.setattr(handlers, "_current_hashes_for", lambda name: ("nocode", thr))
     cards = tmp_path / "cards.json"; cards.write_text("{}")
     monkeypatch.setattr(handlers, "_db_path", lambda: db)
     monkeypatch.setattr(handlers, "_cards_path", lambda: cards)

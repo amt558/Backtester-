@@ -307,33 +307,33 @@ def accept_scored(
         )
 
     # Three-way promotion route (Step 3). Gate before any side effects.
+    # S5 (specialist): routed on EVERY accept, not only when activating —
+    # only a CLEAR run becomes a card, Off or not, on this path too.
     normalized_verdict = (verdict or "").strip().upper()
-    route = None
-    if activate:
-        route, fatal = route_promotion(
-            normalized_verdict, _load_bt_metrics(rf), dsr_probability
+    route, fatal = route_promotion(
+        normalized_verdict, _load_bt_metrics(rf), dsr_probability
+    )
+    if route == ROUTE_BLOCKED:
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="pine", verdict=normalized_verdict, promotion_route=route,
+            blockers=fatal, override_used=False, activated=False,
         )
-        if route == ROUTE_BLOCKED:
-            _log_ledger(
-                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
-                path="pine", verdict=normalized_verdict, promotion_route=route,
-                blockers=fatal, override_used=False, activated=False,
-            )
-            raise PromotionBlocked(
-                "Activation blocked by hard disqualifiers: "
-                f"{', '.join(fatal)}. Non-overridable.",
-                fatal,
-            )
-        if route == ROUTE_ADVISORY:
-            _log_ledger(
-                db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
-                path="pine", verdict=normalized_verdict, promotion_route=route,
-                blockers=[], override_used=False, activated=False,
-            )
-            raise AdvisoryRefused(
-                f"Activation requires ROBUST verdict; got "
-                f"{normalized_verdict or 'unknown'}"
-            )
+        raise PromotionBlocked(
+            "Activation blocked by hard disqualifiers: "
+            f"{', '.join(fatal)}. Non-overridable.",
+            fatal,
+        )
+    if route == ROUTE_ADVISORY:
+        _log_ledger(
+            db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+            path="pine", verdict=normalized_verdict, promotion_route=route,
+            blockers=[], override_used=False, activated=False,
+        )
+        raise AdvisoryRefused(
+            f"Activation requires ROBUST verdict; got "
+            f"{normalized_verdict or 'unknown'}"
+        )
 
     version = registry.next_version_for(base_name)
     card_id = f"{base_name}-v{version}"
@@ -396,10 +396,10 @@ def accept_scored(
             "pine_archive_path": str(archive_dir).replace("\\", "/"),
             "scoring_run_id":    scoring_run_id,
         }
+        card["promotion_route"] = route
         if activate:
             card["activated_at"] = created_at
             card["activated_verdict"] = normalized_verdict
-            card["promotion_route"] = route
         registry.create(card_id, card)
     except Exception:
         # Rollback the pine archive dir so a retry can re-create it cleanly.

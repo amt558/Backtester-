@@ -88,7 +88,7 @@ def test_accept_scored_happy(tmp_path: Path, smoke_csv_text: str):
     result = approve_strategy.accept_scored(
         base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
         report_folder=scored["report_folder"],
-        verdict=scored["verdict"],
+        verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
         dsr_probability=scored["dsr_probability"],
         scoring_run_id=scored["scoring_run_id"],
         registry=registry,
@@ -122,7 +122,7 @@ def test_accept_scored_bumps_version_on_reuse(tmp_path: Path, smoke_csv_text: st
     r1 = approve_strategy.accept_scored(
         base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
         report_folder=scored1["report_folder"],
-        verdict=scored1["verdict"],
+        verdict="ROBUST",   # S5: only CLEAR becomes a card
         dsr_probability=scored1["dsr_probability"],
         scoring_run_id=scored1["scoring_run_id"],
         registry=registry,
@@ -133,7 +133,7 @@ def test_accept_scored_bumps_version_on_reuse(tmp_path: Path, smoke_csv_text: st
     r2 = approve_strategy.accept_scored(
         base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
         report_folder=scored2["report_folder"],
-        verdict=scored2["verdict"],
+        verdict="ROBUST",
         dsr_probability=scored2["dsr_probability"],
         scoring_run_id=scored2["scoring_run_id"],
         registry=registry,
@@ -159,7 +159,7 @@ def test_accept_scored_refuses_report_folder_outside_reports_root(tmp_path: Path
         approve_strategy.accept_scored(
             base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
             report_folder=scored["report_folder"],
-            verdict=scored["verdict"],
+            verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
             dsr_probability=scored["dsr_probability"],
             scoring_run_id=scored["scoring_run_id"],
             registry=registry,
@@ -184,7 +184,7 @@ def test_accept_scored_refuses_missing_pine(tmp_path: Path, smoke_csv_text: str)
         approve_strategy.accept_scored(
             base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
             report_folder=scored["report_folder"],
-            verdict=scored["verdict"],
+            verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
             dsr_probability=scored["dsr_probability"],
             scoring_run_id=scored["scoring_run_id"],
             registry=registry,
@@ -208,7 +208,7 @@ def test_accept_scored_rolls_back_pine_archive_on_registry_failure(
         approve_strategy.accept_scored(
             base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
             report_folder=scored["report_folder"],
-            verdict=scored["verdict"],
+            verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
             dsr_probability=scored["dsr_probability"],
             scoring_run_id=scored["scoring_run_id"],
             registry=registry,
@@ -248,7 +248,7 @@ def test_accept_scored_continues_when_returns_derivation_fails(
         result = approve_strategy.accept_scored(
             base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
             report_folder=scored["report_folder"],
-            verdict=scored["verdict"],
+            verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
             dsr_probability=scored["dsr_probability"],
             scoring_run_id=scored["scoring_run_id"],
             registry=registry,
@@ -424,7 +424,7 @@ def test_accept_scored_writes_returns_csv(tmp_path: Path, smoke_csv_text: str) -
     result = approve_strategy.accept_scored(
         base_name="smoke-amzn", symbol="AMZN", timeframe="1H",
         report_folder=scored["report_folder"],
-        verdict=scored["verdict"],
+        verdict="ROBUST",   # S5: only CLEAR becomes a card, Off or not
         dsr_probability=scored["dsr_probability"],
         scoring_run_id=scored["scoring_run_id"],
         registry=registry,

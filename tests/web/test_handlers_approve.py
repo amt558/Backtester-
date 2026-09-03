@@ -6,6 +6,17 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def ladder_gate_bypassed(monkeypatch):
+    """S5 added a Full-trial gate to every accept path. These tests exercise
+    routing / envelopes / versioning with runs that are not Full trials, so
+    the gate is bypassed here; tests/web/test_s5_ladder.py covers the gate
+    itself on the same routes with the real function."""
+    from tradelab.web import handlers as _h
+    monkeypatch.setattr(_h, "_ladder_gate_response", lambda run_id, name: None)
+    monkeypatch.setattr(_h, "_full_trial_status_for", lambda name, run: {"ok": True, "code": None, "reason": None})
+
 from tradelab.web import handlers
 
 
@@ -23,6 +34,15 @@ def handlers_with_tmp_roots(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(handlers, "_pine_archive_root", lambda: tmp_path / "pine_archive")
     monkeypatch.setattr(handlers, "_cards_path", lambda: tmp_path / "cards.json")
     return tmp_path
+
+
+def _mark_robust(db_path, run_id):
+    """S5: accept is routed on the audit row and only CLEAR becomes a card —
+    a smoke score is INCONCLUSIVE, so tests that want a card mark it ROBUST."""
+    import sqlite3
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE runs SET verdict = 'ROBUST', dsr_probability = 0.9 WHERE run_id = ?", (run_id,))
+    conn.commit(); conn.close()
 
 
 def _post(path: str, payload: dict):
@@ -109,10 +129,12 @@ def test_accept_happy(handlers_with_tmp_roots, smoke_csv_text):
         "symbol": "AMZN", "base_name": "smoke-amzn", "timeframe": "1H",
     })
     rf = score_body["data"]["report_folder"]
+    _mark_robust(handlers_with_tmp_roots / "audit.db", score_body["data"]["scoring_run_id"])
 
     body, status = _post("/tradelab/accept", {
         "base_name": "smoke-amzn", "symbol": "AMZN",
         "timeframe": "1H", "report_folder": rf,
+        "scoring_run_id": score_body["data"]["scoring_run_id"],   # S5: routed on the audit row
     })
     assert status == 200
     assert body["error"] is None
@@ -122,13 +144,16 @@ def test_accept_happy(handlers_with_tmp_roots, smoke_csv_text):
 
 
 def test_accept_404_when_report_folder_missing(handlers_with_tmp_roots):
+    """S5: accept is routed on the audit row, so an unknown run id is the
+    first refusal (404); a client folder is never trusted on its own."""
     body, status = _post("/tradelab/accept", {
         "base_name": "nonexistent-base", "symbol": "AMZN",
         "timeframe": "1H",
         "report_folder": str(handlers_with_tmp_roots / "reports" / "nonexistent_123"),
+        "scoring_run_id": "no-such-run",
     })
     assert status == 404
-    assert "report folder" in body["error"]
+    assert "scoring_run_id" in body["error"]
 
 
 def test_accept_400_when_pine_missing(handlers_with_tmp_roots, smoke_csv_text):
@@ -140,6 +165,7 @@ def test_accept_400_when_pine_missing(handlers_with_tmp_roots, smoke_csv_text):
     body, status = _post("/tradelab/accept", {
         "base_name": "smoke-amzn", "symbol": "AMZN",
         "timeframe": "1H", "report_folder": rf,
+        "scoring_run_id": score_body["data"]["scoring_run_id"],
     })
     assert status == 400
     assert "strategy.pine" in body["error"]
@@ -161,9 +187,11 @@ def test_accept_two_accepts_bumps_version(handlers_with_tmp_roots, smoke_csv_tex
             "csv_text": smoke_csv_text, "pine_source": "// pine",
             "symbol": "AMZN", "base_name": "smoke-amzn", "timeframe": "1H",
         })
+        _mark_robust(handlers_with_tmp_roots / "audit.db", score_body["data"]["scoring_run_id"])
         accept_body, status = _post("/tradelab/accept", {
             "base_name": "smoke-amzn", "symbol": "AMZN",
             "timeframe": "1H", "report_folder": score_body["data"]["report_folder"],
+            "scoring_run_id": score_body["data"]["scoring_run_id"],
         })
         assert status == 200
         assert accept_body["data"]["card_id"] == expected

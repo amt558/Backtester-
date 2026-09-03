@@ -34,6 +34,8 @@ _ALLOWED_COMMANDS = {
     "run":              ["run"],
     "run --robustness": ["run", "--robustness"],
     "run --full":       ["run", "--full"],
+    # S5: Rung 2, the only run that entitles a strategy to be accepted.
+    "run --full --validation-deep": ["run", "--full", "--validation-deep"],
 }
 
 
@@ -1382,21 +1384,41 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         # scope — the floor never runs).
         activate = bool(payload.get("activate", False))
         scoring_run_id = payload.get("scoring_run_id", "")
-        if activate and not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
-            return _err("scoring_run_id required for activation"), 422
-        dsr_probability = payload.get("dsr_probability")
-        if activate:
-            dsr_probability = _resolve_server_dsr(
-                scoring_run_id, dsr_probability, _db_path()
-            )
+        # S5 (specialist): the pine path is routed on SERVER facts exactly like
+        # the python path — run id mandatory, verdict/DSR/folder from the audit
+        # row, the run must belong to this base_name, the client folder must
+        # be the run's own — then the ladder gate. Client verdict is ignored.
+        if not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
+            return _err("scoring_run_id required — accept is routed on the audit row"), 422
+        from tradelab.audit.history import get_run
+        row = get_run(scoring_run_id, db_path=_db_path())
+        if row is None:
+            return _err(f"unknown scoring_run_id {scoring_run_id!r}"), 404
+        if (row.strategy_name or "") != (payload.get("base_name") or ""):
+            return _err(f"run {scoring_run_id!r} belongs to {row.strategy_name!r}, "
+                        f"not {payload.get('base_name')!r}"), 422
+        lookup = audit_reader.resolve_run_folder(scoring_run_id, db_path=_db_path())
+        if lookup.status != "ok" or lookup.folder is None:
+            return _err(f"run {scoring_run_id!r} has no report folder"), 422
+        server_folder = str(lookup.folder).replace("\\", "/")
+        client_folder = str(payload.get("report_folder") or "").replace("\\", "/").rstrip("/")
+        if client_folder and Path(client_folder).resolve() != Path(server_folder).resolve():
+            return _err("report_folder does not match the run's own folder"), 422
+        dsr_probability = _resolve_server_dsr(scoring_run_id, payload.get("dsr_probability"), _db_path())
+        server_verdict = row.verdict or "INCONCLUSIVE"
+        # S5: every accept path runs the ladder gate — a card only ever comes
+        # from a Full trial of the current code under the current thresholds.
+        gate_resp = _ladder_gate_response(scoring_run_id, row.strategy_name)
+        if gate_resp is not None:
+            return gate_resp
         try:
             registry = CardRegistry(_cards_path())
             data = approve_strategy.accept_scored(
                 base_name=payload["base_name"],
                 symbol=payload["symbol"],
                 timeframe=payload["timeframe"],
-                report_folder=payload["report_folder"],
-                verdict=payload.get("verdict", "INCONCLUSIVE"),
+                report_folder=server_folder,
+                verdict=server_verdict,
                 dsr_probability=dsr_probability,
                 scoring_run_id=scoring_run_id,
                 registry=registry,
@@ -1475,6 +1497,19 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err("report_folder does not match the run's own folder"), 422
         dsr_probability = _resolve_server_dsr(scoring_run_id, payload.get("dsr_probability"), _db_path())
         server_verdict = row.verdict or "INCONCLUSIVE"
+        # S5: only a Full trial of the CURRENT code under the CURRENT thresholds
+        # entitles a strategy to be accepted — and not while a canary is failing.
+        # Route first so a BLOCKED/ADVISORY run is told THAT (accept_python_run
+        # raises the proper 422 shapes); the ladder gate applies to CLEAR runs.
+        pre_route, _ = _route_for_run({"verdict": server_verdict, "dsr_probability": dsr_probability,
+                                       "report_card_html_path": row.report_card_html_path})
+        ft = _full_trial_status_for(row.strategy_name, {
+            "tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash,
+        }) if pre_route == "CLEAR" else {"ok": True}
+        if not ft["ok"]:
+            body = {"error": f"not accepted: {ft['reason']}", "data": None,
+                    "gate": "full_trial", "code": ft["code"]}
+            return json.dumps(body), 422
         try:
             card = approve_strategy.accept_python_run(
                 base_name=payload["base_name"], symbol=payload["symbol"],
@@ -1518,11 +1553,17 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
 
         # 1. Latest audit row for this strategy.
         runs = audit_reader.list_runs(
-            strategy=strategy_id, limit=1, db_path=_db_path()
+            strategy=strategy_id, limit=200, db_path=_db_path()
         )
-        if not runs:
-            return _err(f"no runs found for strategy {strategy_id!r}"), 422
-        latest = runs[0]
+        # S5: the same run the board shows — a bare `run` never counts, and a
+        # valid Full trial wins over a later Trial.
+        from tradelab.web import board as board_mod
+        latest = board_mod.pick_representative_run(
+            runs, full_ok=lambda row: _full_trial_status_for(strategy_id, {
+                "tier": row.get("tier"), "code_hash": row.get("code_hash"),
+                "thresholds_hash": row.get("thresholds_hash")})["ok"]) if runs else None
+        if latest is None:
+            return _err(f"no runs found for strategy {strategy_id!r} (a bare `run` does not count)"), 422
 
         # 2. Resolve the report folder. no_run shouldn't happen (we just read
         # the row from the same DB), but no_folder is a real failure mode for
@@ -1553,6 +1594,11 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err(
                 "backtest_result.json missing symbol/timeframe"
             ), 422
+
+        # S5: the ladder gate applies here too (this path ARMS a card).
+        gate_resp = _ladder_gate_response(latest["run_id"], latest["strategy_name"])
+        if gate_resp is not None:
+            return gate_resp
 
         # 4. Forward to accept_scored with activate=True.
         registry = CardRegistry(_cards_path())
@@ -2038,6 +2084,114 @@ def _route_for_run(run: dict) -> tuple[Optional[str], list]:
     return route, list(fatal)
 
 
+def _current_hashes_for(strategy_name: str) -> tuple[Optional[str], Optional[str]]:
+    """(code_hash of the strategy file as it is NOW, hash of the whole
+    robustness config in force NOW). None when either cannot be computed —
+    the gate then refuses as 'unverifiable' (fail closed): a strategy whose
+    file is gone or whose config will not load must not be accepted."""
+    from tradelab import ladder
+    from tradelab.config import get_config
+    try:
+        from tradelab.registry import load_strategy_class
+        code = ladder.code_hash_for_class(load_strategy_class(strategy_name))
+    except Exception:  # noqa: BLE001
+        code = None
+    try:
+        thr = ladder.thresholds_hash(get_config().robustness)
+    except Exception:  # noqa: BLE001
+        thr = None
+    return code, thr
+
+
+def _ladder_gate_response(scoring_run_id: str, strategy_name: str):
+    """422 body for an accept that the ladder refuses, else None. Routing
+    (BLOCKED/ADVISORY) is left to the accept functions; the ladder gate is
+    what stands between a CLEAR run and a card."""
+    from tradelab.audit.history import get_run
+    if not (isinstance(scoring_run_id, str) and scoring_run_id.strip()):
+        return json.dumps({"error": "not accepted: scoring_run_id required — a card only comes from a "
+                                    "Full trial on record", "data": None,
+                           "gate": "full_trial", "code": "no_run"}), 422
+    row = get_run(scoring_run_id, db_path=_db_path())
+    if row is None:
+        return json.dumps({"error": f"not accepted: unknown scoring_run_id {scoring_run_id!r}", "data": None,
+                           "gate": "full_trial", "code": "no_run"}), 422
+    # Route first: a BLOCKED/ADVISORY run must be told THAT by the accept
+    # function's own 422 shapes; the ladder stands between CLEAR and a card.
+    route, _ = _route_for_run({"verdict": row.verdict, "dsr_probability": row.dsr_probability,
+                               "report_card_html_path": row.report_card_html_path})
+    if route is None:
+        return json.dumps({"error": "not accepted: this run cannot be scored (its report folder or "
+                                    "backtest_result.json is missing) — run a Full trial", "data": None,
+                           "gate": "full_trial", "code": "unscorable"}), 422
+    if route != "CLEAR":
+        return None
+    ft = _full_trial_status_for(strategy_name or row.strategy_name, {
+        "tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash,
+    })
+    if not ft["ok"]:
+        return json.dumps({"error": f"not accepted: {ft['reason']}", "data": None,
+                           "gate": "full_trial", "code": ft["code"]}), 422
+    return None
+
+
+def _canary_mismatch_now() -> bool:
+    try:
+        return not bool(run_canary_check(db_path=_db_path()).to_dict().get("all_match", True))
+    except Exception:  # noqa: BLE001 — unknown ≠ mismatch (canary panel semantics)
+        return False
+
+
+def _full_trial_status_for(strategy_name: str, run: Optional[dict]) -> dict:
+    from tradelab import ladder
+    code, thr = _current_hashes_for(strategy_name)
+    return ladder.full_trial_status(
+        run, current_code_hash=code, current_thresholds_hash=thr,
+        canary_mismatch=_canary_mismatch_now(),
+    )
+
+
+def _run_folder_of(run: dict):
+    from pathlib import Path as _P
+    rcp = run.get("report_card_html_path")
+    if not rcp:
+        return None
+    p = _P(rcp)
+    folder = p if p.is_dir() else p.parent
+    return folder if folder.is_dir() else None
+
+
+def _signals_for_run(run: dict) -> dict:
+    """Score + gating/read-anyway split from the run folder's
+    robustness_result.json (and validation.json when present)."""
+    from tradelab import ladder
+    folder = _run_folder_of(run)
+    if folder is None:
+        return {"score": None, "gating": [], "read_anyway": [], "hard_override": []}
+    signals, diagnostics, extras = [], {}, []
+    rob = folder / "robustness_result.json"
+    if rob.exists():
+        try:
+            d = json.loads(rob.read_text(encoding="utf-8-sig"))
+            v = d.get("verdict") or {}
+            signals = v.get("signals") or []
+            diagnostics = v.get("diagnostics") or {}
+        except (OSError, json.JSONDecodeError):
+            pass
+    val = folder / "validation.json"
+    if val.exists():
+        try:
+            d = json.loads(val.read_text(encoding="utf-8-sig"))
+            summary = d.get("summary") or d.get("overall") or {}
+            extras.append({"name": "validation_suite", "outcome": "info",
+                           "reason": json.dumps(summary)[:160] if summary else "present"})
+        except (OSError, json.JSONDecodeError):
+            extras.append({"name": "validation_suite", "outcome": "info", "reason": "unreadable"})
+    out = ladder.split_signals(signals, diagnostics, extras)
+    out["score"] = ladder.score_from_signals(signals)
+    return out
+
+
 def _data_end_for_run(run: dict) -> Optional[str]:
     """Last bar the run's data ACTUALLY contained (backtest_result.json
     ``data_last_bar``), so the board can say "data to YYYY-MM-DD" — a verdict
@@ -2073,11 +2227,46 @@ def _build_board() -> dict:
     except Exception as e:  # noqa: BLE001
         return {"rows": [], "counts": {}, "error": f"registry error: {e}"}
 
-    latest: dict[str, dict] = {}
+    from tradelab import ladder
+    code_thr_cache: dict[str, tuple] = {}
+    canary_bad = _canary_mismatch_now()
+
+    def _full_trial_no_canary(name: str, run: Optional[dict]) -> dict:
+        if name not in code_thr_cache:
+            code_thr_cache[name] = _current_hashes_for(name)
+        code, thr = code_thr_cache[name]
+        return ladder.full_trial_status(run, current_code_hash=code, current_thresholds_hash=thr)
+
+    def _full_trial(name: str, run: Optional[dict]) -> dict:
+        ft = _full_trial_no_canary(name, run)
+        if ft["ok"] and canary_bad:
+            return ladder.full_trial_status(run, current_code_hash=code_thr_cache[name][0],
+                                            current_thresholds_hash=code_thr_cache[name][1], canary_mismatch=True)
+        return ft
+
+    # S5: which run represents a strategy on the board. A plain `run` (tier
+    # basic) never counts. A Full trial that still passes the gate wins over
+    # any later Trial, so a diagnostic robustness run cannot knock a strategy
+    # off its accept-able rung; otherwise the newest Trial (or a legacy row
+    # with no tier, which was a robustness run before the ladder existed).
+    runs_by_name: dict[str, list[dict]] = {}
     for r in audit_reader.list_runs(limit=5000, db_path=_db_path()):
         name = r.get("strategy_name")
-        if name and name not in latest:   # list_runs is newest-first
-            latest[name] = r
+        if name:
+            runs_by_name.setdefault(name, []).append(r)   # newest-first
+    latest: dict[str, dict] = {}
+    newer_trials: dict[str, dict] = {}
+    for name, rows in runs_by_name.items():
+        # tier/hash validity only — the canary state must not demote a valid
+        # Full trial to "Full trial required" (derive_state handles the canary
+        # with a disabled Accept and the real reason).
+        chosen = board_mod.pick_representative_run(
+            rows, full_ok=lambda row, _n=name: _full_trial_no_canary(_n, row)["ok"])
+        if chosen is not None:
+            latest[name] = chosen
+            newest_trial = next((r for r in rows if (r.get("tier") or "trial") != "basic"), None)
+            if newest_trial is not None and newest_trial.get("run_id") != chosen.get("run_id"):
+                newer_trials[name] = newest_trial
 
     cards_path = _cards_path()
     cards = CardRegistry(cards_path).all() if cards_path.exists() else {}
@@ -2109,8 +2298,12 @@ def _build_board() -> dict:
     out = board_mod.build_board(
         registered=registered, latest_runs=latest, route_for_run=_route_for_run,
         cards=cards, retired=retired, jobs=jobs, symbols_for=_symbols, excluded=excluded,
-        data_end_for=_data_end_for_run,
+        data_end_for=_data_end_for_run, full_trial_for=_full_trial, signals_for=_signals_for_run,
+        newer_trials=newer_trials,
     )
+    out["rungs"] = ladder.RUNGS
+    out["estimates"] = ladder.rung_estimates(jobs)
+    out["canary_mismatch"] = canary_bad
     from datetime import datetime, timezone
     out["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return out

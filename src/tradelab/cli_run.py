@@ -19,6 +19,7 @@ from .engines.dsr import classify_dsr, deflated_sharpe_ratio
 from .engines.optimizer import run_optimization, run_param_sensitivity
 from .engines.walkforward import run_walkforward
 from .robustness import run_robustness_suite
+from . import ladder as _ladder
 from .marketdata import (
     MissingTwelveDataKey,
     PITViolation,
@@ -491,6 +492,9 @@ def run(
         # If the full robustness suite ran, its verdict supersedes the DSR classifier
         if robustness_result is not None:
             verdict = robustness_result.verdict.verdict
+        from .config import get_config as _gc
+        _rcfg = _gc().robustness
+        _thr = _rcfg.thresholds
         try:
             run_id = record_run(
                 strategy_name=strategy,
@@ -504,6 +508,13 @@ def run(
                 # pipeline shows the author chose the tickers, not the operator.
                 universe=(universe if universe
                           else ("declared:" if symbols_declared else "") + ",".join(symbol_list)),
+                # S5: which rung this was, and exactly what it judged — the
+                # strategy file's hash and the thresholds' hash — so Accept can
+                # refuse a run that no longer describes the code or the rules.
+                tier=_ladder.tier_for_flags(robustness=robustness, full=full, validation_deep=validation_deep),
+                code_hash=_ladder.code_hash_for_class(type(strat)),
+                thresholds_hash=_ladder.thresholds_hash(_rcfg),
+                thresholds=_thr.model_dump(),
             )
             typer.echo(f"Audit:     run_id={run_id[:8]}")
         except Exception as e:

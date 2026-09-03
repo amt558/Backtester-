@@ -42,6 +42,13 @@ _NEW_COLUMNS = (
     # What the run was scored against: a named universe ("big_tech_15") or
     # the resolved --symbols comma list ("AAPL,MSFT,..."). NULL on legacy rows.
     ("universe", "TEXT"),
+    # S5: which rung the run was (basic | trial | full), and what exactly it
+    # judged — the strategy file's content hash and the verdict thresholds'
+    # hash — so Accept can refuse a run that no longer describes the code or
+    # the rules in force. NULL on legacy rows (treated as "not a full trial").
+    ("tier", "TEXT"),
+    ("code_hash", "TEXT"),
+    ("thresholds_hash", "TEXT"),
 )
 
 DEFAULT_DB_PATH = Path("data") / "tradelab_history.db"
@@ -66,6 +73,9 @@ class HistoryRow:
     accepted_bool: Optional[int] = None
     reject_reason: Optional[str] = None
     universe: Optional[str] = None
+    tier: Optional[str] = None
+    code_hash: Optional[str] = None
+    thresholds_hash: Optional[str] = None
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -124,6 +134,9 @@ def record_run(
     accepted: Optional[bool] = None,
     reject_reason: Optional[str] = None,
     universe: Optional[str] = None,
+    tier: Optional[str] = None,
+    code_hash: Optional[str] = None,
+    thresholds_hash: Optional[str] = None,
     db_path: Path = DEFAULT_DB_PATH,
 ) -> str:
     """
@@ -158,8 +171,8 @@ def record_run(
                 verdict, dsr_probability,
                 report_card_markdown, report_card_html_path,
                 signal_values_json, thresholds_json, accepted_bool, reject_reason,
-                universe
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                universe, tier, code_hash, thresholds_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id, ts, strategy_name, strategy_version,
@@ -173,6 +186,9 @@ def record_run(
                 accepted_bool,
                 reject_reason,
                 universe,
+                tier,
+                code_hash,
+                thresholds_hash,
             ),
         )
         conn.commit()
@@ -200,6 +216,9 @@ def _row_to_dataclass(row) -> HistoryRow:
         accepted_bool=row[14],
         reject_reason=row[15],
         universe=row[16] if len(row) > 16 else None,
+        tier=row[17] if len(row) > 17 else None,
+        code_hash=row[18] if len(row) > 18 else None,
+        thresholds_hash=row[19] if len(row) > 19 else None,
     )
 
 

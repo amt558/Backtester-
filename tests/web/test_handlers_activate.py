@@ -15,6 +15,17 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def ladder_gate_bypassed(monkeypatch):
+    """S5 added a Full-trial gate to every accept path. These tests exercise
+    routing / envelopes / versioning with runs that are not Full trials, so
+    the gate is bypassed here; tests/web/test_s5_ladder.py covers the gate
+    itself on the same routes with the real function."""
+    from tradelab.web import handlers as _h
+    monkeypatch.setattr(_h, "_ladder_gate_response", lambda run_id, name: None)
+    monkeypatch.setattr(_h, "_full_trial_status_for", lambda name, run: {"ok": True, "code": None, "reason": None})
+
 from tradelab.web import handlers
 
 

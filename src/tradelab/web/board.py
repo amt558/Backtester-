@@ -48,6 +48,29 @@ def _iso_key(s: Optional[str]) -> str:
         return ""
 
 
+def pick_representative_run(rows_newest_first: list[dict], *, full_ok) -> Optional[dict]:
+    """S5: the run that represents a strategy on the board.
+
+    - a plain ``run`` (tier basic) never counts as a trial;
+    - the newest Full trial that still passes the gate (``full_ok(row)``)
+      wins over any later Trial — a diagnostic robustness run must not knock
+      a strategy off its accept-able rung;
+    - otherwise the newest Trial, or a legacy row with no tier (a robustness
+      run from before the ladder existed).
+    """
+    trials = [r for r in rows_newest_first if (r.get("tier") or "trial") != "basic"]
+    for r in trials:
+        if r.get("tier") == "full":
+            try:
+                if full_ok(r):
+                    return r
+            except Exception as e:  # noqa: BLE001 — unscorable full row: fall through, loudly
+                import logging
+                logging.getLogger(__name__).warning(
+                    "full-trial check failed for run %s: %s: %s", r.get("run_id"), type(e).__name__, e)
+    return trials[0] if trials else None
+
+
 def _action(kind: str, label: str, enabled: bool = True, reason: Optional[str] = None) -> dict:
     return {"kind": kind, "label": label, "enabled": enabled, "reason": reason}
 
@@ -60,6 +83,7 @@ def derive_state(
     card: Optional[dict],
     retired: Optional[dict],
     busy: Optional[dict] = None,
+    full_trial: Optional[dict] = None,
 ) -> tuple[str, dict]:
     """Return (state, next_action) for one strategy.
 
@@ -71,6 +95,10 @@ def derive_state(
     retired: the most recent retired-cards log entry for it, or None.
     busy: an in-flight job dict, or None. A busy row keeps its state but its
         action becomes the running job.
+    full_trial: S5 gate result {ok, code, reason} for the latest run. When it
+        is not ok, a CLEAR Tried row's action is "Full trial" (or "Full trial
+        again" for a stale one) instead of Accept — Accept is only ever
+        offered from a Full trial of the current code and thresholds.
     """
     # A retirement is newer than the run it was accepted from: the strategy
     # is Retired until a FRESH trial (newer than the retirement) exists.
@@ -87,8 +115,16 @@ def derive_state(
         action = _action("open_tab", "Open tab" if status == "disabled" else "Open tab · Paper")
     elif latest_run is not None and latest_run.get("verdict") and route and not retired_after_run:
         state = STATE_TRIED
-        if route == ROUTE_CLEAR:
+        ft = full_trial or {"ok": False, "code": "no_gate", "reason": "full-trial gate unavailable"}
+        if route == ROUTE_CLEAR and ft.get("ok"):
             action = _action("accept", "Accept")
+        elif route == ROUTE_CLEAR:
+            stale = ft.get("code") in ("code_changed", "thresholds_changed")
+            if ft.get("code") == "canary_mismatch":
+                action = _action("accept", "Accept", enabled=False, reason=ft.get("reason"))
+            else:
+                action = _action("full_trial", "Full trial again" if stale else "Full trial",
+                                 enabled=True, reason=ft.get("reason"))
         elif route == ROUTE_ADVISORY:
             action = _action(
                 "accept_override", "Accept with override", enabled=False,
@@ -126,6 +162,9 @@ def build_board(
     symbols_for: Callable[[str], list[str]],
     excluded: Optional[dict[str, str]] = None,
     data_end_for: Optional[Callable[[dict], Optional[str]]] = None,
+    full_trial_for: Optional[Callable[[str, Optional[dict]], dict]] = None,
+    signals_for: Optional[Callable[[dict], dict]] = None,
+    newer_trials: Optional[dict[str, dict]] = None,
 ) -> dict:
     """Assemble the board.
 
@@ -191,9 +230,22 @@ def build_board(
         card = card_by_strategy.get(name)
         ret = retired_by_strategy.get(name)
         busy = busy_by_strategy.get(name)
+        ft = None
+        if run is not None and full_trial_for is not None:
+            try:
+                ft = full_trial_for(name, run)
+            except Exception:  # noqa: BLE001 — fail closed
+                ft = {"ok": False, "code": "no_gate", "reason": "full-trial gate unavailable"}
         state, action = derive_state(
             latest_run=run, route=route, blockers=blockers, card=card, retired=ret, busy=busy,
+            full_trial=ft,
         )
+        sig = {"score": None, "gating": [], "read_anyway": [], "hard_override": []}
+        if run is not None and signals_for is not None:
+            try:
+                sig = signals_for(run)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             symbols = list(symbols_for(name))
         except Exception:  # noqa: BLE001
@@ -216,6 +268,18 @@ def build_board(
                 card_route = (card.get("promotion_route") or "").upper() or None
                 newer_trial = {"run_id": run.get("run_id"), "run_at": run.get("timestamp_utc"), "route": route,
                                "verdict": run.get("verdict"), "worse": route != "CLEAR" and route != card_route}
+        # S5: on a Tried row the representative run may be an older valid
+        # Full trial; a NEWER Trial that routes worse is surfaced the same way.
+        nt = (newer_trials or {}).get(name)
+        if newer_trial is None and card is None and run is not None and nt is not None and nt.get("verdict"):
+            try:
+                nt_route, _nb = route_for_run(nt)
+            except Exception:  # noqa: BLE001
+                nt_route = None
+            if nt_route:
+                worse = ["CLEAR", "ADVISORY", "BLOCKED"].index(nt_route) > ["CLEAR", "ADVISORY", "BLOCKED"].index(route or "CLEAR")
+                newer_trial = {"run_id": nt.get("run_id"), "run_at": nt.get("timestamp_utc"), "route": nt_route,
+                               "verdict": nt.get("verdict"), "worse": worse}
         data_end = None
         if run is not None and data_end_for is not None:
             try:
@@ -228,6 +292,11 @@ def build_board(
             "unregistered": name not in registered_set,
             "newer_trial": newer_trial,
             "data_end": data_end,
+            "tier": (run or {}).get("tier"),
+            "full_trial": ft,
+            "score": sig.get("score"),
+            "signals": {"gating": sig.get("gating", []), "read_anyway": sig.get("read_anyway", []),
+                        "hard_override": sig.get("hard_override", [])},
             "next_action": action,
             "verdict": (run or {}).get("verdict"),
             "route": route,

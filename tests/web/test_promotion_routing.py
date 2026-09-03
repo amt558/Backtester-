@@ -16,6 +16,17 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def ladder_gate_bypassed(monkeypatch):
+    """S5 added a Full-trial gate to every accept path. These tests exercise
+    routing / envelopes / versioning with runs that are not Full trials, so
+    the gate is bypassed here; tests/web/test_s5_ladder.py covers the gate
+    itself on the same routes with the real function."""
+    from tradelab.web import handlers as _h
+    monkeypatch.setattr(_h, "_ladder_gate_response", lambda run_id, name: None)
+    monkeypatch.setattr(_h, "_full_trial_status_for", lambda name, run: {"ok": True, "code": None, "reason": None})
+
 from tradelab.results import BacktestMetrics
 from tradelab.web import approve_strategy
 from tradelab.web.approve_strategy import (
@@ -485,7 +496,7 @@ def test_accept_omitted_run_id_blocks_activation(tmp_path, monkeypatch, write_ba
     raw, status = handlers.handle_post_with_status("/tradelab/accept", body)
     parsed = json.loads(raw)
     assert status == 422, raw
-    assert "scoring_run_id required for activation" in (parsed.get("error") or "")
+    assert "scoring_run_id required" in (parsed.get("error") or "")   # S5: on every accept
     assert "state" not in parsed  # plain {error}, not the BLOCKED envelope
 
 

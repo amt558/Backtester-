@@ -834,9 +834,10 @@ def test_pipeline_has_universe_column(html: str) -> None:
     """The Runs table renders what each run was scored against (named
     universe, or 'N syms' with the full list as tooltip for custom runs)."""
     assert "<th>Universe</th>" in html
-    assert 'colspan="15"' in html
-    assert 'colspan="14"' not in html, (
-        "pipeline colspans must be bumped to 15 to match the new Universe column"
+    # S5 added the Rung column: 16 columns now.
+    assert 'colspan="16"' in html
+    assert 'colspan="14"' not in html and 'colspan="15"' not in html, (
+        "pipeline colspans must match the column count (16 since S5's Rung column)"
     )
 
 # ── S1: registry-derived roster (2026-09-02) ───────────────────────
@@ -1006,3 +1007,29 @@ def test_s4_accepted_cards_surface_newer_worse_trials_and_orphans(html: str) -> 
     assert "r.newer_trial && r.newer_trial.worse" in html
     assert "r.unregistered" in html
     assert "data to <b>" in html
+
+
+# ── S5: the test ladder (2026-09-03) ──────────────────────────────────
+def test_s5_board_follows_the_full_trial_gate(html: str) -> None:
+    assert "'full_trial'" in html
+    assert "submitJob(row.strategy, 'run --full --validation-deep')" in html
+    assert "function ladderHTML(" in html
+    assert 'class="rung ' in html and "Full trial again" not in html.split("function ladderHTML(")[0][-200:]
+
+
+def test_s5_score_is_presentation_only(html: str) -> None:
+    """The score renders as a bar and is described as ranking, never deciding."""
+    assert "Ranks; never decides." in html
+    assert "sc.toFixed(2)" in html and "Number(r.score)" in html   # numeric-safe render
+
+
+def test_s5_signals_split_gating_and_read_anyway(html: str) -> None:
+    assert "Gating — these decide the verdict" in html
+    assert "Read anyway — never change the verdict" in html
+    assert "sig-hard" in html
+
+
+def test_s5_runs_table_has_rung_column(html: str) -> None:
+    assert "function rungCell(" in html
+    assert ">Rung</th>" in html
+    assert 'colspan="16"' in html and 'colspan="15"' not in html
