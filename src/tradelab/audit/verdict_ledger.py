@@ -52,6 +52,12 @@ def _connect(db_path: Path) -> sqlite3.Connection:
         activated       INTEGER NOT NULL DEFAULT 0
     )
     """)
+    # S6: override receipt columns — idempotent, NULL on older rows.
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(verdict_ledger)").fetchall()}
+    for col, sqltype in (("override_reason", "TEXT"), ("override_expires_at", "TEXT"),
+                         ("allocation_cap_pct", "REAL"), ("thresholds_hash", "TEXT")):
+        if col not in existing:
+            conn.execute(f"ALTER TABLE verdict_ledger ADD COLUMN {col} {sqltype}")
     conn.executescript("""
     CREATE INDEX IF NOT EXISTS idx_ledger_run ON verdict_ledger(scoring_run_id);
     CREATE INDEX IF NOT EXISTS idx_ledger_strategy ON verdict_ledger(strategy_name);
@@ -71,6 +77,10 @@ def log_decision(
     blockers: Optional[list[str]] = None,
     override_used: bool = False,
     activated: bool = False,
+    override_reason: Optional[str] = None,
+    override_expires_at: Optional[str] = None,
+    allocation_cap_pct: Optional[float] = None,
+    thresholds_hash: Optional[str] = None,
     db_path: Path = DEFAULT_DB_PATH,
 ) -> int:
     """Append one verdict-ledger row. Returns the new row id.
@@ -97,14 +107,16 @@ def log_decision(
             INSERT INTO verdict_ledger (
                 created_at, scoring_run_id, strategy_name, path,
                 verdict, promotion_route, blockers_json,
-                override_used, activated
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                override_used, activated,
+                override_reason, override_expires_at, allocation_cap_pct, thresholds_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 created_at, scoring_run_id, strategy_name, path,
                 verdict, promotion_route, blockers_json,
                 1 if override_used else 0,
                 1 if activated else 0,
+                override_reason, override_expires_at, allocation_cap_pct, thresholds_hash,
             ),
         )
         conn.commit()

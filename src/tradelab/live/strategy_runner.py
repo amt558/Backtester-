@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from tradelab import override as _override
+
 logger = logging.getLogger("tradelab.live.strategy_runner")
 
 
@@ -64,16 +66,23 @@ def safety_block_reason(config: dict, *, daily_pnl: float, is_entry: bool) -> Op
 
 
 def reconcile_card(*, card: dict, desired: str, actual_qty: int, price: float,
-                   bar_date: str, submit_fn) -> dict:
+                   bar_date: str, submit_fn, now: Optional[datetime] = None) -> dict:
     """Reconcile one card's desired position with its actual Alpaca position by
     placing at most ONE market order via submit_fn. Idempotent: a card already
     in its desired state is a no-op. submit_fn(symbol, side, quantity,
-    client_order_id) is injected (real or mock)."""
+    client_order_id) is injected (real or mock).
+
+    S6: an overridden card sizes from allocation × cap while its override is
+    active and from 0 once it has expired — the policy lives in the engine,
+    not in the UI. Exits are never capped."""
     symbol = card["symbol"]
     cid = card["card_id"]
     if desired == "long" and actual_qty <= 0:
-        qty = size_qty(card.get("allocation_usd"), price)
+        alloc = _override.effective_allocation(card, now or datetime.now(timezone.utc))
+        qty = size_qty(alloc, price)
         if qty <= 0:
+            if card.get("override") and not _override.is_active(card, now or datetime.now(timezone.utc)):
+                return {"action": "skip", "reason": "override expired — no new entries"}
             return {"action": "skip", "reason": "allocation/price yields 0 shares"}
         submit_fn(symbol, "buy", qty, client_order_id=f"{cid}-{bar_date}-buy")
         return {"action": "buy", "qty": qty}
@@ -83,7 +92,7 @@ def reconcile_card(*, card: dict, desired: str, actual_qty: int, price: float,
     return {"action": "none"}
 
 
-def run_once(cards: dict, *, deps: dict, bar_date: str) -> dict:
+def run_once(cards: dict, *, deps: dict, bar_date: str, now: Optional[datetime] = None) -> dict:
     """Process all enabled paper-python cards once, reconciling desired vs actual.
 
     Each card is processed independently (one failure never stops the rest).
@@ -146,6 +155,7 @@ def run_once(cards: dict, *, deps: dict, bar_date: str) -> dict:
                 price=price,
                 bar_date=bar_date,
                 submit_fn=deps["submit_fn"],
+                now=now,
             )
             results[card_id] = result
 
@@ -284,6 +294,23 @@ def run_tick(*, registry, deps: dict, now: datetime) -> dict:
     try:
         cards = registry.all()
 
+        # S6: an override that has expired switches its card Off on this tick
+        # (S7's Rung-3 pass will exempt qualified cards). Stamped so the tab
+        # can say why the card is Off. Fail-open per card: a registry write
+        # failure must not stop the tick, and effective_allocation already
+        # sizes an expired override at 0.
+        for card_id, card in list(cards.items()):
+            if card.get("status") == "enabled" and _override.is_expired(card, now) \
+                    and not card.get("override_expired_at"):
+                try:
+                    registry.update(card_id, {"status": "disabled",
+                                              "override_expired_at": now.astimezone(timezone.utc).isoformat(timespec="seconds")})
+                    logger.warning("card %s: override expired — switched Off", card_id)
+                    print(f"[strategy_runner] {card_id}: override expired — switched Off", file=sys.stderr)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("card %s: could not disable on override expiry: %s", card_id, e)
+        cards = registry.all()
+
         # Group eligible cards by timeframe.
         groups: dict[str, dict] = {}
         for card_id, card in cards.items():
@@ -297,7 +324,7 @@ def run_tick(*, registry, deps: dict, now: datetime) -> dict:
         results: dict = {}
         for tf, group in groups.items():
             bar_date = _bar_bucket(tf, now)
-            group_results = run_once(group, deps=deps, bar_date=bar_date)
+            group_results = run_once(group, deps=deps, bar_date=bar_date, now=now)
             results.update(group_results)
 
         return results

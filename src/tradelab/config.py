@@ -110,6 +110,16 @@ class StrategyEntry(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+class PromotionConfig(BaseModel):
+    """S6 override policy (Research Tab Game Plan §03). Override in
+    tradelab.yaml under `promotion:`; every field is defaulted so an absent
+    key is fine."""
+    override_expiry_days: int = 30
+    override_allocation_cap_pct: float = 50.0
+    override_budget: int = 2
+    override_reason_min_chars: int = 20
+
+
 class Config(BaseModel):
     paths: PathsConfig
     benchmarks: BenchmarksConfig = BenchmarksConfig()
@@ -118,6 +128,7 @@ class Config(BaseModel):
     optuna: OptunaConfig = OptunaConfig()
     walkforward: WalkForwardConfig = WalkForwardConfig()
     robustness: RobustnessConfig = RobustnessConfig()
+    promotion: PromotionConfig = PromotionConfig()
     strategies: dict[str, StrategyEntry] = Field(default_factory=dict)
     universes: dict[str, list[str]] = Field(default_factory=dict)
 

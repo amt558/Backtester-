@@ -71,6 +71,12 @@ def pick_representative_run(rows_newest_first: list[dict], *, full_ok) -> Option
     return trials[0] if trials else None
 
 
+def _is_active_override(card: dict) -> bool:
+    from datetime import datetime, timezone
+    from tradelab import override as _ov
+    return _ov.is_active(card, datetime.now(timezone.utc))
+
+
 def _action(kind: str, label: str, enabled: bool = True, reason: Optional[str] = None) -> dict:
     return {"kind": kind, "label": label, "enabled": enabled, "reason": reason}
 
@@ -84,6 +90,7 @@ def derive_state(
     retired: Optional[dict],
     busy: Optional[dict] = None,
     full_trial: Optional[dict] = None,
+    override_ok: Optional[dict] = None,
 ) -> tuple[str, dict]:
     """Return (state, next_action) for one strategy.
 
@@ -99,6 +106,9 @@ def derive_state(
         is not ok, a CLEAR Tried row's action is "Full trial" (or "Full trial
         again" for a stale one) instead of Accept — Accept is only ever
         offered from a Full trial of the current code and thresholds.
+    override_ok: S6 — {"ok": bool, "reason": str|None} saying whether an
+        override could be granted right now (budget, canary). None = unknown
+        → the override action is offered disabled.
     """
     # A retirement is newer than the run it was accepted from: the strategy
     # is Retired until a FRESH trial (newer than the retirement) exists.
@@ -112,7 +122,10 @@ def derive_state(
     if card is not None:
         status = (card.get("status") or "disabled").lower()
         state = STATE_ACCEPTED
-        action = _action("open_tab", "Open tab" if status == "disabled" else "Open tab · Paper")
+        if status == "enabled" and retired is None and card.get("override") and not _is_active_override(card):
+            action = _action("open_tab", "Open tab · halted (override expired)")
+        else:
+            action = _action("open_tab", "Open tab" if status == "disabled" else "Open tab · Paper")
     elif latest_run is not None and latest_run.get("verdict") and route and not retired_after_run:
         state = STATE_TRIED
         ft = full_trial or {"ok": False, "code": "no_gate", "reason": "full-trial gate unavailable"}
@@ -131,10 +144,13 @@ def derive_state(
             # on an ADVISORY strategy without a current Full trial is the
             # Full trial; with one, the (disabled until S6) override.
             if ft.get("ok") or ft.get("code") == "canary_mismatch":
+                oo = override_ok or {"ok": False, "reason": "override availability unknown"}
+                can = bool(ft.get("ok")) and bool(oo.get("ok"))
                 action = _action(
-                    "accept_override", "Accept with override", enabled=False,
-                    reason="ADVISORY route — the override policy (typed confirmation, reason, "
-                           "30-day expiry) arrives in S6. Improve the strategy or wait for S6.",
+                    "accept_override", "Accept with override", enabled=can,
+                    reason=(ft.get("reason") if not ft.get("ok") else oo.get("reason")) if not can
+                    else "ADVISORY route — accepting needs a typed confirmation and a written reason; "
+                         "the card trades at a capped size and its override expires.",
                 )
             else:
                 stale = ft.get("code") in ("code_changed", "thresholds_changed")
@@ -175,6 +191,8 @@ def build_board(
     full_trial_for: Optional[Callable[[str, Optional[dict]], dict]] = None,
     signals_for: Optional[Callable[[dict], dict]] = None,
     newer_trials: Optional[dict[str, dict]] = None,
+    override_ok: Optional[dict] = None,
+    now=None,
 ) -> dict:
     """Assemble the board.
 
@@ -248,8 +266,16 @@ def build_board(
                 ft = {"ok": False, "code": "no_gate", "reason": "full-trial gate unavailable"}
         state, action = derive_state(
             latest_run=run, route=route, blockers=blockers, card=card, retired=ret, busy=busy,
-            full_trial=ft,
+            full_trial=ft, override_ok=override_ok,
         )
+        from tradelab import override as _ov
+        from datetime import datetime as _dt, timezone as _tz
+        receipt = _ov.receipt(card, now or _dt.now(_tz.utc)) if card is not None else None
+        # S6: an enabled card whose override has expired is HALTED — the engine
+        # sizes it at 0 — even if the daemon has not switched it Off yet.
+        effective_status = (card or {}).get("status")
+        if receipt and receipt.get("expired") and effective_status == "enabled":
+            effective_status = "halted"
         sig = {"score": None, "gating": [], "read_anyway": [], "hard_override": []}
         if run is not None and signals_for is not None:
             try:
@@ -304,6 +330,8 @@ def build_board(
             "data_end": data_end,
             "tier": (run or {}).get("tier"),
             "full_trial": ft,
+            "override": receipt,
+            "effective_status": effective_status,
             "score": sig.get("score"),
             "signals": {"gating": sig.get("gating", []), "read_anyway": sig.get("read_anyway", []),
                         "hard_override": sig.get("hard_override", [])},

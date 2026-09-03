@@ -134,16 +134,19 @@ def test_non_activating_accept_writes_no_row(tmp_path):
 # ─── ADVISORY (Python, accept_python_run) ───────────────────────────────
 
 def test_advisory_python_override_writes_row(tmp_path, write_backtest_result):
-    """ADVISORY accept on the Python path WITH confirm_non_robust=True writes a
-    row with promotion_route=ADVISORY, override_used=True, activated=True."""
+    """S6: an ADVISORY accept on the Python path WITH an override receipt
+    writes a row with promotion_route=ADVISORY, override_used=True, the
+    receipt columns filled, and activated=False (grants never arm)."""
     rf = _py_folder(tmp_path, write_backtest_result, net_pnl=240.0)
     reg = _registry(tmp_path)
+    receipt = {"reason": "why " * 6, "granted_at": "2026-09-03T00:00:00+00:00", "expires_at": "2026-10-03T00:00:00+00:00",
+               "allocation_cap_pct": 50.0, "scoring_run_id": "run-1", "thresholds_hash": "t1"}
     approve_strategy.accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D",
         report_folder=str(rf), verdict="FRAGILE",
         dsr_probability=None, scoring_run_id="run-1", strategy="frog",
         registry=reg, reports_root=tmp_path / "reports",
-        activate=True, confirm_non_robust=True,
+        activate=False, override=receipt,
         db_path=tmp_path / "audit.db",
     )
     rows = _read_ledger(tmp_path / "audit.db")
@@ -153,7 +156,7 @@ def test_advisory_python_override_writes_row(tmp_path, write_backtest_result):
     assert row["verdict"] == "FRAGILE"
     assert row["promotion_route"] == "ADVISORY"
     assert row["override_used"] == 1
-    assert row["activated"] == 1
+    assert row["activated"] == 0
     assert json.loads(row["blockers_json"]) == []
 
 

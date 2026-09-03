@@ -48,10 +48,20 @@ def test_clear_run_is_tried_with_accept():
     assert r["next_action"] == {"kind": "accept", "label": "Accept", "enabled": True, "reason": None}
 
 
-def test_advisory_run_is_tried_with_disabled_override_action():
+def test_advisory_run_is_tried_with_override_action():
+    """S6: with a Full trial in place the override is offered only when the
+    policy allows it right now (budget / canaries); unknown → disabled."""
     b = _board(registered=["alpha"], latest_runs={"alpha": _run("alpha", "INCONCLUSIVE")})
     a = b["rows"][0]["next_action"]
-    assert a["kind"] == "accept_override" and a["enabled"] is False and "S6" in a["reason"]
+    assert a["kind"] == "accept_override" and a["enabled"] is False and "unknown" in a["reason"]
+    b = _board(registered=["alpha"], latest_runs={"alpha": _run("alpha", "INCONCLUSIVE")},
+               override_ok={"ok": True, "reason": None})
+    a = b["rows"][0]["next_action"]
+    assert a["kind"] == "accept_override" and a["enabled"] is True and "typed confirmation" in a["reason"]
+    b = _board(registered=["alpha"], latest_runs={"alpha": _run("alpha", "INCONCLUSIVE")},
+               override_ok={"ok": False, "reason": "override budget spent: 2 of 2 active"})
+    a = b["rows"][0]["next_action"]
+    assert a["enabled"] is False and "budget" in a["reason"]
 
 
 def test_blocked_run_is_tried_with_retrial_and_blockers_named():

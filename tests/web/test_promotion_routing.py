@@ -206,20 +206,23 @@ def test_accept_python_confirm_does_not_pass_blocked(tmp_path, write_backtest_re
     assert reg.get("frog-v1") is None
 
 
-def test_accept_python_confirm_passes_advisory_and_stamps_route(tmp_path, write_backtest_result):
-    """confirm_non_robust=True still overrides ADVISORY; card carries the route."""
+def test_accept_python_override_receipt_passes_advisory_and_stamps_route(tmp_path, write_backtest_result):
+    """S6: an override receipt (not the old checkbox) lets ADVISORY become an
+    Off card; the card carries the route and the receipt."""
     rf = _py_folder(tmp_path, write_backtest_result, net_pnl=240.0)
     reg = _registry(tmp_path)
+    receipt = {"reason": "y" * 20, "granted_at": "2026-09-03T00:00:00+00:00", "expires_at": "2026-10-03T00:00:00+00:00",
+               "allocation_cap_pct": 50.0, "scoring_run_id": "run-1", "thresholds_hash": "t"}
     card = approve_strategy.accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D",
         report_folder=str(rf), verdict="FRAGILE",
         dsr_probability=None, scoring_run_id="run-1", strategy="frog",
         registry=reg, reports_root=tmp_path / "reports",
-        activate=True, confirm_non_robust=True,
+        activate=False, override=receipt,
         db_path=tmp_path / "audit.db",
     )
-    assert card["status"] == "enabled"
-    assert card["promotion_route"] == "ADVISORY"
+    assert card["status"] == "disabled"
+    assert card["promotion_route"] == "ADVISORY" and card["override"]["allocation_cap_pct"] == 50.0
 
 
 def test_accept_python_missing_backtest_result_fails_closed(tmp_path):
@@ -532,7 +535,7 @@ def test_accept_python_omitted_run_id_blocks_activation(tmp_path, monkeypatch, w
 _PINE_ADVISORY_MSG = "Activation requires ROBUST verdict; got FRAGILE"
 _PY_ADVISORY_MSG = (
     "Verdict is FRAGILE (not ROBUST). "
-    "Re-submit with confirm_non_robust=true to accept anyway."
+    "An override (typed confirmation + written reason, S6) is required to accept it."
 )
 
 

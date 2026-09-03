@@ -753,7 +753,9 @@ def test_import_modal_has_test_button_firing_full_run(html: str) -> None:
 
 def test_accept_flow_posts_to_strategies_accept(html: str) -> None:
     assert "/tradelab/strategies/accept" in html
-    assert "confirm_non_robust" in html
+    # S6: the confirm_non_robust knob is gone from the UI entirely — an
+    # ADVISORY run is accepted only through the override modal.
+    assert "confirm_non_robust" not in html
 
 
 # ─── Phase-4 Task 5: allocation_usd card field ─────────────────────────
@@ -1033,3 +1035,33 @@ def test_s5_runs_table_has_rung_column(html: str) -> None:
     assert "function rungCell(" in html
     assert ">Rung</th>" in html
     assert 'colspan="16"' in html and 'colspan="15"' not in html
+
+
+# ── S6: the override (2026-09-03) ────────────────────────────────────
+def test_s6_override_modal_is_typed_name_plus_reason_no_checkbox(html: str) -> None:
+    assert 'id="overrideModal"' in html
+    assert 'id="overrideConfirmInput"' in html and 'id="overrideReason"' in html
+    assert "confirm_non_robust: true" not in html and "confirm_non_robust:true" not in html
+    assert "$('overrideConfirmInput').value.trim() === pending.name" in html
+    assert "reason.length >= min" in html
+
+
+def test_s6_board_and_tab_wire_the_override(html: str) -> None:
+    assert "OVERRIDE.grant(row)" in html
+    assert "OVERRIDE.renew(c)" in html
+    assert "override: {confirm, reason}" in html
+    assert "/override'" in html
+    assert "function renderOverride(pane, c)" in html
+    assert "arrives in <span class=\"slice\">S6</span>" not in html
+
+
+def test_s6_override_strings_are_escaped(html: str) -> None:
+    i = html.index("function renderOverride(pane, c)")
+    body = html[i:i + 3000]
+    assert "${ov.reason}" not in body and "_esc(ov.reason" in body
+    assert "${c.override_expired_at}" not in body
+
+
+def test_s6_halted_state_is_shown(html: str) -> None:
+    assert "r.effective_status === 'halted'" in html
+    assert "needs a Full trial newer than the current grant" in html

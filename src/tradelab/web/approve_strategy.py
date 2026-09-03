@@ -439,8 +439,14 @@ def accept_python_run(
     mode: str = "paper",
     allocation_usd: Optional[float] = None,
     db_path: Path = _DEFAULT_DB_PATH,
+    override: Optional[dict] = None,
 ) -> dict:
-    """Promote a tested Python-strategy run to a live card. No strategy.pine /
+    """Promote a tested Python-strategy run to a live card.
+
+    S6: ``override`` is the validated receipt from tradelab.override
+    (reason, granted_at, expires_at, allocation_cap_pct, …). Its presence is
+    the ONLY thing that lets an ADVISORY run become a card; the receipt is
+    stored on the card and written to the ledger. BLOCKED ignores it. No strategy.pine /
     pine_archive. ADVISORY gating: activating a non-ROBUST verdict requires
     confirm_non_robust=True else ActivationGateFailed. Paper-mode by default.
 
@@ -481,6 +487,13 @@ def accept_python_run(
             f"{', '.join(fatal)}. confirm_non_robust does not apply.",
             fatal,
         )
+    # S6: the override receipt is the ONLY confirmation for ADVISORY. The old
+    # confirm_non_robust checkbox no longer confirms anything (kept in the
+    # signature for callers; ignored). A grant never arms the card: it starts
+    # Off, like every card since S3.
+    if override is not None and activate:
+        raise ActivationGateFailed("an override grant always creates the card Off — activate must be false")
+    confirm_non_robust = override is not None
     if route == ROUTE_ADVISORY and not confirm_non_robust:
         _log_ledger(
             db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
@@ -489,7 +502,7 @@ def accept_python_run(
         )
         raise AdvisoryRefused(
             f"Verdict is {normalized_verdict or 'unknown'} (not ROBUST). "
-            f"Re-submit with confirm_non_robust=true to accept anyway."
+            f"An override (typed confirmation + written reason, S6) is required to accept it."
         )
 
     version = registry.next_version_for(base_name)
@@ -515,16 +528,32 @@ def accept_python_run(
         "allocation_usd": allocation_usd,
     }
     card["promotion_route"] = route
+    if override is not None and route == ROUTE_ADVISORY:
+        card["override"] = dict(override)
+        # S6: the ledger row IS the audit trail of an override — it is written
+        # BEFORE the card exists and a failure refuses the grant (fail closed),
+        # unlike every other ledger write (WP4 fail-open).
+        ov = card["override"]
+        try:
+            from tradelab.audit.verdict_ledger import log_decision
+            log_decision(
+                db_path=db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
+                path="python", verdict=normalized_verdict, promotion_route=route,
+                blockers=[], override_used=True, activated=False,
+                override_reason=ov.get("reason"), override_expires_at=ov.get("expires_at"),
+                allocation_cap_pct=ov.get("allocation_cap_pct"), thresholds_hash=ov.get("thresholds_hash"),
+            )
+        except Exception as e:  # noqa: BLE001
+            from tradelab.override import LedgerUnavailable
+            raise LedgerUnavailable(f"audit ledger unavailable — override not granted: {type(e).__name__}: {e}") from e
     if activate:
         card["activated_at"] = created_at
         card["activated_verdict"] = normalized_verdict
     registry.create(card_id, card)
     if activate:
-        # CLEAR, or ADVISORY passed via confirm_non_robust (BLOCKED and
-        # ADVISORY-refused already raised above).
         _log_ledger(
             db_path, strategy_name=base_name, scoring_run_id=scoring_run_id,
             path="python", verdict=normalized_verdict, promotion_route=route,
-            blockers=[], override_used=bool(confirm_non_robust), activated=True,
+            blockers=[], override_used=False, activated=True,
         )
     return card

@@ -38,7 +38,7 @@ def test_bar_bucket_various_timeframes():
 def test_run_tick_groups_by_timeframe_and_calls_run_once(monkeypatch):
     seen = []
 
-    def _fake_run_once(cards, *, deps, bar_date):
+    def _fake_run_once(cards, *, deps, bar_date, now=None):   # S6: run_once takes `now`
         seen.append((sorted(cards), bar_date))
         return {k: {"action": "none"} for k in cards}
 
@@ -78,7 +78,7 @@ def test_run_tick_excludes_non_python_and_non_paper(monkeypatch):
     """Cards with source!='python' or mode!='paper' must be silently skipped."""
     seen = []
 
-    def _fake_run_once(cards, *, deps, bar_date):
+    def _fake_run_once(cards, *, deps, bar_date, now=None):   # S6: run_once takes `now`
         seen.extend(cards.keys())
         return {k: {"action": "none"} for k in cards}
 

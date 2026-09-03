@@ -1272,6 +1272,10 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     if m:
         return _flatten_card(m.group(1), payload)
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/override$", path)
+    if m:
+        return _renew_override(m.group(1), payload)
+
     m = re.match(r"^/tradelab/runs/([^/]+)/unarchive$", path)
     if m:
         run_id = m.group(1)
@@ -1503,6 +1507,24 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         # raises the proper 422 shapes); the ladder gate applies to CLEAR runs.
         pre_route, _ = _route_for_run({"verdict": server_verdict, "dsr_probability": dsr_probability,
                                        "report_card_html_path": row.report_card_html_path})
+        override_req = payload.get("override")
+        override_record = None
+        if override_req is not None:
+            # S6: an override is the only way an ADVISORY run becomes a card.
+            # Policy (tradelab.override): ADVISORY only, typed name, written
+            # reason, budget; and it needs the same current Full trial + clean
+            # canaries that Accept needs.
+            if not isinstance(override_req, dict):
+                return _err("override must be an object {confirm, reason}"), 400
+            resp = _override_grant_or_422(
+                strategy=row.strategy_name, route=pre_route, confirm=override_req.get("confirm"),
+                reason=override_req.get("reason"), scoring_run_id=scoring_run_id,
+                row={"tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash},
+                exclude_card_id=None,
+            )
+            if isinstance(resp, tuple):
+                return resp
+            override_record = resp
         ft = _full_trial_status_for(row.strategy_name, {
             "tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash,
         }) if pre_route == "CLEAR" else {"ok": True}
@@ -1521,9 +1543,11 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
                 registry=CardRegistry(_cards_path()),
                 reports_root=_reports_root(),
                 activate=activate,
-                confirm_non_robust=bool(payload.get("confirm_non_robust", False)),
+                # S6: the checkbox is gone — only an override record confirms ADVISORY.
+                confirm_non_robust=False,
                 allocation_usd=payload.get("allocation_usd"),
                 db_path=_db_path(),
+                override=override_record,
             )
             return _ok(card), 200
         except approve_strategy.PromotionBlocked as e:
@@ -1539,6 +1563,9 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         except CardExistsError as e:
             return _err(f"card_id {e} already registered"), 409
         except Exception as e:
+            from tradelab.override import LedgerUnavailable
+            if isinstance(e, LedgerUnavailable):
+                return _err(str(e)), 503
             return _err(f"accept failed: {type(e).__name__}: {e}"), 500
 
     # Task 10: one-click activate. Looks up the strategy's latest run, derives
@@ -2295,18 +2322,155 @@ def _build_board() -> dict:
         except Exception:  # noqa: BLE001 — unloadable stays on the board so its Trial can fail loudly
             pass
 
+    # S6: could an override be granted right now (budget, canaries)?
+    from tradelab import override as ov_mod
+    from datetime import datetime as _dt, timezone as _tz
+    _now = _dt.now(_tz.utc)
+    try:
+        policy = _promotion_policy()
+        active_n = len(ov_mod.active_overrides(cards.values(), _now))
+        if canary_bad:
+            override_ok = {"ok": False, "reason": "engine integrity check is failing — no overrides while a canary is out of its expected set"}
+        elif active_n >= policy["budget"]:
+            override_ok = {"ok": False, "reason": f"override budget spent: {active_n} of {policy['budget']} active"}
+        else:
+            override_ok = {"ok": True, "reason": None}
+        override_policy = {**policy, "active": active_n}
+    except Exception as e:  # noqa: BLE001
+        override_ok = {"ok": False, "reason": f"override policy unavailable: {e}"}
+        override_policy = None
+
     out = board_mod.build_board(
         registered=registered, latest_runs=latest, route_for_run=_route_for_run,
         cards=cards, retired=retired, jobs=jobs, symbols_for=_symbols, excluded=excluded,
         data_end_for=_data_end_for_run, full_trial_for=_full_trial, signals_for=_signals_for_run,
-        newer_trials=newer_trials,
+        newer_trials=newer_trials, override_ok=override_ok, now=_now,
     )
+    out["override_policy"] = override_policy
     out["rungs"] = ladder.RUNGS
     out["estimates"] = ladder.rung_estimates(jobs)
     out["canary_mismatch"] = canary_bad
     from datetime import datetime, timezone
     out["generated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return out
+
+
+def _promotion_policy() -> dict:
+    """The S6 policy numbers from tradelab.yaml `promotion:`; the decided
+    defaults (30 d / 50 % / 2 / 20 chars) when the config cannot be loaded —
+    logged, since a stricter configured policy would then not apply."""
+    from tradelab import override as ov
+    try:
+        from tradelab.config import get_config
+        return ov.policy_from_config(get_config())
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("promotion policy: config unavailable (%s) — using defaults", e)
+        from tradelab.config import PromotionConfig
+        return ov.policy_from_config(PromotionConfig())
+
+
+def _override_grant_or_422(*, strategy: str, route: Optional[str], confirm, reason, scoring_run_id: str,
+                           row: dict, exclude_card_id: Optional[str]):
+    """Validate an override request against the policy. Returns the receipt
+    dict to store, or a (body, 422) tuple to return."""
+    from datetime import datetime, timezone
+    from tradelab import override as ov
+    from tradelab.live.cards import CardRegistry
+    policy = _promotion_policy()
+    now = datetime.now(timezone.utc)
+    cards_path = _cards_path()
+    cards = list(CardRegistry(cards_path).all().values()) if cards_path.exists() else []
+    active = len(ov.active_overrides(cards, now, exclude_card_id=exclude_card_id))
+    try:
+        ov.validate_request(strategy=strategy, confirm=confirm, reason=reason, route=route,
+                            policy=policy, active_count=active)
+    except ov.OverrideRefused as e:
+        return json.dumps({"error": f"override refused: {e}", "data": None,
+                           "gate": "override", "code": e.code}), 422
+    # The same ladder + canary gate Accept applies — an override never skips a rung.
+    ft = _full_trial_status_for(strategy, row)
+    if not ft["ok"]:
+        return json.dumps({"error": f"override refused: {ft['reason']}", "data": None,
+                           "gate": "full_trial", "code": ft["code"]}), 422
+    _, thr = _current_hashes_for(strategy)
+    return ov.build_record(reason=reason, now=now, policy=policy, scoring_run_id=scoring_run_id,
+                           thresholds_hash=thr)
+
+
+def _renew_override(card_id: str, payload: dict) -> Tuple[str, int]:
+    """POST /tradelab/cards/{id}/override — a renewal is a fresh override with a
+    fresh reason: same policy, budget counted without this card, the card's
+    own scoring run must still be a current Full trial."""
+    from tradelab.audit.history import get_run
+    from tradelab.live.cards import CardRegistry
+    from tradelab.web import approve_strategy
+    cards_path = _cards_path()
+    reg = CardRegistry(cards_path) if cards_path.exists() else None
+    card = reg.get(card_id) if reg else None
+    if card is None:
+        return _err("card not found"), 404
+    if (card.get("promotion_route") or "").upper() != "ADVISORY":
+        return json.dumps({"error": "override refused: only ADVISORY cards carry an override", "data": None,
+                           "gate": "override", "code": "not_needed" if card.get("promotion_route") == "CLEAR" else "blocked"}), 422
+    strategy = card.get("strategy") or card.get("base_name") or ""
+    # Renewal needs NEW evidence: a Full trial newer than the current grant.
+    # Either the client names it (scoring_run_id) or the newest Full trial of
+    # the strategy is used; the card's original run never renews itself.
+    granted_at = (card.get("override") or {}).get("granted_at") or card.get("created_at") or ""
+    original_run = (card.get("override") or {}).get("scoring_run_id") or card.get("scoring_run_id")
+    from tradelab.web.board import _iso_key
+
+    def _is_new_evidence(r_id, ts):
+        # newer than (or, at second precision, concurrent with) the grant, and
+        # never the run the current override was granted on
+        return r_id != original_run and _iso_key(ts) >= _iso_key(granted_at)
+
+    run_id = payload.get("scoring_run_id") or ""
+    if run_id:
+        row = get_run(run_id, db_path=_db_path())
+        if row is None or row.strategy_name != strategy:
+            return _err("scoring_run_id unknown or not this strategy's run"), 422
+    else:
+        rows = audit_reader.list_runs(strategy=strategy, limit=200, db_path=_db_path())
+        row = None
+        for r in rows:   # newest first
+            if r.get("tier") == "full" and _is_new_evidence(r.get("run_id"), r.get("timestamp_utc")):
+                row = get_run(r["run_id"], db_path=_db_path())
+                break
+    if row is None or not _is_new_evidence(row.run_id, row.timestamp_utc):
+        return json.dumps({"error": "override refused: renewal needs new evidence — run a Full trial newer "
+                                    "than the current override, then renew from it", "data": None,
+                           "gate": "full_trial", "code": "no_newer_trial"}), 422
+    run_id = row.run_id
+    route, _ = _route_for_run({"verdict": row.verdict, "dsr_probability": row.dsr_probability,
+                               "report_card_html_path": row.report_card_html_path})
+    resp = _override_grant_or_422(
+        strategy=strategy, route=route, confirm=payload.get("confirm"), reason=payload.get("reason"),
+        scoring_run_id=run_id,
+        row={"tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash},
+        exclude_card_id=card_id,
+    )
+    if isinstance(resp, tuple):
+        return resp
+    # Ledger first, fail closed (the row is the audit trail of the renewal).
+    try:
+        from tradelab.audit.verdict_ledger import log_decision
+        log_decision(
+            db_path=_db_path(), strategy_name=strategy, scoring_run_id=run_id, path="python",
+            verdict=(row.verdict or "").upper(), promotion_route="ADVISORY", blockers=[],
+            override_used=True, activated=False, override_reason=resp["reason"],
+            override_expires_at=resp["expires_at"], allocation_cap_pct=resp["allocation_cap_pct"],
+            thresholds_hash=resp["thresholds_hash"],
+        )
+    except Exception as e:  # noqa: BLE001
+        return _err(f"audit ledger unavailable — override not renewed: {type(e).__name__}: {e}"), 503
+    fields = {"override": resp, "scoring_run_id": run_id, "verdict": (row.verdict or "").upper(),
+              "dsr_probability": row.dsr_probability}
+    if card.get("override_expired_at"):
+        fields["override_expired_at"] = None
+    reg.update(card_id, fields)
+    return _ok({"card_id": card_id, "override": resp, "scoring_run_id": run_id}), 200
 
 
 def _enable_gate(card: dict, payload: dict) -> Optional[str]:
@@ -2320,9 +2484,15 @@ def _enable_gate(card: dict, payload: dict) -> Optional[str]:
     route = (card.get("promotion_route") or "").upper()
     if route == "BLOCKED":
         return "refused: promotion route is BLOCKED (hard disqualifier) — this card cannot be enabled"
-    if route == "ADVISORY" and not card.get("override"):
-        return ("refused: promotion route is ADVISORY — enabling needs an override "
-                "(typed confirmation, reason, expiry), which arrives in S6")
+    if route == "ADVISORY":
+        from datetime import datetime, timezone
+        from tradelab import override as ov
+        if not card.get("override"):
+            return ("refused: promotion route is ADVISORY — enabling needs an override "
+                    "(typed confirmation + written reason)")
+        if not ov.is_active(card, datetime.now(timezone.utc)):
+            return ("refused: this card's override has expired — renew it with a fresh reason "
+                    "before switching it on")
     if route not in ("CLEAR", "ADVISORY"):
         return ("refused: this card has no promotion route on record (accepted before routes "
                 "were stored) — retire it and re-accept from a trial")

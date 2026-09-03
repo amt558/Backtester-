@@ -47,15 +47,31 @@ def test_accept_python_advisory_gate_blocks_non_robust_activate(tmp_path, write_
             activate=True, confirm_non_robust=False)
 
 
-def test_accept_python_confirm_overrides_advisory_gate(tmp_path, write_backtest_result):
+def test_accept_python_checkbox_no_longer_confirms_advisory(tmp_path, write_backtest_result):
+    """S6: confirm_non_robust is ignored — only an override receipt confirms
+    ADVISORY, and a grant never arms the card."""
+    from tradelab.web.approve_strategy import AdvisoryRefused, ActivationGateFailed
     rf = _run_folder(tmp_path, write_backtest_result); reg = _registry(tmp_path)
+    with pytest.raises(AdvisoryRefused):
+        accept_python_run(
+            base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
+            verdict="FRAGILE", dsr_probability=None, scoring_run_id="run-1",
+            strategy="frog", registry=reg, reports_root=tmp_path / "reports",
+            activate=True, confirm_non_robust=True)
+    receipt = {"reason": "x" * 20, "granted_at": "2026-09-03T00:00:00+00:00", "expires_at": "2026-10-03T00:00:00+00:00",
+               "allocation_cap_pct": 50.0, "scoring_run_id": "run-1", "thresholds_hash": "t"}
+    with pytest.raises(ActivationGateFailed):
+        accept_python_run(
+            base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
+            verdict="FRAGILE", dsr_probability=None, scoring_run_id="run-1",
+            strategy="frog", registry=reg, reports_root=tmp_path / "reports",
+            activate=True, override=receipt, db_path=tmp_path / "audit.db")
     card = accept_python_run(
         base_name="frog", symbol="AAPL", timeframe="1D", report_folder=str(rf),
         verdict="FRAGILE", dsr_probability=None, scoring_run_id="run-1",
         strategy="frog", registry=reg, reports_root=tmp_path / "reports",
-        activate=True, confirm_non_robust=True)
-    assert card["status"] == "enabled"
-    assert card["activated_verdict"] == "FRAGILE"
+        activate=False, override=receipt, db_path=tmp_path / "audit.db")
+    assert card["status"] == "disabled" and card["override"]["reason"] == "x" * 20
 
 
 def test_accept_route_requires_fields():
