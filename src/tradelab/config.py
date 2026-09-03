@@ -120,6 +120,15 @@ class PromotionConfig(BaseModel):
     override_reason_min_chars: int = 20
 
 
+class LiveConfig(BaseModel):
+    """S9 go-live policy. Override in tradelab.yaml under `live:`; every
+    field is defaulted so an absent key is fine. Live keys are NOT here —
+    they come from ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY in .env."""
+    max_total_allocation_usd: float = 25000.0
+    daily_loss_limit_usd: float = 1000.0
+    require_flat_paper: bool = True
+
+
 class Config(BaseModel):
     paths: PathsConfig
     benchmarks: BenchmarksConfig = BenchmarksConfig()
@@ -129,6 +138,7 @@ class Config(BaseModel):
     walkforward: WalkForwardConfig = WalkForwardConfig()
     robustness: RobustnessConfig = RobustnessConfig()
     promotion: PromotionConfig = PromotionConfig()
+    live: LiveConfig = LiveConfig()
     strategies: dict[str, StrategyEntry] = Field(default_factory=dict)
     universes: dict[str, list[str]] = Field(default_factory=dict)
 

@@ -282,3 +282,30 @@ def test_renew_recomputes_the_route_from_the_new_run(tmp_path, monkeypatch, writ
     body, status = handlers.handle_post_with_status("/tradelab/cards/alpha-v1/override",
                                                     json.dumps({"confirm": "alpha", "reason": GOOD_REASON}).encode())
     assert status == 422 and json.loads(body)["code"] == "blocked"
+
+
+def test_s9_renewing_a_live_cards_override_needs_the_live_confirmation_and_rearms(tmp_path, monkeypatch, write_backtest_result):
+    run_id, folder, cards, db = _seed(tmp_path, monkeypatch, write_backtest_result)
+    _accept(run_id, folder, override={"confirm": "alpha", "reason": GOOD_REASON})
+    from tradelab.audit.verdict_ledger import log_decision
+    rid = log_decision(db_path=db, strategy_name="alpha", scoring_run_id=run_id, path="python", verdict="INCONCLUSIVE",
+                       promotion_route="ADVISORY", action="go_live", live_allocation_usd=3000, card_id="alpha-v1")
+    data = json.loads(cards.read_text())
+    data["alpha-v1"].update({"mode": "live", "allocation_usd": 3000,
+                             "live": {"granted_at": "x", "scoring_run_id": run_id, "allocation_usd": 3000, "ledger_row_id": rid}})
+    cards.write_text(json.dumps(data))
+    from tradelab.audit.history import record_run
+    new_run = record_run("alpha", verdict="INCONCLUSIVE", dsr_probability=0.45, tier="full", code_hash="c1", thresholds_hash="t1",
+                         report_card_html_path=str(folder / "dashboard.html"), db_path=db)
+    reason = "Renewing on live: paper PF held at 1.4 over 30 days."
+    body, status = handlers.handle_post_with_status("/tradelab/cards/alpha-v1/override",
+                                                    json.dumps({"confirm": "alpha", "reason": reason}).encode())
+    assert status == 422 and json.loads(body)["code"] == "live_confirm"
+    body, status = handlers.handle_post_with_status("/tradelab/cards/alpha-v1/override",
+                                                    json.dumps({"confirm": "alpha", "reason": reason, "confirm_live": "alpha LIVE"}).encode())
+    assert status == 200, body
+    card = json.loads(cards.read_text())["alpha-v1"]
+    assert card["mode"] == "live" and card["live"]["scoring_run_id"] == new_run
+    row = sqlite3.connect(str(db)).execute("SELECT id, action, scoring_run_id FROM verdict_ledger ORDER BY id DESC LIMIT 1").fetchone()
+    assert row[1:] == ("live_rearm", new_run) and card["live"]["ledger_row_id"] == row[0]
+    assert handlers._verify_live_receipt(card) is True

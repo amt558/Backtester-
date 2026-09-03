@@ -1,7 +1,16 @@
 """Thin wrapper around alpaca-py for placing market orders.
 
-Reads credentials once from C:/TradingScripts/alpaca_config.json (the same file
-the dashboard proxy uses). paper_trading flag routes to paper vs live URL.
+Two accounts, never confused (S9):
+
+  paper  credentials from C:/TradingScripts/alpaca_config.json (the same
+         file the dashboard proxy uses); its paper_trading flag picks the URL
+         exactly as before.
+  live   credentials ONLY from ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY
+         (process env or tradelab's .env). Absent keys raise
+         LiveNotConfigured — there is no fallback to the paper file.
+
+Every wrapper takes ``account=`` and defaults to "paper", so every caller
+that predates S9 is unchanged.
 """
 from __future__ import annotations
 
@@ -16,23 +25,66 @@ from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import MarketOrderRequest
 
 CONFIG_PATH = Path("C:/TradingScripts/alpaca_config.json")
+LIVE_KEY_ENV = "ALPACA_LIVE_API_KEY"
+LIVE_SECRET_ENV = "ALPACA_LIVE_SECRET_KEY"
+ACCOUNTS = ("paper", "live")
 
-_client: Optional[TradingClient] = None
+_clients: dict[str, TradingClient] = {}
 _lock = Lock()
 logger = logging.getLogger("tradelab.live.alpaca")
 
 
-def get_client() -> TradingClient:
-    global _client
+class LiveNotConfigured(Exception):
+    """No live keys in the environment — nothing may touch the live account."""
+
+
+class PaperMisconfigured(Exception):
+    """alpaca_config.json's paper_trading flag is not True. Now that a real
+    live path exists, the "paper" client must never point at a live URL:
+    any caller asking for paper gets this instead of a client."""
+
+
+def live_keys_present() -> bool:
+    """True when both live keys are set (after loading .env). Never logs or
+    returns the values."""
+    import os
+    try:
+        from tradelab.env import load_env
+        load_env()
+    except Exception:  # noqa: BLE001
+        pass
+    return bool(os.environ.get(LIVE_KEY_ENV, "").strip()) and bool(os.environ.get(LIVE_SECRET_ENV, "").strip())
+
+
+def _check_account(account: str) -> str:
+    if account not in ACCOUNTS:
+        raise ValueError(f"account must be one of {ACCOUNTS}, got {account!r}")
+    return account
+
+
+def get_client(account: str = "paper") -> TradingClient:
+    account = _check_account(account)
     with _lock:
-        if _client is None:
-            cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
-            api_key = cfg["alpaca"]["api_key"]
-            secret = cfg["alpaca"]["secret_key"]
-            paper = bool(cfg["alpaca"].get("paper_trading", True))
-            _client = TradingClient(api_key, secret, paper=paper)
-            logger.info("alpaca client ready (paper=%s)", paper)
-        return _client
+        c = _clients.get(account)
+        if c is None:
+            if account == "live":
+                import os
+                if not live_keys_present():
+                    raise LiveNotConfigured(
+                        f"live keys missing — set {LIVE_KEY_ENV} and {LIVE_SECRET_ENV} in tradelab/.env")
+                c = TradingClient(os.environ[LIVE_KEY_ENV].strip(), os.environ[LIVE_SECRET_ENV].strip(), paper=False)
+                logger.info("alpaca LIVE client ready")
+            else:
+                cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8-sig"))
+                api_key = cfg["alpaca"]["api_key"]
+                secret = cfg["alpaca"]["secret_key"]
+                if cfg["alpaca"].get("paper_trading") is not True:
+                    raise PaperMisconfigured("alpaca_config.json: paper_trading must be exactly true — the paper "
+                                             "client refuses to point anywhere else (live goes through env keys)")
+                c = TradingClient(api_key, secret, paper=True)
+                logger.info("alpaca client ready (paper=True)")
+            _clients[account] = c
+        return c
 
 
 def submit_market_order(
@@ -40,8 +92,9 @@ def submit_market_order(
     side: str,
     quantity: float,
     client_order_id: Optional[str] = None,
+    account: str = "paper",
 ) -> dict:
-    client = get_client()
+    client = get_client(account)
     req = MarketOrderRequest(
         symbol=symbol,
         qty=quantity,
@@ -67,13 +120,13 @@ from alpaca.trading.enums import QueryOrderStatus
 from alpaca.common.enums import Sort
 
 
-def list_open_orders() -> list[dict]:
+def list_open_orders(account: str = "paper") -> list[dict]:
     """Return all open orders in the Alpaca account as plain dicts.
 
     Each dict has: id, client_order_id, symbol, qty, side, status.
     Used by panic.py L2 step.
     """
-    client = get_client()
+    client = get_client(account)
     req = GetOrdersRequest(status=QueryOrderStatus.OPEN)
     orders = client.get_orders(filter=req)
     return [
@@ -89,7 +142,7 @@ def list_open_orders() -> list[dict]:
     ]
 
 
-def list_closed_orders(days: int = 90) -> list[dict]:
+def list_closed_orders(days: int = 90, account: str = "paper") -> list[dict]:
     """List filled/closed orders from the last ``days`` days.
 
     Returns list of dicts with: id, client_order_id, symbol, side, qty,
@@ -100,7 +153,7 @@ def list_closed_orders(days: int = 90) -> list[dict]:
     """
     from datetime import datetime, timedelta, timezone
 
-    client = get_client()
+    client = get_client(account)
     after = datetime.now(timezone.utc) - timedelta(days=days)
     req = GetOrdersRequest(
         status=QueryOrderStatus.CLOSED,
@@ -125,10 +178,10 @@ def list_closed_orders(days: int = 90) -> list[dict]:
     ]
 
 
-def list_positions_detail() -> list[dict]:
+def list_positions_detail(account: str = "paper") -> list[dict]:
     """Open positions with the fields a strategy tab shows (S3). Separate from
     list_positions() so panic's contract stays untouched."""
-    client = get_client()
+    client = get_client(account)
     out = []
     for p in client.get_all_positions():
         out.append({
@@ -143,19 +196,19 @@ def list_positions_detail() -> list[dict]:
     return out
 
 
-def cancel_order_by_id(order_id: str) -> None:
+def cancel_order_by_id(order_id: str, account: str = "paper") -> None:
     """Cancel a single Alpaca order by its server-side ID. Raises on failure."""
-    client = get_client()
+    client = get_client(account)
     client.cancel_order_by_id(order_id)
 
 
-def list_positions() -> list[dict]:
+def list_positions(account: str = "paper") -> list[dict]:
     """Return all open positions in the Alpaca account as plain dicts.
 
     Each dict has: symbol, qty (string for precision), side.
     Used by panic.py L3 step.
     """
-    client = get_client()
+    client = get_client(account)
     positions = client.get_all_positions()
     return [
         {
@@ -165,3 +218,10 @@ def list_positions() -> list[dict]:
         }
         for p in positions
     ]
+
+
+def account_day_pnl(account: str = "paper") -> float:
+    """equity − last_equity for the account; raises on any unreadable value
+    (callers fail closed)."""
+    acct = get_client(account).get_account()
+    return float(acct.equity) - float(acct.last_equity)

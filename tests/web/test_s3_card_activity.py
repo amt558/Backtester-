@@ -91,8 +91,9 @@ def test_activity_route_uses_card_symbols_and_injected_alpaca(tmp_path, monkeypa
                                               "strategy": "alpha", "base_name": "alpha", "version": 1}}))
     monkeypatch.setattr(handlers, "_cards_path", lambda: cards)
     import tradelab.live.alpaca_client as ac
-    monkeypatch.setattr(ac, "list_closed_orders", lambda days=90: CLOSED)
-    monkeypatch.setattr(ac, "list_positions_detail", lambda: [
+    # S9: the route passes the card's account explicitly (paper here).
+    monkeypatch.setattr(ac, "list_closed_orders", lambda days=90, account="paper": CLOSED if account == "paper" else [])
+    monkeypatch.setattr(ac, "list_positions_detail", lambda account="paper": [
         {"symbol": "NVDA", "qty": "10", "side": "long", "avg_entry_price": "100", "current_price": "105",
          "market_value": "1050", "unrealized_pl": "50"}])
     body, status = handlers.handle_get_with_status("/tradelab/cards/alpha-v1/activity?days=30")

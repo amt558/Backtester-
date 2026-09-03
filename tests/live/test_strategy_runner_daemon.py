@@ -74,8 +74,10 @@ def test_run_tick_groups_by_timeframe_and_calls_run_once(monkeypatch):
     assert "b" in res
 
 
-def test_run_tick_excludes_non_python_and_non_paper(monkeypatch):
-    """Cards with source!='python' or mode!='paper' must be silently skipped."""
+def test_run_tick_excludes_non_python_and_unknown_modes(monkeypatch):
+    """Cards with source!='python' or a mode outside paper/live are silently
+    skipped. S9: live cards ARE eligible — run_once decides (and blocks them
+    without live deps)."""
     seen = []
 
     def _fake_run_once(cards, *, deps, bar_date, now=None):   # S6: run_once takes `now`
@@ -93,13 +95,16 @@ def test_run_tick_excludes_non_python_and_non_paper(monkeypatch):
                                 "source": "pine",   "mode": "paper",  "timeframe": "1D"},
                 "py-live":     {"card_id": "py-live",     "status": "enabled",
                                 "source": "python", "mode": "live",   "timeframe": "1D"},
+                "py-odd":      {"card_id": "py-odd",      "status": "enabled",
+                                "source": "python", "mode": "sim",    "timeframe": "1D"},
             }
 
     res = sr.run_tick(registry=_Reg(), deps={}, now=datetime(2026, 5, 31, tzinfo=timezone.utc))
     assert "py-paper" in seen
     assert "pine-paper" not in seen
-    assert "py-live" not in seen
-    assert set(res.keys()) == {"py-paper"}
+    assert "py-live" in seen
+    assert "py-odd" not in seen
+    assert set(res.keys()) == {"py-paper", "py-live"}
 
 
 def test_run_tick_returns_empty_dict_on_registry_error(monkeypatch):

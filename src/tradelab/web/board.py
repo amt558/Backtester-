@@ -20,8 +20,8 @@ from typing import Callable, Iterable, Optional
 STATE_CANDIDATE = "candidate"
 STATE_TRIED = "tried"
 STATE_ACCEPTED = "accepted"
-STATE_PAPER_QUALIFIED = "paper_qualified"   # S7 — never emitted here
-STATE_LIVE = "live"                          # S9 — never emitted here
+STATE_PAPER_QUALIFIED = "paper_qualified"   # dropped 2026-09-03 — never emitted; kept so counts stay stable
+STATE_LIVE = "live"                          # S9: a card whose mode is "live" (Off or On)
 STATE_RETIRED = "retired"
 
 # Spine order for grouping on the board.
@@ -121,9 +121,12 @@ def derive_state(
     )
     if card is not None:
         status = (card.get("status") or "disabled").lower()
-        state = STATE_ACCEPTED
+        live = str(card.get("mode") or "").lower() == "live"
+        state = STATE_LIVE if live else STATE_ACCEPTED
         if status == "enabled" and retired is None and card.get("override") and not _is_active_override(card):
             action = _action("open_tab", "Open tab · halted (override expired)")
+        elif live:
+            action = _action("open_tab", "Open tab · Live · Off" if status == "disabled" else "Open tab · LIVE")
         else:
             action = _action("open_tab", "Open tab" if status == "disabled" else "Open tab · Paper")
     elif latest_run is not None and latest_run.get("verdict") and route and not retired_after_run:
@@ -332,6 +335,8 @@ def build_board(
             "full_trial": ft,
             "override": receipt,
             "effective_status": effective_status,
+            "mode": (card or {}).get("mode"),
+            "live": (card or {}).get("live"),
             "score": sig.get("score"),
             "signals": {"gating": sig.get("gating", []), "read_anyway": sig.get("read_anyway", []),
                         "hard_override": sig.get("hard_override", [])},

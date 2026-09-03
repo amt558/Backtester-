@@ -54,8 +54,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     """)
     # S6: override receipt columns — idempotent, NULL on older rows.
     existing = {row[1] for row in conn.execute("PRAGMA table_info(verdict_ledger)").fetchall()}
+    # S9: action ('accept' default, 'override', 'go_live', 'leave_live') and
+    # the live allocation committed at go-live.
     for col, sqltype in (("override_reason", "TEXT"), ("override_expires_at", "TEXT"),
-                         ("allocation_cap_pct", "REAL"), ("thresholds_hash", "TEXT")):
+                         ("allocation_cap_pct", "REAL"), ("thresholds_hash", "TEXT"),
+                         ("action", "TEXT"), ("live_allocation_usd", "REAL"), ("card_id", "TEXT")):
         if col not in existing:
             conn.execute(f"ALTER TABLE verdict_ledger ADD COLUMN {col} {sqltype}")
     conn.executescript("""
@@ -65,6 +68,48 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     """)
     conn.commit()
     return conn
+
+
+def get_row(row_id, db_path: Path = DEFAULT_DB_PATH) -> Optional[dict]:
+    """One ledger row as a dict (S9: receipts are verified against it), or
+    None when it does not exist / the DB is unreadable."""
+    try:
+        conn = _connect(db_path)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        conn.row_factory = sqlite3.Row
+        r = conn.execute("SELECT * FROM verdict_ledger WHERE id = ?", (int(row_id),)).fetchone()
+        return dict(r) if r is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        conn.close()
+
+
+LIVE_ACTIONS = ("go_live", "live_allocation", "live_rearm", "leave_live")
+
+
+def get_latest_live_row(card_id: str, db_path: Path = DEFAULT_DB_PATH) -> Optional[dict]:
+    """The newest live-action row for a card (go_live / live_allocation /
+    live_rearm / leave_live), or None. A receipt is real only if it names
+    THIS row — a leave_live newer than the receipt supersedes it."""
+    if not card_id:
+        return None
+    try:
+        conn = _connect(db_path)
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        conn.row_factory = sqlite3.Row
+        q = "SELECT * FROM verdict_ledger WHERE card_id = ? AND action IN (%s) ORDER BY id DESC LIMIT 1" % \
+            ",".join("?" * len(LIVE_ACTIONS))
+        r = conn.execute(q, (card_id, *LIVE_ACTIONS)).fetchone()
+        return dict(r) if r is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        conn.close()
 
 
 def log_decision(
@@ -81,6 +126,9 @@ def log_decision(
     override_expires_at: Optional[str] = None,
     allocation_cap_pct: Optional[float] = None,
     thresholds_hash: Optional[str] = None,
+    action: Optional[str] = None,
+    live_allocation_usd: Optional[float] = None,
+    card_id: Optional[str] = None,
     db_path: Path = DEFAULT_DB_PATH,
 ) -> int:
     """Append one verdict-ledger row. Returns the new row id.
@@ -108,8 +156,9 @@ def log_decision(
                 created_at, scoring_run_id, strategy_name, path,
                 verdict, promotion_route, blockers_json,
                 override_used, activated,
-                override_reason, override_expires_at, allocation_cap_pct, thresholds_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                override_reason, override_expires_at, allocation_cap_pct, thresholds_hash,
+                action, live_allocation_usd, card_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 created_at, scoring_run_id, strategy_name, path,
@@ -117,6 +166,7 @@ def log_decision(
                 1 if override_used else 0,
                 1 if activated else 0,
                 override_reason, override_expires_at, allocation_cap_pct, thresholds_hash,
+                action, live_allocation_usd, card_id,
             ),
         )
         conn.commit()

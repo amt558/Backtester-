@@ -890,10 +890,12 @@ def test_s3_tabs_read_the_activity_route(html: str) -> None:
     assert "/activity?days=" in html
 
 
-def test_s3_live_mode_is_present_but_disabled(html: str) -> None:
+def test_s3_live_mode_is_present_and_gated(html: str) -> None:
+    """S3 shipped Live disabled; S9 made it real — it must still exist, and
+    must never be a bare PATCH: the click opens the gate."""
     import re as _re
-    m = _re.search(r'<button data-mode="live" disabled', html)
-    assert m, "Live must be visible and disabled until S9"
+    assert _re.search(r'<button data-mode="live" class=', html), "Live button must exist on the tab"
+    assert "if (mode === 'live' && !isLive) { GOLIVE.open(c); return; }" in html
 
 
 def test_s3_paper_requires_allocation(html: str) -> None:
@@ -1065,3 +1067,38 @@ def test_s6_override_strings_are_escaped(html: str) -> None:
 def test_s6_halted_state_is_shown(html: str) -> None:
     assert "r.effective_status === 'halted'" in html
     assert "needs a Full trial newer than the current grant" in html
+
+
+# ── S9: the go-live gate (2026-09-03) ────────────────────────────────
+def test_s9_go_live_modal_is_typed_confirmation_plus_allocation(html: str) -> None:
+    assert 'id="goLiveModal"' in html
+    assert 'id="goLiveConfirmInput"' in html and 'id="goLiveAlloc"' in html and 'id="goLiveChecks"' in html
+    assert "=== v.expected_confirm" in html                    # the server names the string to type
+    assert "Live arrives in S9" not in html                    # the Live button is real now
+    assert "Paper-qualified" not in html.split("const BOARD = (() => {")[1][:4000]
+
+
+def test_s9_live_routes_are_the_only_mode_writers(html: str) -> None:
+    i = html.index("const GOLIVE = (() => {")
+    body = html[i:i + 6000]
+    assert "'/live', {cache: 'no-store'}" in body               # GET: the checks
+    assert "'/live', {method: 'POST'" in body                   # POST: arm
+    assert "'/paper', {method: 'POST'" in html                  # back to paper
+    assert '"mode"' not in html[html.index("async function setMode("):html.index("async function setMode(") + 3000] \
+        or "JSON.stringify({status})" in html                   # setMode only ever PATCHes status
+    assert "GOLIVE.open(c)" in html and "function renderLiveReceipt(pane, c)" in html
+
+
+def test_s9_board_has_a_live_column_and_the_rail_has_no_future_nodes(html: str) -> None:
+    assert "const COLS = ['candidate', 'tried', 'accepted', 'live', 'retired'];" in html
+    assert "const future = false;" in html
+    assert "LIVE · real money" in html
+
+
+def test_s9_live_strings_are_escaped(html: str) -> None:
+    i = html.index("function renderLiveReceipt(pane, c)")
+    body = html[i:i + 2500]
+    assert "${lv.route}" not in body and "_esc(String(lv.route" in body
+    j = html.index("const GOLIVE = (() => {")
+    gb = html[j:j + 6000]
+    assert "${c.reason}" not in gb and "_esc(c.reason" in gb and "_esc(c.label)" in gb

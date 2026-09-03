@@ -791,6 +791,10 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
                 out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
         return _ok(out), 200
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/live$", path)
+    if m:
+        return _golive_checks(m.group(1))   # S9: read-only view of the go-live gate
+
     m = re.match(r"^/tradelab/cards/([^/]+)/activity$", path)
     if m:
         # S3: one strategy's own orders, round-trips, daily P&L and positions,
@@ -807,20 +811,22 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
         except (TypeError, ValueError):
             days = 90
         symbols = _card_symbols(card)
+        account = _card_account(card)   # S9: a live card's orders live on the live account
 
         def _orders():
             from tradelab.live.alpaca_client import list_closed_orders
-            return list_closed_orders(days=days)
+            return list_closed_orders(days=days, account=account)
 
         def _positions():
             from tradelab.live.alpaca_client import list_positions_detail
-            return list_positions_detail()
+            return list_positions_detail(account=account)
 
         activity = card_activity.build_activity(
             card, card_symbols=symbols,
             list_closed_orders=_orders, list_positions=_positions,
         )
         activity["days"] = days
+        activity["account"] = account
         return _ok(activity), 200
 
     m = re.match(r"^/tradelab/cards/([^/]+)/tracking-error$", path)
@@ -1275,6 +1281,14 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
     m = re.match(r"^/tradelab/cards/([^/]+)/override$", path)
     if m:
         return _renew_override(m.group(1), payload)
+
+    # S9: the only writers of a card's `mode`.
+    m = re.match(r"^/tradelab/cards/([^/]+)/live$", path)
+    if m:
+        return _go_live(m.group(1), payload)
+    m = re.match(r"^/tradelab/cards/([^/]+)/paper$", path)
+    if m:
+        return _leave_live(m.group(1), payload)
 
     m = re.match(r"^/tradelab/runs/([^/]+)/unarchive$", path)
     if m:
@@ -1854,6 +1868,33 @@ def handle_patch_with_status(path: str, body: bytes) -> Tuple[str, int]:
         gate = _enable_gate(card, payload)
         if gate:
             return _err(gate), 422
+        if "allocation_usd" in payload and (card.get("mode") or "").lower() == "live":
+            # S9: a live allocation is ledgered — the engine sizes from the
+            # receipt's number, so the receipt (and its ledger row) move too.
+            from tradelab.live import golive
+            with _LIVE_BUDGET_LOCK:
+                reg.reload()
+                policy = _live_policy()
+                others = golive.live_allocation_total(reg.all().values(), exclude_card_id=card_id)
+                try:
+                    alloc = golive.check_budget(allocation_usd=payload["allocation_usd"], policy=policy, others_total=others)
+                except golive.GoLiveRefused as e:
+                    return json.dumps({"error": f"refused: {e}", "data": None, "gate": "live", "code": e.code}), 422
+                lv = card.get("live") if isinstance(card.get("live"), dict) else None
+                if lv is None:
+                    return _err("refused: this card is marked live but carries no go-live receipt"), 422
+                try:
+                    from tradelab.audit.verdict_ledger import log_decision
+                    row_id = log_decision(db_path=_db_path(), strategy_name=card.get("strategy") or card.get("base_name") or "",
+                                          scoring_run_id=lv.get("scoring_run_id") or None, path="python",
+                                          verdict=(card.get("verdict") or "").upper() or None,
+                                          promotion_route=card.get("promotion_route") or "NONE", blockers=[],
+                                          override_used=bool(card.get("override")), activated=False,
+                                          thresholds_hash=lv.get("thresholds_hash"), action="live_allocation",
+                                          live_allocation_usd=alloc, card_id=card_id)
+                except Exception as e:  # noqa: BLE001 — fail closed: allocation unchanged
+                    return _err(f"audit ledger unavailable — live allocation unchanged: {type(e).__name__}: {e}"), 503
+                payload = {**payload, "allocation_usd": alloc, "live": {**lv, "allocation_usd": alloc, "ledger_row_id": row_id}}
         try:
             reg.update(card_id, payload)
         except KeyError:
@@ -2036,17 +2077,19 @@ def _flatten_card(card_id: str, payload: dict, *, deps: Optional[dict] = None) -
     dry_run = bool(payload.get("dry_run"))
     deps = deps or {}
 
+    account = _card_account(card)   # S9: flatten acts on the card's own account
+
     def _orders():
         from tradelab.live.alpaca_client import list_closed_orders
-        return list_closed_orders(days=365)
+        return list_closed_orders(days=365, account=account)
 
     def _positions():
         from tradelab.live.alpaca_client import list_positions_detail
-        return list_positions_detail()
+        return list_positions_detail(account=account)
 
     def _submit(symbol, side, qty, client_order_id):
         from tradelab.live.alpaca_client import submit_market_order
-        return submit_market_order(symbol, side, qty, client_order_id=client_order_id)
+        return submit_market_order(symbol, side, qty, client_order_id=client_order_id, account=account)
 
     list_closed = deps.get("list_closed_orders", _orders)
     list_pos = deps.get("list_positions", _positions)
@@ -2062,7 +2105,7 @@ def _flatten_card(card_id: str, payload: dict, *, deps: Optional[dict] = None) -
     plan = card_activity.plan_flatten(card_orders, positions)
     truncated = len(closed) >= card_activity.ORDERS_PAGE_LIMIT
     out = {
-        "card_id": card_id, "dry_run": dry_run, "forced_off": False,
+        "card_id": card_id, "dry_run": dry_run, "forced_off": False, "account": account,
         "planned": plan["orders"], "skipped": plan["skipped"],
         "submitted": [], "errors": [], "truncated": truncated,
     }
@@ -2414,6 +2457,11 @@ def _renew_override(card_id: str, payload: dict) -> Tuple[str, int]:
         return json.dumps({"error": "override refused: only ADVISORY cards carry an override", "data": None,
                            "gate": "override", "code": "not_needed" if card.get("promotion_route") == "CLEAR" else "blocked"}), 422
     strategy = card.get("strategy") or card.get("base_name") or ""
+    from tradelab.live import golive
+    if golive.is_live(card) and not _verify_live_receipt(card):
+        # S9: a bad receipt must not be laundered into a real live_rearm row.
+        return json.dumps({"error": "override refused: this card's go-live receipt does not verify — take it back to "
+                                    "paper and go live again", "data": None, "gate": "live", "code": "receipt_unverified"}), 422
     # Renewal needs NEW evidence: a Full trial newer than the current grant.
     # Either the client names it (scoring_run_id) or the newest Full trial of
     # the strategy is used; the card's original run never renews itself.
@@ -2453,6 +2501,14 @@ def _renew_override(card_id: str, payload: dict) -> Tuple[str, int]:
     )
     if isinstance(resp, tuple):
         return resp
+    from tradelab.live import golive
+    live_card = golive.is_live(card)
+    if live_card and (payload.get("confirm_live") or "").strip() != golive.expected_confirm(strategy):
+        # S9: renewing the override of a LIVE card re-arms real money — it
+        # needs the go-live confirmation again, and its own ledger row.
+        return json.dumps({"error": f"override refused: this card is live — also type exactly "
+                                    f"'{golive.expected_confirm(strategy)}' to re-arm it", "data": None,
+                           "gate": "live", "code": "live_confirm"}), 422
     # Ledger first, fail closed (the row is the audit trail of the renewal).
     try:
         from tradelab.audit.verdict_ledger import log_decision
@@ -2463,10 +2519,21 @@ def _renew_override(card_id: str, payload: dict) -> Tuple[str, int]:
             override_expires_at=resp["expires_at"], allocation_cap_pct=resp["allocation_cap_pct"],
             thresholds_hash=resp["thresholds_hash"],
         )
+        fields = {"override": resp, "scoring_run_id": run_id, "verdict": (row.verdict or "").upper(),
+                  "dsr_probability": row.dsr_probability}
+        if live_card:
+            lv = dict(card.get("live") or {})
+            rearm_id = log_decision(
+                db_path=_db_path(), strategy_name=strategy, scoring_run_id=run_id, path="python",
+                verdict=(row.verdict or "").upper(), promotion_route="ADVISORY", blockers=[],
+                override_used=True, activated=False, allocation_cap_pct=resp["allocation_cap_pct"],
+                thresholds_hash=resp["thresholds_hash"], action="live_rearm",
+                live_allocation_usd=lv.get("allocation_usd"), card_id=card_id,
+            )
+            fields["live"] = {**lv, "scoring_run_id": run_id, "thresholds_hash": resp["thresholds_hash"],
+                              "ledger_row_id": rearm_id, "rearmed_at": resp["granted_at"]}
     except Exception as e:  # noqa: BLE001
         return _err(f"audit ledger unavailable — override not renewed: {type(e).__name__}: {e}"), 503
-    fields = {"override": resp, "scoring_run_id": run_id, "verdict": (row.verdict or "").upper(),
-              "dsr_probability": row.dsr_probability}
     if card.get("override_expired_at"):
         fields["override_expired_at"] = None
     reg.update(card_id, fields)
@@ -2496,7 +2563,266 @@ def _enable_gate(card: dict, payload: dict) -> Optional[str]:
     if route not in ("CLEAR", "ADVISORY"):
         return ("refused: this card has no promotion route on record (accepted before routes "
                 "were stored) — retire it and re-accept from a trial")
+    if (card.get("mode") or "").lower() == "live":
+        # S9: switching a LIVE card on needs its go-live receipt (only the
+        # go-live route writes one), that receipt verified against the ledger,
+        # live keys in the environment now, and the evidence it was armed on
+        # still current (code + thresholds unchanged, canaries clean).
+        if not isinstance(card.get("live"), dict):
+            return "refused: this card is marked live but carries no go-live receipt — go live through its tab"
+        if not _verify_live_receipt(card):
+            return ("refused: this card's go-live receipt does not match the audit ledger — it cannot be "
+                    "switched on; take it back to paper and go live again through its tab")
+        if not _live_ready():
+            return ("refused: live keys are not configured (ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY "
+                    "in tradelab/.env) — the engine would place no live order")
+        stale = _live_evidence_stale(card)
+        if stale:
+            return f"refused: {stale} — run a Full trial and re-arm live from it"
     return None
+
+
+def _verify_live_receipt(card: dict) -> bool:
+    """The receipt must be the card's LATEST live-action ledger row (so a
+    leave_live newer than it, or a receipt copied from live_history, fails)."""
+    try:
+        from tradelab.audit.verdict_ledger import get_latest_live_row
+        from tradelab.live import golive
+        return golive.receipt_matches_ledger(card, get_latest_live_row(card.get("card_id") or "", db_path=_db_path()))
+    except Exception:  # noqa: BLE001 — unknown = not verified
+        return False
+
+
+def _live_evidence_stale(card: dict) -> Optional[str]:
+    """None when the run this card was armed on is still a current Full trial
+    (same code hash, same thresholds, canaries clean); else the reason."""
+    try:
+        from tradelab.audit.history import get_run
+        run_id = (card.get("live") or {}).get("scoring_run_id") or card.get("scoring_run_id") or ""
+        row = get_run(run_id, db_path=_db_path()) if run_id else None
+        if row is None:
+            return "the run this card was armed on is not on record"
+        ft = _full_trial_status_for(card.get("strategy") or card.get("base_name") or "",
+                                    {"tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash})
+        return None if ft.get("ok") else (ft.get("reason") or ft.get("code") or "evidence no longer current")
+    except Exception as e:  # noqa: BLE001 — unknown = stale (fail closed)
+        return f"could not verify the evidence ({type(e).__name__})"
+
+
+import threading as _threading
+_LIVE_BUDGET_LOCK = _threading.Lock()   # go-live and live-allocation PATCH: count-then-write under one lock
+
+
+def _live_ready() -> bool:
+    try:
+        from tradelab.live.alpaca_client import live_keys_present
+        return bool(live_keys_present())
+    except Exception:  # noqa: BLE001 — unknown = not ready (fail closed)
+        return False
+
+
+def _card_account(card: dict) -> str:
+    from tradelab.live import golive
+    return "live" if golive.is_live(card) else "paper"
+
+
+def _live_policy() -> dict:
+    from tradelab.live import golive
+    try:
+        from tradelab.config import get_config
+        return golive.policy_from_config(get_config())
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("live policy: config unavailable (%s) — using defaults", e)
+        from tradelab.config import LiveConfig
+        return golive.policy_from_config(LiveConfig())
+
+
+def _open_paper_lots(card: dict) -> int:
+    """Open lots this card holds on the PAPER account (FIFO over its own
+    stamped orders). Unknown (Alpaca down) counts as blocking: -1 → the caller
+    refuses rather than guessing."""
+    from tradelab.live import card_activity
+    try:
+        from tradelab.live.alpaca_client import list_closed_orders, list_positions_detail
+        closed = list_closed_orders(days=365, account="paper")
+        positions = list_positions_detail(account="paper")
+    except Exception:  # noqa: BLE001
+        return -1
+    if len(closed) >= card_activity.ORDERS_PAGE_LIMIT:
+        return -1   # the window is cut — the card's lots may be incomplete; refuse to guess
+    plan = card_activity.plan_flatten(card_activity.orders_for_card(card["card_id"], closed), positions)
+    return len(plan["orders"])
+
+
+def _open_live_lots(card: dict) -> int:
+    from tradelab.live import card_activity
+    try:
+        from tradelab.live.alpaca_client import list_closed_orders, list_positions_detail
+        closed = list_closed_orders(days=365, account="live")
+        positions = list_positions_detail(account="live")
+    except Exception:  # noqa: BLE001
+        return -1
+    if len(closed) >= card_activity.ORDERS_PAGE_LIMIT:
+        return -1
+    plan = card_activity.plan_flatten(card_activity.orders_for_card(card["card_id"], closed), positions)
+    return len(plan["orders"])
+
+
+def _golive_facts(card: dict, *, deps: Optional[dict] = None) -> dict:
+    """Everything the gate needs about a card, gathered once. ``deps`` lets
+    tests inject live_ready / full_trial / canary / symbols / open_paper_lots."""
+    from datetime import datetime, timezone
+    from tradelab.audit.history import get_run
+    from tradelab.live.cards import CardRegistry
+    deps = deps or {}
+    strategy = card.get("strategy") or card.get("base_name") or ""
+    run_id = card.get("scoring_run_id") or ""
+    row = get_run(run_id, db_path=_db_path()) if run_id else None
+    if "route" in deps:
+        route = deps["route"]
+    elif row is not None:
+        route, _ = _route_for_run({"verdict": row.verdict, "dsr_probability": row.dsr_probability,
+                                   "report_card_html_path": row.report_card_html_path})
+    else:
+        route = None
+    if "full_trial" in deps:
+        ft = deps["full_trial"]
+    else:
+        ft = _full_trial_status_for(strategy, {"tier": row.tier, "code_hash": row.code_hash,
+                                               "thresholds_hash": row.thresholds_hash}) if row is not None \
+            else {"ok": False, "code": "no_run", "reason": "no scoring run on record for this card"}
+    canary = deps["canary_mismatch"] if "canary_mismatch" in deps else _canary_mismatch_now()
+    symbols = deps["symbols"] if "symbols" in deps else _card_symbols(card)
+    lots = deps["open_paper_lots"] if "open_paper_lots" in deps else _open_paper_lots(card)
+    live_ready = deps["live_ready"] if "live_ready" in deps else _live_ready()
+    cards_path = _cards_path()
+    cards = list(CardRegistry(cards_path).all().values()) if cards_path.exists() else []
+    from tradelab.live import golive
+    _, thr = _current_hashes_for(strategy) if "thresholds_hash" not in deps else (None, deps["thresholds_hash"])
+    return {
+        "strategy": strategy, "route": route, "full_trial": ft, "canary_mismatch": canary,
+        "symbols": symbols, "open_paper_lots": lots, "live_ready": live_ready,
+        "others_total": golive.live_allocation_total(cards, exclude_card_id=card.get("card_id")),
+        "policy": deps.get("policy") or _live_policy(), "now": deps.get("now") or datetime.now(timezone.utc),
+        "run_id": run_id, "verdict": (row.verdict if row is not None else card.get("verdict")),
+        "thresholds_hash": thr,
+    }
+
+
+def _golive_checks(card_id: str, *, deps: Optional[dict] = None) -> Tuple[str, int]:
+    """GET /tradelab/cards/{id}/live — what the modal shows. Read-only."""
+    from tradelab.live import golive
+    from tradelab.live.cards import CardRegistry
+    cards_path = _cards_path()
+    card = CardRegistry(cards_path).get(card_id) if cards_path.exists() else None
+    if card is None:
+        return _err("card not found"), 404
+    f = _golive_facts(card, deps=deps)
+    view = golive.checks_view(
+        strategy=f["strategy"], route=f["route"], card=card, live_ready=f["live_ready"],
+        full_trial=f["full_trial"], canary_mismatch=f["canary_mismatch"], symbols=f["symbols"],
+        open_paper_lots=max(0, f["open_paper_lots"]) if f["open_paper_lots"] >= 0 else 10**6,
+        policy=f["policy"], others_total=f["others_total"], now=f["now"],
+    )
+    if f["open_paper_lots"] < 0:
+        for c in view["checks"]:
+            if c["key"] == "flat_paper":
+                c["ok"] = False; c["reason"] = "paper account unreachable — cannot verify"
+        view["all_ok"] = False
+    view["card_id"] = card_id
+    view["mode"] = card.get("mode")
+    view["live"] = card.get("live")
+    return _ok(view), 200
+
+
+def _go_live(card_id: str, payload: dict, *, deps: Optional[dict] = None) -> Tuple[str, int]:
+    """POST /tradelab/cards/{id}/live {confirm, allocation_usd} — the only
+    writer of mode:"live". Ledger row first (fail closed); the card is armed
+    OFF: switching it on is a separate, re-gated PATCH."""
+    from tradelab.live import golive
+    from tradelab.live.cards import CardRegistry
+    cards_path = _cards_path()
+    reg = CardRegistry(cards_path) if cards_path.exists() else None
+    card = reg.get(card_id) if reg else None
+    if card is None:
+        return _err("card not found"), 404
+    if golive.is_live(card):
+        return json.dumps({"error": "this card is already live", "data": None, "gate": "live", "code": "already_live"}), 422
+    with _LIVE_BUDGET_LOCK:
+        f = _golive_facts(card, deps=deps)
+        if f["open_paper_lots"] < 0 and f["policy"].get("require_flat_paper", True) \
+                and (payload.get("confirm") or "").strip() == golive.expected_confirm(f["strategy"]) and f["live_ready"]:
+            return json.dumps({"error": "go-live refused: the paper account cannot be read right now (or this card's "
+                                        "order window is cut) — cannot verify it is flat", "data": None,
+                               "gate": "live", "code": "paper_unverifiable"}), 422
+        try:
+            golive.validate_request(
+                strategy=f["strategy"], confirm=payload.get("confirm"), route=f["route"], card=card,
+                live_ready=f["live_ready"], full_trial=f["full_trial"], canary_mismatch=f["canary_mismatch"],
+                symbols=f["symbols"], open_paper_lots=(f["open_paper_lots"] if f["open_paper_lots"] >= 0 else 10**6),
+                policy=f["policy"], now=f["now"],
+            )
+            alloc = golive.check_budget(allocation_usd=payload.get("allocation_usd"), policy=f["policy"],
+                                        others_total=f["others_total"])
+        except golive.GoLiveRefused as e:
+            return json.dumps({"error": f"go-live refused: {e}", "data": None, "gate": "live", "code": e.code}), 422
+        log = (deps or {}).get("log_decision")
+        try:
+            if log is None:
+                from tradelab.audit.verdict_ledger import log_decision as log
+            row_id = log(db_path=_db_path(), strategy_name=f["strategy"], scoring_run_id=f["run_id"] or None, path="python",
+                         verdict=(f["verdict"] or "").upper() or None, promotion_route=f["route"] or "NONE", blockers=[],
+                         override_used=bool(card.get("override")), activated=False, thresholds_hash=f["thresholds_hash"],
+                         allocation_cap_pct=(card.get("override") or {}).get("allocation_cap_pct"),
+                         action="go_live", live_allocation_usd=alloc, card_id=card_id)
+        except Exception as e:  # noqa: BLE001 — fail CLOSED: no ledger row, no live card
+            return _err(f"audit ledger unavailable — not armed for live: {type(e).__name__}: {e}"), 503
+        receipt = golive.build_receipt(now=f["now"], scoring_run_id=f["run_id"], thresholds_hash=f["thresholds_hash"],
+                                       route=f["route"], allocation_usd=alloc, confirm=(payload.get("confirm") or "").strip(),
+                                       ledger_row_id=row_id)
+        reg.update(card_id, {"mode": "live", "status": "disabled", "allocation_usd": alloc, "live": receipt})
+    return _ok({"card_id": card_id, "mode": "live", "status": "disabled", "live": receipt}), 200
+
+
+def _leave_live(card_id: str, payload: dict, *, deps: Optional[dict] = None) -> Tuple[str, int]:
+    """POST /tradelab/cards/{id}/paper — back to the paper account. Refused
+    while the card holds open LIVE lots (flatten first). The receipt is kept
+    under live_history so the audit trail on the card survives."""
+    from tradelab.live import golive
+    from tradelab.live.cards import CardRegistry
+    cards_path = _cards_path()
+    reg = CardRegistry(cards_path) if cards_path.exists() else None
+    card = reg.get(card_id) if reg else None
+    if card is None:
+        return _err("card not found"), 404
+    if not golive.is_live(card):
+        return json.dumps({"error": "this card is not live", "data": None, "gate": "live", "code": "not_live"}), 422
+    deps = deps or {}
+    lots = deps["open_live_lots"] if "open_live_lots" in deps else _open_live_lots(card)
+    if lots != 0:
+        msg = ("live account unreachable — cannot verify the card is flat" if lots < 0
+               else f"{lots} open live lot(s) on this card — flatten them first")
+        return json.dumps({"error": f"refused: {msg}", "data": None, "gate": "live", "code": "flatten_live_first"}), 422
+    strategy = card.get("strategy") or card.get("base_name") or ""
+    log = deps.get("log_decision")
+    try:
+        if log is None:
+            from tradelab.audit.verdict_ledger import log_decision as log
+        log(db_path=_db_path(), strategy_name=strategy, scoring_run_id=card.get("scoring_run_id") or None,
+            path="python", verdict=(card.get("verdict") or "").upper() or None,
+            promotion_route=card.get("promotion_route") or "NONE", blockers=[], override_used=bool(card.get("override")),
+            activated=False, action="leave_live", live_allocation_usd=card.get("allocation_usd"), card_id=card_id)
+    except Exception as e:  # noqa: BLE001
+        return _err(f"audit ledger unavailable — card stays live: {type(e).__name__}: {e}"), 503
+    from datetime import datetime, timezone
+    history = list(card.get("live_history") or [])
+    if isinstance(card.get("live"), dict):
+        # the row id stays out of history: a copied receipt must never verify
+        history.append({**{k: v for k, v in card["live"].items() if k != "ledger_row_id"},
+                        "left_at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    reg.update(card_id, {"mode": "paper", "status": "disabled", "live": None, "live_history": history})
+    return _ok({"card_id": card_id, "mode": "paper", "status": "disabled"}), 200
 
 
 _ALLOWED_PATCH_FIELDS = {

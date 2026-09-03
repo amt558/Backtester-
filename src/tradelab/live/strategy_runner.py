@@ -1,8 +1,14 @@
-"""Paper-locked desired-state execution engine for Python cards.
+"""Desired-state execution engine for Python cards.
 
-Pure decision core + a thin daemon (added in later tasks). EVERY Alpaca
-interaction is an injected callable so tests never touch a real account.
-Paper-only until an explicit config flip enables live (out of scope here)."""
+Pure decision core + a thin daemon. EVERY Alpaca interaction is an injected
+callable so tests never touch a real account.
+
+S9: a card's ``mode`` is its account. Paper cards run against ``deps`` exactly
+as before (paper_trading must be True, kill switch, daily loss limit). Live
+cards run against ``deps["live"]`` — present only when live keys exist — and
+through ``live_block_reason``; with no live deps, a live card is blocked,
+never silently routed to paper. Multi-ticker (PORTFOLIO) cards trade each
+declared ticker from ONE signal pass, allocation split equally."""
 from __future__ import annotations
 
 import logging
@@ -65,6 +71,86 @@ def safety_block_reason(config: dict, *, daily_pnl: float, is_entry: bool) -> Op
     return None
 
 
+def live_block_reason(config: dict, *, live_config: Optional[dict], daily_pnl, is_entry: bool,
+                      card: Optional[dict] = None, live_ready: bool = False,
+                      receipt_ok: Optional[bool] = None) -> Optional[str]:
+    """Return a reason to BLOCK a LIVE order, or None to allow. Fail CLOSED.
+
+    kill_switch (alpaca_config.json) halts everything, live and paper alike;
+    live keys must be present (``live_ready``); a live card needs its go-live
+    receipt AND that receipt must verify against the audit ledger
+    (``receipt_ok`` — None/False blocks: a hand-edited cards.json cannot arm
+    real money); the live daily loss limit (tradelab.yaml
+    `live.daily_loss_limit_usd`) stops ENTRIES only."""
+    trading = (config or {}).get("trading", {}) or {}
+    if bool(trading.get("kill_switch", False)):
+        return "kill_switch is engaged"
+    if not live_ready:
+        return "live keys not configured (ALPACA_LIVE_API_KEY / ALPACA_LIVE_SECRET_KEY) — no live orders"
+    if card is not None and not isinstance(card.get("live"), dict):
+        return "card carries no go-live receipt — refused (only POST /tradelab/cards/{id}/live arms live)"
+    if card is not None and receipt_ok is not True:
+        return "go-live receipt does not verify against the audit ledger — refused (re-arm through the tab)"
+    if is_entry:
+        try:
+            limit = float((live_config or {}).get("daily_loss_limit_usd", 1000.0))
+            pnl = float(daily_pnl)
+        except (TypeError, ValueError):
+            return f"live daily P&L unreadable ({daily_pnl!r}) — blocking entry"
+        if limit > 0 and pnl <= -limit:
+            return f"live daily loss {pnl:.0f} breached limit -{limit:.0f} — entries stopped for today"
+    return None
+
+
+def card_symbols(card: dict, declared_symbols=None) -> list[str]:
+    """Tickers a card trades. Its own symbol, unless it is a PORTFOLIO card —
+    then the strategy's declared tickers (S2), via the injected
+    ``declared_symbols(strategy) -> list[str]``. Empty list = cannot trade."""
+    sym = str(card.get("symbol") or "").upper()
+    if sym and sym != "PORTFOLIO":
+        return [sym]
+    if declared_symbols is None:
+        return []
+    try:
+        out = [str(x).upper() for x in (declared_symbols(card.get("strategy") or card.get("base_name") or "") or [])]
+    except Exception:  # noqa: BLE001
+        return []
+    seen: list[str] = []
+    for x in out:
+        if x and x not in seen:
+            seen.append(x)
+    return seen
+
+
+def reconcile_symbol(*, card: dict, symbol: str, desired: str, actual_qty: int, price: float,
+                     bar_date: str, submit_fn, now: Optional[datetime] = None,
+                     share: float = 1.0, stamp_symbol: bool = False) -> dict:
+    """Reconcile ONE ticker of a card. ``share`` is this ticker's fraction of
+    the card's effective allocation (1/n for a PORTFOLIO card); ``stamp_symbol``
+    appends ``-SYM`` to the client_order_id so multi-ticker fills attribute."""
+    cid = card["card_id"]
+    # Stamps may only carry [A-Z0-9.]: a class-B style ticker is stamped in
+    # its dotted form so card_activity's regex keeps attributing its fills.
+    suffix = f"-{symbol.replace('-', '.')}" if stamp_symbol else ""
+    if desired == "long" and actual_qty <= 0:
+        alloc = _override.effective_allocation(card, now or datetime.now(timezone.utc))
+        try:
+            alloc = float(alloc) * float(share) if alloc is not None else None
+        except (TypeError, ValueError):
+            alloc = None
+        qty = size_qty(alloc, price)
+        if qty <= 0:
+            if card.get("override") and not _override.is_active(card, now or datetime.now(timezone.utc)):
+                return {"action": "skip", "reason": "override expired — no new entries"}
+            return {"action": "skip", "reason": "allocation/price yields 0 shares"}
+        submit_fn(symbol, "buy", qty, client_order_id=f"{cid}-{bar_date}-buy{suffix}")
+        return {"action": "buy", "qty": qty}
+    if desired == "flat" and actual_qty > 0:
+        submit_fn(symbol, "sell", actual_qty, client_order_id=f"{cid}-{bar_date}-sell{suffix}")
+        return {"action": "sell", "qty": actual_qty}
+    return {"action": "none"}
+
+
 def reconcile_card(*, card: dict, desired: str, actual_qty: int, price: float,
                    bar_date: str, submit_fn, now: Optional[datetime] = None) -> dict:
     """Reconcile one card's desired position with its actual Alpaca position by
@@ -75,91 +161,125 @@ def reconcile_card(*, card: dict, desired: str, actual_qty: int, price: float,
     S6: an overridden card sizes from allocation × cap while its override is
     active and from 0 once it has expired — the policy lives in the engine,
     not in the UI. Exits are never capped."""
-    symbol = card["symbol"]
-    cid = card["card_id"]
-    if desired == "long" and actual_qty <= 0:
-        alloc = _override.effective_allocation(card, now or datetime.now(timezone.utc))
-        qty = size_qty(alloc, price)
-        if qty <= 0:
-            if card.get("override") and not _override.is_active(card, now or datetime.now(timezone.utc)):
-                return {"action": "skip", "reason": "override expired — no new entries"}
-            return {"action": "skip", "reason": "allocation/price yields 0 shares"}
-        submit_fn(symbol, "buy", qty, client_order_id=f"{cid}-{bar_date}-buy")
-        return {"action": "buy", "qty": qty}
-    if desired == "flat" and actual_qty > 0:
-        submit_fn(symbol, "sell", actual_qty, client_order_id=f"{cid}-{bar_date}-sell")
-        return {"action": "sell", "qty": actual_qty}
-    return {"action": "none"}
+    return reconcile_symbol(card=card, symbol=card["symbol"], desired=desired, actual_qty=actual_qty,
+                            price=price, bar_date=bar_date, submit_fn=submit_fn, now=now)
 
 
 def run_once(cards: dict, *, deps: dict, bar_date: str, now: Optional[datetime] = None) -> dict:
-    """Process all enabled paper-python cards once, reconciling desired vs actual.
+    """Process all enabled python cards once, reconciling desired vs actual.
 
     Each card is processed independently (one failure never stops the rest).
-    Cards that are skipped (disabled / non-python / non-paper) are omitted from
-    the result dict.  All Alpaca/data access is via injected callables in deps:
-      load_latest_bar(strategy, symbol, timeframe) -> bar dict
+    Cards that are skipped (disabled / non-python / unknown mode) are omitted
+    from the result dict. All Alpaca/data access is via injected callables:
+      load_latest_bar(strategy, symbol, timeframe) -> bar dict          (single ticker)
+      load_latest_bars(strategy, symbols, timeframe) -> {sym: bar dict} (one signal pass; optional)
+      declared_symbols(strategy) -> [tickers]                            (PORTFOLIO cards; optional)
       get_positions() -> {symbol: qty}
       get_price(symbol) -> float
       get_daily_pnl() -> float
       get_config() -> config dict
       submit_fn(symbol, side, quantity, *, client_order_id) -> None
-    Returns {card_id: result_dict} for all processed cards."""
+      live -> the same get_positions/get_price/get_daily_pnl/submit_fn bound to
+              the LIVE account, or None when live keys are absent (optional)
+      live_config -> dict of tradelab.yaml `live:` (optional)
+    Returns {card_id: result_dict} for all processed cards. A PORTFOLIO card's
+    result is {"action": "multi", "symbols": {sym: result}}."""
     results: dict = {}
 
     for card_id, card in cards.items():
         # Step 1 – skip ineligible cards silently
+        mode = card.get("mode")
         if (card.get("status") != "enabled"
                 or card.get("source") != "python"
-                or card.get("mode") != "paper"):
+                or mode not in ("paper", "live")):
             continue
 
         try:
-            # Step 2 – fetch config
+            # Step 2 – config + the account this card trades on
             config = deps["get_config"]()
+            receipt_ok = None
+            if mode == "live":
+                acct = deps.get("live")
+                if not acct:
+                    results[card_id] = {"action": "blocked", "reason": live_block_reason(
+                        config, live_config=deps.get("live_config"), daily_pnl=0.0, is_entry=False,
+                        card=card, live_ready=False) or "live deps not configured"}
+                    continue
+                # The receipt must verify against the ledger every tick; no
+                # verifier → not verified. A live card sizes from the LEDGERED
+                # allocation on its receipt, never from a hand-edited field.
+                verify = deps.get("verify_live_receipt")
+                try:
+                    receipt_ok = bool(verify(card)) if verify else False
+                except Exception:  # noqa: BLE001
+                    receipt_ok = False
+                if receipt_ok:
+                    card = {**card, "allocation_usd": (card.get("live") or {}).get("allocation_usd")}
+            else:
+                acct = deps
 
-            # Step 3 – bar + desired position
-            bar = deps["load_latest_bar"](card["strategy"], card["symbol"], card["timeframe"])
-            desired = desired_position(bar)
-
-            # Step 4 – actual held qty
-            actual_qty = int(deps["get_positions"]().get(card["symbol"], 0) or 0)
-
-            # Step 5 – is this a new entry?
-            is_entry = (desired == "long" and actual_qty <= 0)
-
-            # Step 6 – safety gates
-            # Hard block: paper_trading=False or kill_switch engaged — stops BOTH entries and exits.
-            # Isolate these two gates by zeroing out the daily_loss_limit so it can't fire.
-            hard_config = {
-                **config,
-                "trading": {**config.get("trading", {}), "daily_loss_limit": None},
-            }
-            hard = safety_block_reason(hard_config, daily_pnl=0.0, is_entry=True)
-            if hard is not None:
-                results[card_id] = {"action": "blocked", "reason": hard}
+            # Step 3 – tickers + one signal pass
+            symbols = card_symbols(card, deps.get("declared_symbols"))
+            if not symbols:
+                results[card_id] = {"action": "error", "reason": "no tickers declared — declare `symbols` on the strategy class"}
                 continue
+            multi = len(symbols) > 1 or str(card.get("symbol") or "").upper() == "PORTFOLIO"
+            if multi and deps.get("load_latest_bars"):
+                bars = deps["load_latest_bars"](card["strategy"], symbols, card["timeframe"])
+            else:
+                bars = {sym: deps["load_latest_bar"](card["strategy"], sym, card["timeframe"]) for sym in symbols}
 
-            # Soft block: daily-loss limit only blocks new entries, not exits.
-            reason = safety_block_reason(config, daily_pnl=deps["get_daily_pnl"](), is_entry=is_entry)
-            if is_entry and reason:
-                results[card_id] = {"action": "blocked", "reason": reason}
-                continue
+            # Step 4 – actual held qty per ticker (one account call)
+            held = acct["get_positions"]()
 
-            # Step 7 – reconcile
-            price = deps["get_price"](card["symbol"])
-            result = reconcile_card(
-                card=card,
-                desired=desired,
-                actual_qty=actual_qty,
-                price=price,
-                bar_date=bar_date,
-                submit_fn=deps["submit_fn"],
-                now=now,
-            )
-            results[card_id] = result
+            # Step 5 – gates, evaluated once per card with "is_entry" = any entry wanted
+            desired = {sym: desired_position(bars.get(sym) or {}) for sym in symbols}
+            actual = {sym: int(held.get(sym, 0) or 0) for sym in symbols}
+            any_entry = any(desired[s_] == "long" and actual[s_] <= 0 for s_ in symbols)
 
-        except Exception as e:  # Step 8 – isolate per-card failures
+            if mode == "live":
+                hard = live_block_reason(config, live_config=deps.get("live_config"), daily_pnl=0.0,
+                                         is_entry=False, card=card, live_ready=True, receipt_ok=receipt_ok)
+                if hard is not None:
+                    results[card_id] = {"action": "blocked", "reason": hard}
+                    continue
+                soft = live_block_reason(config, live_config=deps.get("live_config"),
+                                         daily_pnl=acct["get_daily_pnl"](), is_entry=any_entry,
+                                         card=card, live_ready=True, receipt_ok=receipt_ok) if any_entry else None
+            else:
+                # Hard block: paper_trading=False or kill_switch engaged — stops BOTH entries and exits.
+                # Isolate these two gates by zeroing out the daily_loss_limit so it can't fire.
+                hard_config = {
+                    **config,
+                    "trading": {**config.get("trading", {}), "daily_loss_limit": None},
+                }
+                hard = safety_block_reason(hard_config, daily_pnl=0.0, is_entry=True)
+                if hard is not None:
+                    results[card_id] = {"action": "blocked", "reason": hard}
+                    continue
+                # Soft block: daily-loss limit only blocks new entries, not exits.
+                soft = safety_block_reason(config, daily_pnl=acct["get_daily_pnl"](), is_entry=any_entry) if any_entry else None
+
+            # Step 6 – reconcile each ticker; entries blocked by the soft gate, exits still run
+            share = 1.0 / len(symbols)
+            per: dict = {}
+            for sym in symbols:
+                try:
+                    if desired[sym] == "long" and actual[sym] <= 0 and soft:
+                        per[sym] = {"action": "blocked", "reason": soft}
+                        continue
+                    price = acct["get_price"](sym)
+                    per[sym] = reconcile_symbol(card=card, symbol=sym, desired=desired[sym], actual_qty=actual[sym],
+                                                price=price, bar_date=bar_date, submit_fn=acct["submit_fn"],
+                                                now=now, share=share, stamp_symbol=multi)
+                except Exception as e:  # noqa: BLE001 – one ticker's failure never stops the others
+                    per[sym] = {"action": "error", "reason": f"{type(e).__name__}: {e}"}
+            if multi:
+                results[card_id] = {"action": "multi", "symbols": per}
+            else:
+                results[card_id] = per[symbols[0]]
+
+        except Exception as e:  # Step 7 – isolate per-card failures
             results[card_id] = {"action": "error", "reason": f"{type(e).__name__}: {e}"}
 
     return results
@@ -229,8 +349,87 @@ def _real_deps() -> dict:
 
     def _get_daily_pnl() -> float:
         # equity - last_equity; raises on Alpaca failure → fail closed
-        acct = alpaca_client.get_client().get_account()
-        return float(acct.equity) - float(acct.last_equity)
+        return alpaca_client.account_day_pnl("paper")
+
+    # S9: the live account's deps exist only when live keys are present. A
+    # live card with no live deps is BLOCKED by run_once, never sent to paper.
+    live_deps = None
+    if alpaca_client.live_keys_present():
+        live_deps = {
+            "get_positions": lambda: {p["symbol"]: int(float(p["qty"])) for p in alpaca_client.list_positions("live")},
+            "get_price": _get_price,
+            "get_daily_pnl": lambda: alpaca_client.account_day_pnl("live"),
+            "submit_fn": lambda symbol, side, quantity, client_order_id=None:
+                alpaca_client.submit_market_order(symbol, side, quantity, client_order_id=client_order_id, account="live"),
+        }
+
+    def _live_config() -> dict:
+        try:
+            from tradelab.config import load_config
+            lc = load_config().live
+            out = {"max_total_allocation_usd": lc.max_total_allocation_usd,
+                   "daily_loss_limit_usd": lc.daily_loss_limit_usd,
+                   "require_flat_paper": lc.require_flat_paper}
+        except Exception:  # noqa: BLE001 – defaults are the policy when the file is unreadable
+            out = {"max_total_allocation_usd": 25000.0, "daily_loss_limit_usd": 1000.0, "require_flat_paper": True}
+        if not out["daily_loss_limit_usd"] > 0:
+            logger.warning("live.daily_loss_limit_usd is %r — the live daily loss limit is DISABLED", out["daily_loss_limit_usd"])
+            print(f"[strategy_runner] WARNING live.daily_loss_limit_usd={out['daily_loss_limit_usd']!r}: live daily loss limit disabled", file=sys.stderr)
+        return out
+
+    # The audit DB is resolved ONCE, absolute, at deps-build time — the same
+    # relative location the web layer uses — and logged, so a cwd mismatch
+    # shows up in the log instead of as "receipt does not verify" every tick.
+    from tradelab.audit.history import DEFAULT_DB_PATH as _HIST_DB
+    _db = _HIST_DB.resolve()
+    logger.info("live engine: audit/ledger DB %s (exists=%s); cards %s", _db, _db.exists(), _CARDS_PATH)
+    print(f"[strategy_runner] audit DB {_db} (exists={_db.exists()})", file=sys.stderr)
+
+    def _verify_live_receipt(card: dict) -> bool:
+        # The receipt must be the card's LATEST live-action ledger row.
+        from tradelab.audit.verdict_ledger import get_latest_live_row
+        from tradelab.live import golive
+        return golive.receipt_matches_ledger(card, get_latest_live_row(card.get("card_id") or "", db_path=_db))
+
+    def _live_evidence_stale(card: dict):
+        # The run a live card was armed on must still be a current Full trial:
+        # same strategy code on disk, same robustness thresholds. Unknown = stale.
+        try:
+            from tradelab import ladder
+            from tradelab.audit.history import get_run
+            from tradelab.config import get_config
+            from tradelab.registry import load_strategy_class
+            run_id = (card.get("live") or {}).get("scoring_run_id") or card.get("scoring_run_id") or ""
+            row = get_run(run_id, db_path=_db) if run_id else None
+            if row is None:
+                return "the run this card was armed on is not on record"
+            code = ladder.code_hash_for_class(load_strategy_class(card.get("strategy") or card.get("base_name") or ""))
+            thr = ladder.thresholds_hash(get_config().robustness)
+            ft = ladder.full_trial_status({"tier": row.tier, "code_hash": row.code_hash, "thresholds_hash": row.thresholds_hash},
+                                          current_code_hash=code, current_thresholds_hash=thr)
+            return None if ft.get("ok") else (ft.get("reason") or ft.get("code") or "evidence no longer current")
+        except Exception as e:  # noqa: BLE001
+            return f"could not verify the evidence ({type(e).__name__})"
+
+    def _declared_symbols(strategy: str) -> list[str]:
+        from tradelab.registry import load_strategy_class
+        from tradelab.web.new_strategy import declared_symbols
+        return declared_symbols(load_strategy_class(strategy))
+
+    def _load_latest_bars(strategy: str, symbols: list, timeframe: str) -> dict:
+        # ONE download + ONE generate_signals over the whole ticker list, so a
+        # strategy that ranks across its universe (rotation) sees all of it.
+        data = download_symbols(list(symbols), timeframe=timeframe)
+        enriched = enrich_universe(data)
+        strat_obj = instantiate_strategy(strategy)
+        signals = strat_obj.generate_signals(enriched)
+        out = {}
+        for sym in symbols:
+            sym_df = signals.get(sym) if isinstance(signals, dict) else enriched.get(sym)
+            if sym_df is None or sym_df.empty:
+                raise ValueError(f"No signal data returned for {sym} from {strategy}")
+            out[sym] = sym_df.iloc[-1].to_dict()
+        return out
 
     def _load_latest_bar(strategy: str, symbol: str, timeframe: str) -> dict:
         # 1. Refresh cache (cache-only source; does not call external APIs
@@ -254,6 +453,12 @@ def _real_deps() -> dict:
         "get_daily_pnl": _get_daily_pnl,
         "submit_fn": alpaca_client.submit_market_order,
         "load_latest_bar": _load_latest_bar,
+        "load_latest_bars": _load_latest_bars,
+        "declared_symbols": _declared_symbols,
+        "verify_live_receipt": _verify_live_receipt,
+        "live_evidence_stale": _live_evidence_stale,
+        "live": live_deps,
+        "live_config": _live_config(),
     }
 
 
@@ -284,7 +489,7 @@ def _bar_bucket(timeframe: str, now: datetime) -> str:
 def run_tick(*, registry, deps: dict, now: datetime) -> dict:
     """Process all eligible cards for the current tick.
 
-    Eligible = status=='enabled', source=='python', mode=='paper'.
+    Eligible = status=='enabled', source=='python', mode in ('paper', 'live').
     Cards are grouped by timeframe; each group gets its own bar_date bucket
     (so daily cards get a per-day dedup key and intraday cards get per-hour).
 
@@ -294,8 +499,8 @@ def run_tick(*, registry, deps: dict, now: datetime) -> dict:
     try:
         cards = registry.all()
 
-        # S6: an override that has expired switches its card Off on this tick
-        # (S7's Rung-3 pass will exempt qualified cards). Stamped so the tab
+        # S6: an override that has expired switches its card Off on this tick,
+        # paper or live (S9: no paper-qualified exemption). Stamped so the tab
         # can say why the card is Off. Fail-open per card: a registry write
         # failure must not stop the tick, and effective_allocation already
         # sizes an expired override at 0.
@@ -311,12 +516,42 @@ def run_tick(*, registry, deps: dict, now: datetime) -> dict:
                     logger.error("card %s: could not disable on override expiry: %s", card_id, e)
         cards = registry.all()
 
+        # S9: a LIVE card that is On must, every tick, (a) carry a receipt that
+        # verifies against the ledger and (b) still stand on current evidence
+        # (strategy code and thresholds unchanged since its Full trial). Either
+        # failing switches it Off and stamps why — the same shape as override
+        # expiry. Positions stay; Flatten on the tab closes them.
+        verify = deps.get("verify_live_receipt")
+        stale_fn = deps.get("live_evidence_stale")
+        for card_id, card in list(cards.items()):
+            if card.get("status") != "enabled" or str(card.get("mode") or "").lower() != "live":
+                continue
+            why = None
+            try:
+                if not (verify and verify(card)):
+                    why = ("live_receipt_invalid_at", "go-live receipt does not verify against the ledger")
+                elif stale_fn is not None:
+                    stale = stale_fn(card)
+                    if stale:
+                        why = ("live_evidence_stale_at", str(stale))
+            except Exception as e:  # noqa: BLE001 — unknown = not safe to keep trading
+                why = ("live_evidence_stale_at", f"could not verify ({type(e).__name__})")
+            if why:
+                try:
+                    registry.update(card_id, {"status": "disabled", why[0]: now.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                                              "live_off_reason": why[1]})
+                    logger.warning("card %s: switched Off — %s", card_id, why[1])
+                    print(f"[strategy_runner] {card_id}: LIVE switched Off — {why[1]}", file=sys.stderr)
+                except Exception as e:  # noqa: BLE001
+                    logger.error("card %s: could not disable live card: %s", card_id, e)
+        cards = registry.all()
+
         # Group eligible cards by timeframe.
         groups: dict[str, dict] = {}
         for card_id, card in cards.items():
             if (card.get("status") != "enabled"
                     or card.get("source") != "python"
-                    or card.get("mode") != "paper"):
+                    or card.get("mode") not in ("paper", "live")):
                 continue
             tf = card.get("timeframe", "1D")
             groups.setdefault(tf, {})[card_id] = card
