@@ -162,6 +162,8 @@ def test_board_blocked_and_advisory_are_unchanged_by_the_ladder():
     r = _board(_run("FRAGILE"), {"ok": False, "code": "not_full", "reason": "x"}, route="BLOCKED")["rows"][0]
     assert r["next_action"]["kind"] == "retrial"
     r = _board(_run("INCONCLUSIVE"), {"ok": False, "code": "not_full", "reason": "x"}, route="ADVISORY")["rows"][0]
+    assert r["next_action"]["kind"] == "full_trial" and "S6" in r["next_action"]["reason"]
+    r = _board(_run("INCONCLUSIVE"), {"ok": True, "code": None, "reason": None}, route="ADVISORY")["rows"][0]
     assert r["next_action"]["kind"] == "accept_override" and r["next_action"]["enabled"] is False
 
 
@@ -265,7 +267,8 @@ def test_cli_run_records_the_rung(monkeypatch):
     src = inspect.getsource(cli_run)
     assert "tier=_ladder.tier_for_flags(robustness=robustness, full=full, validation_deep=validation_deep)" in src
     assert "code_hash=_ladder.code_hash_for_class(type(strat))" in src
-    assert "thresholds_hash=_ladder.thresholds_hash(_rcfg)" in src   # whole RobustnessConfig, not only thresholds
+    assert "_thr_hash = _ladder.thresholds_hash(_rcfg)" in src   # whole RobustnessConfig, not only thresholds
+    assert "thresholds_hash=_thr_hash," in src
 
 
 def test_full_command_is_allowed_for_jobs():
@@ -394,3 +397,13 @@ def test_pine_accept_ignores_client_verdict_and_folder(tmp_path, monkeypatch, wr
         "scoring_run_id": run_id}).encode())
     assert status == 422 and "belongs to" in body
     assert json.loads(cards.read_text()) == {}
+
+
+def test_cli_run_stamps_data_last_bar_on_the_written_result():
+    """The optimizer replaces `bt`; the stamp must land on the object that is
+    actually written (regression: a --full run wrote data_last_bar: null)."""
+    import inspect
+    from tradelab import cli_run
+    src = inspect.getsource(cli_run)
+    assert 'if getattr(bt, "data_last_bar", None) is None:' in src
+    assert src.index("bt.data_last_bar = _data_last_bar   # optimizer") < src.index('(out_dir / "backtest_result.json").write_text(')

@@ -126,11 +126,21 @@ def derive_state(
                 action = _action("full_trial", "Full trial again" if stale else "Full trial",
                                  enabled=True, reason=ft.get("reason"))
         elif route == ROUTE_ADVISORY:
-            action = _action(
-                "accept_override", "Accept with override", enabled=False,
-                reason="ADVISORY route — the override policy (typed confirmation, reason, "
-                       "30-day expiry) arrives in S6. Re-trial or improve the strategy.",
-            )
+            # An override (S6) will itself require a Full trial, and a Full
+            # trial can come out differently from a Trial — so the one action
+            # on an ADVISORY strategy without a current Full trial is the
+            # Full trial; with one, the (disabled until S6) override.
+            if ft.get("ok") or ft.get("code") == "canary_mismatch":
+                action = _action(
+                    "accept_override", "Accept with override", enabled=False,
+                    reason="ADVISORY route — the override policy (typed confirmation, reason, "
+                           "30-day expiry) arrives in S6. Improve the strategy or wait for S6.",
+                )
+            else:
+                stale = ft.get("code") in ("code_changed", "thresholds_changed")
+                action = _action("full_trial", "Full trial again" if stale else "Full trial", enabled=True,
+                                 reason="ADVISORY on this rung — " + (ft.get("reason") or "run a Full trial")
+                                        + ". The override (S6) will need a Full trial too.")
         else:
             action = _action(
                 "retrial", "Re-trial", enabled=True,

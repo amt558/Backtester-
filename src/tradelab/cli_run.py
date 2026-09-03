@@ -279,11 +279,14 @@ def run(
         _t0 = _t.time()
         _emit.start("backtest")
         bt = run_backtest(strat, data, start=start, end=end, spy_close=spy_close)
+        # S5: the last bar the data actually contained. Stamped onto whichever
+        # BacktestResult is finally written (the optimizer replaces `bt`).
         try:
-            _last = max(df["Date"].max() for df in data.values() if df is not None and not df.empty)
-            bt.data_last_bar = str(_last)[:10]
+            _data_last_bar = str(max(df["Date"].max() for df in data.values()
+                                     if df is not None and not df.empty))[:10]
         except (ValueError, KeyError, TypeError):
-            bt.data_last_bar = None
+            _data_last_bar = None
+        bt.data_last_bar = _data_last_bar
         _emit.complete("backtest", duration_s=_t.time() - _t0)
         typer.echo(f"  Trades: {bt.metrics.total_trades}  PF: {bt.metrics.profit_factor}  "
                    f"Sharpe: {bt.metrics.sharpe_ratio}")
@@ -392,6 +395,8 @@ def run(
         typer.echo(f"Dashboard: {dashboard_path}")
 
         # --- Persist raw result objects for `tradelab compare` ---
+        if getattr(bt, "data_last_bar", None) is None:
+            bt.data_last_bar = _data_last_bar   # optimizer / walk-forward replaced `bt`
         (out_dir / "backtest_result.json").write_text(
             bt.model_dump_json(indent=2), encoding="utf-8",
         )
@@ -492,9 +497,17 @@ def run(
         # If the full robustness suite ran, its verdict supersedes the DSR classifier
         if robustness_result is not None:
             verdict = robustness_result.verdict.verdict
-        from .config import get_config as _gc
-        _rcfg = _gc().robustness
-        _thr = _rcfg.thresholds
+        # S5 ladder facts. get_config() succeeded earlier in this same run for
+        # the universe, so a failure here is a test-isolation artefact; the row
+        # then records no hashes and can never be accepted (fail closed).
+        try:
+            from .config import get_config as _gc
+            _rcfg = _gc().robustness
+            _thr_dump = _rcfg.thresholds.model_dump()
+            _thr_hash = _ladder.thresholds_hash(_rcfg)
+        except Exception as _e:  # noqa: BLE001
+            typer.echo(f"(S5: thresholds not recorded: {type(_e).__name__}: {_e})", err=True)
+            _thr_dump, _thr_hash = None, None
         try:
             run_id = record_run(
                 strategy_name=strategy,
@@ -513,8 +526,8 @@ def run(
                 # refuse a run that no longer describes the code or the rules.
                 tier=_ladder.tier_for_flags(robustness=robustness, full=full, validation_deep=validation_deep),
                 code_hash=_ladder.code_hash_for_class(type(strat)),
-                thresholds_hash=_ladder.thresholds_hash(_rcfg),
-                thresholds=_thr.model_dump(),
+                thresholds_hash=_thr_hash,
+                thresholds=_thr_dump,
             )
             typer.echo(f"Audit:     run_id={run_id[:8]}")
         except Exception as e:
