@@ -37,6 +37,20 @@ _ALLOWED_COMMANDS = {
 }
 
 
+def _card_symbols(card: dict) -> list[str]:
+    """Tickers a card trades: its own symbol unless it is a PORTFOLIO card, in
+    which case the strategy class's declared symbols (S2). Empty when neither
+    is known — positions are then unattributable and the tab says so."""
+    sym = (card.get("symbol") or "").upper()
+    if sym and sym != "PORTFOLIO":
+        return [sym]
+    try:
+        from tradelab.registry import load_strategy_class
+        return new_strategy.declared_symbols(load_strategy_class(card.get("strategy") or card.get("base_name") or ""))
+    except Exception:
+        return []
+
+
 def _strategy_declares_symbols(strategy: str) -> bool:
     """True when the registered strategy class carries a non-empty `symbols`
     list (S2). Any failure to load the class means False — the run then gets
@@ -751,6 +765,38 @@ def handle_get_with_status(path_with_query: str) -> Tuple[str, int]:
                 out["verdict"] = {"error": f"verdict.json parse failed: {e}"}
         return _ok(out), 200
 
+    m = re.match(r"^/tradelab/cards/([^/]+)/activity$", path)
+    if m:
+        # S3: one strategy's own orders, round-trips, daily P&L and positions,
+        # attributed by the client_order_id prefix the paper engine stamps.
+        from tradelab.live.cards import CardRegistry
+        from tradelab.live import card_activity
+        card_id = m.group(1)
+        cards_path = _cards_path()
+        card = CardRegistry(cards_path).get(card_id) if cards_path.exists() else None
+        if card is None:
+            return _err(f"card not found: {card_id}"), 404
+        try:
+            days = max(1, min(int(q.get("days", "90")), 365))
+        except (TypeError, ValueError):
+            days = 90
+        symbols = _card_symbols(card)
+
+        def _orders():
+            from tradelab.live.alpaca_client import list_closed_orders
+            return list_closed_orders(days=days)
+
+        def _positions():
+            from tradelab.live.alpaca_client import list_positions_detail
+            return list_positions_detail()
+
+        activity = card_activity.build_activity(
+            card, card_symbols=symbols,
+            list_closed_orders=_orders, list_positions=_positions,
+        )
+        activity["days"] = days
+        return _ok(activity), 200
+
     m = re.match(r"^/tradelab/cards/([^/]+)/tracking-error$", path)
     if m:
         from ..live.tracking_error import compute_tracking_error, load_live_returns_for_card
@@ -1195,6 +1241,10 @@ def handle_post_with_status(path: str, body: bytes) -> Tuple[str, int]:
         payload = json.loads(body.decode()) if body else {}
     except json.JSONDecodeError:
         return _err("invalid JSON body"), 400
+
+    m = re.match(r"^/tradelab/cards/([^/]+)/flatten$", path)
+    if m:
+        return _flatten_card(m.group(1), payload)
 
     m = re.match(r"^/tradelab/runs/([^/]+)/unarchive$", path)
     if m:
@@ -1659,6 +1709,12 @@ def handle_patch_with_status(path: str, body: bytes) -> Tuple[str, int]:
             return _err("card not found"), 404
         from tradelab.live.cards import CardRegistry
         reg = CardRegistry(cards_path)
+        card = reg.get(card_id)
+        if card is None:
+            return _err("card not found"), 404
+        gate = _enable_gate(card, payload)
+        if gate:
+            return _err(gate), 422
         try:
             reg.update(card_id, payload)
         except KeyError:
@@ -1816,6 +1872,93 @@ def _inject_default_params(code: str, new_defaults: dict) -> str:
 
 
 # ─── Validation for PATCH /tradelab/cards/<id> ───────────────────────
+
+def _flatten_card(card_id: str, payload: dict, *, deps: Optional[dict] = None) -> Tuple[str, int]:
+    """S3: close ONE card's own open lots with prefixed market orders.
+
+    Order of operations matters: the card is forced Off first so the paper
+    daemon cannot re-enter between our sell and its next tick; then only the
+    card's net lots (never another strategy's share of the symbol) are closed,
+    each stamped ``{card}-{ts}-flatten-{SYM}`` so FIFO attribution survives.
+    ``{"dry_run": true}`` returns the plan without submitting or forcing Off.
+    ``deps`` (tests) may inject list_closed_orders / list_positions / submit /
+    now; the real ones come from alpaca_client, which is paper-locked by
+    configuration (paper_trading flag) — this route never selects live.
+    """
+    from tradelab.live.cards import CardRegistry
+    from tradelab.live import card_activity
+    from datetime import datetime, timezone
+
+    cards_path = _cards_path()
+    reg = CardRegistry(cards_path) if cards_path.exists() else None
+    card = reg.get(card_id) if reg else None
+    if card is None:
+        return _err(f"card not found: {card_id}"), 404
+    dry_run = bool(payload.get("dry_run"))
+    deps = deps or {}
+
+    def _orders():
+        from tradelab.live.alpaca_client import list_closed_orders
+        return list_closed_orders(days=365)
+
+    def _positions():
+        from tradelab.live.alpaca_client import list_positions_detail
+        return list_positions_detail()
+
+    def _submit(symbol, side, qty, client_order_id):
+        from tradelab.live.alpaca_client import submit_market_order
+        return submit_market_order(symbol, side, qty, client_order_id=client_order_id)
+
+    list_closed = deps.get("list_closed_orders", _orders)
+    list_pos = deps.get("list_positions", _positions)
+    submit = deps.get("submit", _submit)
+    now = deps.get("now") or datetime.now(timezone.utc)
+
+    try:
+        closed = list_closed()
+        positions = list_pos()
+    except Exception as e:  # noqa: BLE001
+        return _err(f"alpaca unavailable: {type(e).__name__}: {e}"), 502
+    card_orders = card_activity.orders_for_card(card_id, closed)
+    plan = card_activity.plan_flatten(card_orders, positions)
+    truncated = len(closed) >= card_activity.ORDERS_PAGE_LIMIT
+    out = {
+        "card_id": card_id, "dry_run": dry_run, "forced_off": False,
+        "planned": plan["orders"], "skipped": plan["skipped"],
+        "submitted": [], "errors": [], "truncated": truncated,
+    }
+    if truncated:
+        out["errors"].append("order window hit the page limit — the card's lots may be incomplete; refusing to guess")
+        return _ok(out), (200 if dry_run else 409)
+    if dry_run:
+        return _ok(out), 200
+
+    if (card.get("status") or "").lower() == "enabled":
+        reg.update(card_id, {"status": "disabled"})
+        out["forced_off"] = True
+    for o in plan["orders"]:
+        cid = card_activity.flatten_stamp(card_id, o["symbol"], now)
+        try:
+            res = submit(o["symbol"], o["side"], o["qty"], cid)
+            out["submitted"].append({**o, "client_order_id": cid, "order_id": (res or {}).get("id")})
+        except Exception as e:  # noqa: BLE001
+            out["errors"].append(f"{o['symbol']}: {type(e).__name__}: {e}")
+    return _ok(out), 200
+
+
+def _enable_gate(card: dict, payload: dict) -> Optional[str]:
+    """Server-side refusal for turning a card on. The tab hides the option,
+    but the registry must not trust the browser: a BLOCKED promotion route
+    (hard disqualifier — DSR<0, negative expectancy) never trades. Funding is
+    not gated here — the paper daemon already skips unfunded cards, and the
+    tab refuses Paper without a $ allocation."""
+    if payload.get("status") != "enabled":
+        return None
+    route = (card.get("promotion_route") or "").upper()
+    if route == "BLOCKED":
+        return "refused: promotion route is BLOCKED (hard disqualifier) — this card cannot be enabled"
+    return None
+
 
 _ALLOWED_PATCH_FIELDS = {
     "status", "quantity", "cadence", "daily_limit",

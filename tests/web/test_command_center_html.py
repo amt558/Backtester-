@@ -178,6 +178,12 @@ FORBIDDEN_IDENTIFIERS = [
     "renderStrategyCards",
     "strategyGrid",
     "dismissedPlaceholders",
+    # S3 (2026-09-02): the Overview live-card grid was replaced by one tab per
+    # accepted strategy (the ST module). These must not come back.
+    "liveCardsGrid",
+    "_renderOverviewLiveCardHTML",
+    "onToggleLiveCard",
+    "onLiveCardSettingChange",
 ]
 
 
@@ -1802,3 +1808,63 @@ def test_s2_upload_refuses_non_python_files_with_a_reason(html: str) -> None:
 
 def test_s2_template_button_calls_template_route(html: str) -> None:
     assert "/tradelab/new-strategy/template?name=" in html
+
+# ── S3: strategy tabs (2026-09-02) ──────────────────────────────────
+def test_s3_strategy_tab_module_present_once(html: str) -> None:
+    assert html.count("const ST = (() => {") == 1
+    for fn in ("refreshTabs", "activate", "deactivate", "open", "loadActivity", "cardForStrategy", "activityFor"):
+        assert f"{fn}," in html or f"{fn} }}" in html or f"{fn}}}" in html, fn
+
+
+def test_s3_tabs_read_the_activity_route(html: str) -> None:
+    assert "/activity?days=" in html
+
+
+def test_s3_live_mode_is_present_but_disabled(html: str) -> None:
+    import re as _re
+    m = _re.search(r'<button data-mode="live" disabled', html)
+    assert m, "Live must be visible and disabled until S9"
+
+
+def test_s3_paper_requires_allocation(html: str) -> None:
+    assert "Set a $ allocation first" in html
+
+
+def test_s3_switch_tab_routes_card_tabs(html: str) -> None:
+    assert "if (tabName.startsWith('card-'))" in html
+
+
+def test_s3_calendar_filter_uses_strategy_activity(html: str) -> None:
+    assert "function _calendarSource(" in html
+    assert "ST.cardForStrategy(choice)" in html
+
+def test_s3_accept_creates_card_off_not_armed(html: str) -> None:
+    """Accept must not arm a strategy (S0 F12): the payload sends activate:false
+    and the Paper switch on the tab is the only way to enable it."""
+    assert "activate:        false," in html
+    assert "activate:        true," not in html
+
+
+# ── S3 review notes (specialist, 2026-09-03) ────────────────────────
+def test_s3r_flatten_goes_through_backend_not_the_readonly_proxy(html: str) -> None:
+    """The /api proxy is GET-only; a browser-side DELETE /v2/positions never
+    reached Alpaca and would not carry the card stamp anyway. Flatten must
+    POST /tradelab/cards/{id}/flatten (Off-first, prefixed, card-scoped)."""
+    assert "/flatten'" in html
+    assert "dry_run: true" in html
+    assert "/v2/positions/" not in html
+    for dead in ("onFlattenLiveCard", "onDeleteLiveCard", "_liveCardPositionStats"):
+        assert dead not in html, dead
+
+
+def test_s3r_rung3_counts_closing_orders_over_a_year(html: str) -> None:
+    assert "t.closed_orders" in html
+    assert "'/activity?days=365'" in html
+    assert "closing orders" in html
+
+
+def test_s3r_activity_warnings_surface_in_tab(html: str) -> None:
+    assert 'data-role="act-warn"' in html
+    assert "act.truncated" in html
+    assert "act.orphaned_lots" in html
+    assert "Unrealized (acct, by symbol)" in html

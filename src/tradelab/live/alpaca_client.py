@@ -125,6 +125,24 @@ def list_closed_orders(days: int = 90) -> list[dict]:
     ]
 
 
+def list_positions_detail() -> list[dict]:
+    """Open positions with the fields a strategy tab shows (S3). Separate from
+    list_positions() so panic's contract stays untouched."""
+    client = get_client()
+    out = []
+    for p in client.get_all_positions():
+        out.append({
+            "symbol": p.symbol,
+            "qty": str(p.qty),
+            "side": p.side.value if hasattr(p.side, "value") else str(p.side),
+            "avg_entry_price": str(getattr(p, "avg_entry_price", "") or ""),
+            "current_price": str(getattr(p, "current_price", "") or ""),
+            "market_value": str(getattr(p, "market_value", "") or ""),
+            "unrealized_pl": str(getattr(p, "unrealized_pl", "") or ""),
+        })
+    return out
+
+
 def cancel_order_by_id(order_id: str) -> None:
     """Cancel a single Alpaca order by its server-side ID. Raises on failure."""
     client = get_client()
